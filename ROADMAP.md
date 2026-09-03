@@ -3,6 +3,80 @@
 Cette roadmap conserve la correspondance unitaire avec les 26 captures de reference. Les doublons
 visuels 21/22 et 1/26 partagent volontairement la meme implementation.
 
+## Epic d'audit fonctionnel iteratif
+
+L'audit fonctionnel doit partir des features structurantes et remonter progressivement vers les
+features niche. Chaque palier n'est audite en profondeur que si le precedent est juge
+suffisamment sain.
+
+Constat attendu a chaque etape :
+
+- OK
+- ecart
+- arbitrage produit
+
+Mode operatoire :
+
+- auditer un palier a la fois ;
+- extraire les ecarts avant de passer au suivant ;
+- transformer immediatement les ecarts en tickets actionnables ;
+- garder les features niche et les garanties specifiques pour la fin.
+
+### Paliers d'audit
+
+1. **Socle applicatif**
+   - demarrage app ;
+   - persistance SQLite ;
+   - preferences globales ;
+   - navigation principale ;
+   - sante generale backend/frontend.
+2. **Donnees coeur**
+   - comptes ;
+   - categories ;
+   - transactions ;
+   - pagination du registre ;
+   - creation, edition et suppression.
+3. **Lecture metier de base**
+   - tableau de bord ;
+   - soldes ;
+   - revenus et depenses ;
+   - derniers mouvements ;
+   - coherence globale des chiffres.
+4. **Pilotage budgetaire**
+   - cycle budgetaire ;
+   - enveloppes ;
+   - cashflow ;
+   - hierarchie des categories ;
+   - ventilation des depenses.
+5. **Automatisation locale**
+   - regles ;
+   - boite de categorisation ;
+   - suggestions locales ;
+   - seuils et modes `off`, `suggest`, `auto`.
+6. **Recurrents**
+   - detection ;
+   - series ;
+   - changements ;
+   - previsions.
+7. **Patrimoine**
+   - actifs ;
+   - dettes ;
+   - contributions ;
+   - allocation ;
+   - performance ;
+   - absence de double comptage.
+8. **Partage local**
+   - foyer ;
+   - roles ;
+   - comptes partages ;
+   - objectifs communs.
+9. **Features niche et garanties**
+   - identites marchandes locales ;
+   - snapshots avances ;
+   - migration Banque_v3 ;
+   - atomicite et idempotence ;
+   - confidentialite.
+
 ## Phase 0 - Fondations
 
 - [x] 12. Preferences : theme, langue/locale, date et style de navigation.
