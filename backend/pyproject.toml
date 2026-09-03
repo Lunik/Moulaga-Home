@@ -1,0 +1,44 @@
+[project]
+name = "moulaga-backend"
+version = "1.0.0"
+description = "Self-hosted personal budget and money tracking API"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "aiosqlite>=0.20",
+]
+
+[project.scripts]
+moulaga-migrate-banque-v3 = "app.commands.import_banque_v3:main"
+moulaga-seed-demo = "app.commands.seed_demo:main"
+
+[project.optional-dependencies]
+dev = [
+    "httpx2>=0.28",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["B008"]  # FastAPI's Depends() in defaults is the framework's own idiom
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

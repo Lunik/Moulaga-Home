@@ -1,0 +1,147 @@
+"""Schema migration and persistence tests (upgrade from the legacy schema)."""
+
+from __future__ import annotations
+
+import sqlite3
+from datetime import date
+
+from conftest import load_app
+from fastapi.testclient import TestClient
+
+LEGACY_SCHEMA = """
+CREATE TABLE accounts (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR(120) NOT NULL UNIQUE,
+    type VARCHAR(32) DEFAULT 'checking',
+    currency VARCHAR(3) DEFAULT 'EUR',
+    initial_balance NUMERIC(12, 2) DEFAULT '0.00',
+    created_at DATETIME
+);
+CREATE TABLE categories (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR(120) NOT NULL,
+    kind VARCHAR(16) NOT NULL,
+    color VARCHAR(16) DEFAULT '#4f46e5',
+    monthly_budget NUMERIC(12, 2),
+    CONSTRAINT uq_categories_name_kind UNIQUE (name, kind)
+);
+CREATE TABLE transactions (
+    id INTEGER PRIMARY KEY,
+    booked_at DATE NOT NULL,
+    description TEXT NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL,
+    account_id INTEGER NOT NULL REFERENCES accounts(id),
+    category_id INTEGER REFERENCES categories(id),
+    notes TEXT,
+    source_hash VARCHAR(64),
+    created_at DATETIME,
+    CONSTRAINT uq_transactions_source_hash UNIQUE (source_hash)
+);
+"""
+
+
+def _seed_legacy_db(db_path) -> None:
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(LEGACY_SCHEMA)
+        connection.execute(
+            "INSERT INTO accounts (id, name, type, currency, initial_balance) "
+            "VALUES (1, 'Compte historique', 'checking', 'EUR', '100.00')"
+        )
+        connection.execute(
+            "INSERT INTO categories (id, name, kind, color) VALUES (1, 'Courses', 'expense', '#f97316')"
+        )
+        connection.execute(
+            "INSERT INTO transactions (booked_at, description, amount, account_id, category_id) "
+            "VALUES ('2026-01-05', 'Depense historique', '-30.00', 1, 1)"
+        )
+        connection.execute("PRAGMA user_version = 0")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_legacy_database_upgrades_without_data_loss(tmp_path, monkeypatch):
+    db_path = tmp_path / "moulaga.db"
+    _seed_legacy_db(db_path)
+
+    main, _ = load_app(tmp_path, monkeypatch)
+
+    with TestClient(main.create_app()) as client:
+        accounts = client.get("/api/accounts").json()
+        historic = next(a for a in accounts if a["name"] == "Compte historique")
+        assert historic["archived"] is False
+        assert historic["color"] == "#4f46e5"
+        assert historic["balance"] == "70.00"  # 100.00 initial - 30.00 expense preserved
+
+        transactions = client.get("/api/transactions").json()
+        assert any(t["description"] == "Depense historique" for t in transactions)
+
+    # A safety backup must have been produced before altering the existing DB.
+    backups = list(tmp_path.glob("moulaga.backup-*.db"))
+    assert backups, "expected a pre-migration backup copy"
+
+    # New columns are usable: patching the migrated category succeeds.
+    with TestClient(main.create_app()) as client:
+        category = next(c for c in client.get("/api/categories").json() if c["name"] == "Courses")
+        response = client.patch(f"/api/categories/{category['id']}", json={"archived": True})
+        assert response.status_code == 200
+        assert response.json()["archived"] is True
+
+
+def test_schema_version_is_stamped_and_idempotent(tmp_path, monkeypatch):
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()):
+        pass
+
+    connection = sqlite3.connect(tmp_path / "moulaga.db")
+    try:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        connection.close()
+    assert version >= 2
+
+    # Re-opening a current database performs no backup (nothing pending).
+    with TestClient(main.create_app()):
+        pass
+    assert list(tmp_path.glob("moulaga.backup-*.db")) == []
+
+
+def test_fresh_database_seeds_defaults_and_preferences(tmp_path, monkeypatch):
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        assert client.get("/api/accounts").json()
+        assert client.get("/api/categories").json()
+        prefs = client.get("/api/preferences").json()
+        assert prefs["budget_cycle_start_day"] == 1
+        assert prefs["private_categorization_enabled"] is False
+
+
+def test_transaction_ledger_patch_and_delete(tmp_path, monkeypatch):
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        account = client.get("/api/accounts").json()[0]
+        created = client.post(
+            "/api/transactions",
+            json={
+                "booked_at": date.today().isoformat(),
+                "description": "Operation initiale",
+                "amount": "-10.00",
+                "account_id": account["id"],
+            },
+        ).json()
+
+        patched = client.patch(
+            f"/api/transactions/{created['id']}",
+            json={"amount": "-12.50", "description": "Operation corrigee"},
+        )
+        assert patched.status_code == 200
+        assert patched.json()["amount"] == "-12.50"
+
+        # Foreign-key safety: unknown account is rejected.
+        bad = client.patch(f"/api/transactions/{created['id']}", json={"account_id": 9999})
+        assert bad.status_code == 404
+
+        deleted = client.delete(f"/api/transactions/{created['id']}")
+        assert deleted.status_code == 204
+        assert client.get(f"/api/transactions/{created['id']}").status_code == 404

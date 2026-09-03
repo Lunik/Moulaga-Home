@@ -1,0 +1,17 @@
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.venv
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+backend/app/static
+data/
+.data/
+*.numbers
+*.csv
+.env
+.git
+.github
+*.md
+!README.md

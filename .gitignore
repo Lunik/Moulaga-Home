@@ -1,0 +1,28 @@
+# Runtime data (SQLite and confidential banking imports)
+data/
+.data/
+*.db
+*.db-wal
+*.db-shm
+*.numbers
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / Vite
+node_modules/
+dist/
+backend/app/static/
+*.tsbuildinfo
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
