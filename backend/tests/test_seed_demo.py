@@ -19,10 +19,11 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
     importlib.reload(seed)
 
     result = asyncio.run(seed.seed_demo())
-    assert result.accounts == 5
+    assert result.accounts == 8
     assert result.transactions > 100
-    assert result.snapshots == 9
-    assert result.debts == 3
+    assert result.snapshots == 25
+    assert result.debts == 4
+    assert result.real_estate_assets == 1
     assert result.holdings == 2
     assert result.households == 1
     assert result.portfolio_snapshots > 0
@@ -32,12 +33,23 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
 
     with TestClient(main.create_app()) as client:
         accounts = client.get("/api/accounts").json()
-        assert len(accounts) == 4
+        assert len(accounts) == 7
         savings = next(account for account in accounts if account["type"] == "savings")
-        assert next(account for account in accounts if account["name"] == "PEA demo")["type"] == "pea"
+        pea = next(account for account in accounts if account["name"] == "PEA demo")
+        assert pea["type"] == "pea"
+        assert pea["institution"] == "Boursobank"
+        assert next(
+            account for account in accounts if account["name"] == "Assurance vie Boursobank demo"
+        )["type"] == "life_insurance"
+        assert next(
+            account for account in accounts if account["name"] == "Wallet crypto demo"
+        )["type"] == "wallet"
         assert savings["savings_product"] == "Livret A"
         assert savings["legal_cap"] == "22950.00"
         assert client.get("/api/debts").json()
+        real_estate = client.get("/api/real-estate").json()
+        assert len(real_estate) == 1
+        assert real_estate[0]["debt_name"] == "Pret immobilier demo"
         assert client.get("/api/holdings").json()
         assert client.get("/api/rules").json()
         assert client.get("/api/recurring").json()
@@ -65,8 +77,8 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         all_accounts = client.get(
             "/api/accounts", params={"include_archived": True}
         ).json()
-        assert len(active_accounts) == 4
-        assert len(all_accounts) == 5
+        assert len(active_accounts) == 7
+        assert len(all_accounts) == 8
 
         checking = next(
             account for account in all_accounts if account["name"] == "Compte courant demo"
@@ -75,6 +87,19 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
             account for account in all_accounts if account["name"] == "Livret epargne demo"
         )
         pea = next(account for account in all_accounts if account["name"] == "PEA demo")
+        boursobank_checking = next(
+            account
+            for account in all_accounts
+            if account["name"] == "Compte courant Boursobank demo"
+        )
+        life_insurance = next(
+            account
+            for account in all_accounts
+            if account["name"] == "Assurance vie Boursobank demo"
+        )
+        crypto_wallet = next(
+            account for account in all_accounts if account["name"] == "Wallet crypto demo"
+        )
         archived = next(account for account in all_accounts if account["archived"])
         sandbox = next(
             account for account in all_accounts if account["name"] == "Compte bac a sable demo"
@@ -85,6 +110,17 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         assert savings["institution"] == checking["institution"] == "BNP Paribas"
         assert savings["annual_interest_rate"] == "1.700"
         assert savings["legal_cap"] == "22950.00"
+        assert pea["institution"] == "Boursobank"
+        assert pea["balance"] == "2634.00"
+        assert boursobank_checking["type"] == "checking"
+        assert boursobank_checking["institution"] == "Boursobank"
+        assert boursobank_checking["balance"] == "2750.00"
+        assert life_insurance["type"] == "life_insurance"
+        assert life_insurance["institution"] == "Boursobank"
+        assert life_insurance["balance"] == "18500.00"
+        assert crypto_wallet["type"] == "wallet"
+        assert crypto_wallet["institution"] == "Revolut"
+        assert crypto_wallet["balance"] == "4200.00"
         assert archived["name"] == "Compte cloture demo"
         assert archived["transaction_count"] == 2
         assert sandbox["type"] == "cash"
@@ -141,6 +177,29 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
             "/api/transactions/count",
             params={"account_id": checking["id"], "uncategorized": True},
         ).json()["count"] == 4
+
+        for account in (boursobank_checking, life_insurance, pea, crypto_wallet):
+            assert len(
+                client.get(f"/api/accounts/{account['id']}/snapshots").json()
+            ) == 4
+
+        institution_history = client.get(
+            "/api/accounts/institution-history"
+        ).json()
+        assert {
+            point["institution"] for point in institution_history
+        } == {"BNP Paribas", "Boursobank", "Revolut"}
+        assert sum(
+            point["institution"] == "Boursobank"
+            for point in institution_history
+        ) == 4
+        latest_period = max(point["period"] for point in institution_history)
+        assert next(
+            point["balance"]
+            for point in institution_history
+            if point["period"] == latest_period
+            and point["institution"] == "Boursobank"
+        ) == "23884.00"
 
         savings_snapshots = client.get(
             f"/api/accounts/{savings['id']}/snapshots"

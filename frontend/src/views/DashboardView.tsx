@@ -75,7 +75,9 @@ export function DashboardView({
     }))
   const activeDebts = (debts.data ?? []).filter((debt) => !debt.archived)
   const firstError = [netWorth.error, history.error, portfolio.error, debts.error].find(Boolean)
-  const assets = Number(netWorth.data?.cash ?? 0) + Number(netWorth.data?.investments ?? 0)
+  const assets = Number(netWorth.data?.cash ?? 0)
+    + Number(netWorth.data?.investments ?? 0)
+    + Number(netWorth.data?.real_estate ?? 0)
   const gainPercent = Number(portfolio.data?.cost_basis ?? 0) > 0
     ? (Number(portfolio.data?.gain ?? 0) / Number(portfolio.data?.cost_basis ?? 0)) * 100
     : 0

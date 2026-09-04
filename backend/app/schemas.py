@@ -174,6 +174,12 @@ class AccountHistoryPoint(BaseModel):
     balance: Decimal
 
 
+class InstitutionHistoryPoint(BaseModel):
+    period: str
+    institution: str
+    balance: Decimal
+
+
 class AccountDetail(AccountRead):
     history: list[AccountHistoryPoint] = Field(default_factory=list)
     transaction_count: int = 0
@@ -527,7 +533,7 @@ class DetectResult(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-# Wealth: debts, holdings, contributions, net worth
+# Wealth: debts, real estate, holdings, contributions, net worth
 # --------------------------------------------------------------------------- #
 class DebtCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -572,6 +578,97 @@ class DebtRead(BaseModel):
     archived: bool
     paid: Decimal
     progress: Decimal
+
+
+_PROPERTY_TYPE = (
+    "^(primary_residence|secondary_residence|rental|commercial|land|other)$"
+)
+
+
+def _validate_acquired_on(value: date | None) -> date | None:
+    if value is not None and value > date.today():
+        raise ValueError("La date d'acquisition ne peut pas etre future")
+    return value
+
+
+class RealEstateCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    property_type: str = Field(default="primary_residence", pattern=_PROPERTY_TYPE)
+    address: str | None = Field(default=None, max_length=200)
+    acquired_on: date | None = None
+    purchase_price: Decimal = Field(ge=0, **_MONEY)
+    current_value: Decimal = Field(ge=0, **_MONEY)
+    ownership_share: Decimal = Field(
+        default=Decimal("100.00"), gt=0, le=100, max_digits=5, decimal_places=2
+    )
+    debt_id: int | None = Field(default=None, gt=0)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        return _strip_required(value)
+
+    @field_validator("address")
+    @classmethod
+    def strip_address(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("acquired_on")
+    @classmethod
+    def validate_acquired_on(cls, value: date | None) -> date | None:
+        return _validate_acquired_on(value)
+
+
+class RealEstateUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    property_type: str | None = Field(default=None, pattern=_PROPERTY_TYPE)
+    address: str | None = Field(default=None, max_length=200)
+    acquired_on: date | None = None
+    purchase_price: Decimal | None = Field(default=None, ge=0, **_MONEY)
+    current_value: Decimal | None = Field(default=None, ge=0, **_MONEY)
+    ownership_share: Decimal | None = Field(
+        default=None, gt=0, le=100, max_digits=5, decimal_places=2
+    )
+    debt_id: int | None = Field(default=None, gt=0)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str | None) -> str | None:
+        return _strip_required(value) if value is not None else None
+
+    @field_validator("address")
+    @classmethod
+    def strip_address(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("acquired_on")
+    @classmethod
+    def validate_acquired_on(cls, value: date | None) -> date | None:
+        return _validate_acquired_on(value)
+
+
+class RealEstateRead(BaseModel):
+    id: int
+    name: str
+    property_type: str
+    address: str | None
+    acquired_on: date | None
+    purchase_price: Decimal
+    current_value: Decimal
+    ownership_share: Decimal
+    debt_id: int | None
+    debt_name: str | None
+    debt_balance: Decimal
+    owned_purchase_price: Decimal
+    owned_value: Decimal
+    gain: Decimal
+    net_equity: Decimal
 
 
 class HoldingCreate(BaseModel):
@@ -646,6 +743,7 @@ class PortfolioSummary(BaseModel):
     gain: Decimal
     contributions_total: Decimal
     holdings: int
+    properties: int
 
 
 class PortfolioSnapshotCreate(BaseModel):
@@ -675,6 +773,7 @@ class PerformancePoint(BaseModel):
 class NetWorthOverview(BaseModel):
     cash: Decimal
     investments: Decimal
+    real_estate: Decimal
     debts: Decimal
     net_worth: Decimal
 

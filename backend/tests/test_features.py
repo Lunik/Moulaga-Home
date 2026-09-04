@@ -175,6 +175,81 @@ def test_account_snapshot_generation(client):
     }
 
 
+def test_institution_history_groups_snapshots_and_respects_filters(client):
+    checking_id = _account_id(client)
+    client.patch(
+        f"/api/accounts/{checking_id}",
+        json={"institution": "Banque Alpha"},
+    )
+    savings = client.post(
+        "/api/accounts",
+        json={
+            "name": "Épargne synthétique",
+            "type": "savings",
+            "institution": "Banque Alpha",
+        },
+    ).json()
+    unassigned = client.post(
+        "/api/accounts",
+        json={"name": "Compte sans établissement", "type": "checking"},
+    ).json()
+    archived = client.post(
+        "/api/accounts",
+        json={
+            "name": "Compte archivé synthétique",
+            "type": "checking",
+            "institution": "Banque Bêta",
+        },
+    ).json()
+
+    for account_id, period, balance in [
+        (checking_id, "2026-01", "100.00"),
+        (checking_id, "2026-02", "110.00"),
+        (savings["id"], "2026-01", "50.00"),
+        (savings["id"], "2026-02", "55.00"),
+        (unassigned["id"], "2026-01", "20.00"),
+        (archived["id"], "2026-01", "900.00"),
+    ]:
+        response = client.put(
+            f"/api/accounts/{account_id}/snapshots",
+            json={"period": period, "balance": balance},
+        )
+        assert response.status_code == 200
+
+    assert client.post(f"/api/accounts/{archived['id']}/archive").status_code == 200
+
+    response = client.get("/api/accounts/institution-history")
+    assert response.status_code == 200
+    assert {
+        (point["period"], point["institution"]): point["balance"]
+        for point in response.json()
+    } == {
+        ("2026-01", "Banque Alpha"): "150.00",
+        ("2026-01", "Établissement non renseigné"): "20.00",
+        ("2026-02", "Banque Alpha"): "165.00",
+        ("2026-02", "Établissement non renseigné"): "20.00",
+    }
+
+    savings_history = client.get(
+        "/api/accounts/institution-history",
+        params={"account_type": "savings"},
+    )
+    assert savings_history.status_code == 200
+    assert savings_history.json() == [
+        {"period": "2026-01", "institution": "Banque Alpha", "balance": "50.00"},
+        {"period": "2026-02", "institution": "Banque Alpha", "balance": "55.00"},
+    ]
+
+    archived_history = client.get(
+        "/api/accounts/institution-history",
+        params={"archived": True},
+    )
+    assert archived_history.status_code == 200
+    assert archived_history.json() == [
+        {"period": "2026-01", "institution": "Banque Bêta", "balance": "900.00"}
+    ]
+
+
 def test_account_snapshot_can_be_edited_and_deleted(client):
     account_id = _account_id(client)
     created = client.put(
@@ -862,6 +937,113 @@ def test_holdings_portfolio_and_networth_no_double_count(client):
     assert networth["cash"] == "500.00"
     assert networth["investments"] == "1000.00"
     assert networth["net_worth"] == "1500.00"
+
+
+def test_real_estate_crud_and_networth_integration(client):
+    mortgage = client.post(
+        "/api/debts",
+        json={
+            "name": "Pret immobilier synthetique",
+            "principal": "120000.00",
+            "balance": "100000.00",
+        },
+    ).json()
+    response = client.post(
+        "/api/real-estate",
+        json={
+            "name": "Appartement test",
+            "property_type": "rental",
+            "address": "1 rue Exemple",
+            "acquired_on": "2020-06-15",
+            "purchase_price": "250000.00",
+            "current_value": "300000.00",
+            "ownership_share": "50.00",
+            "debt_id": mortgage["id"],
+        },
+    )
+    assert response.status_code == 201
+    asset = response.json()
+    assert asset["owned_purchase_price"] == "125000.00"
+    assert asset["owned_value"] == "150000.00"
+    assert asset["gain"] == "25000.00"
+    assert asset["debt_balance"] == "100000.00"
+    assert asset["net_equity"] == "50000.00"
+
+    assert client.post(
+        "/api/real-estate",
+        json={
+            "name": "Bien avec dette deja liee",
+            "property_type": "other",
+            "purchase_price": "1000.00",
+            "current_value": "1000.00",
+            "ownership_share": "100.00",
+            "debt_id": mortgage["id"],
+        },
+    ).status_code == 409
+    assert client.post(
+        "/api/real-estate",
+        json={
+            "name": "Quote-part invalide",
+            "property_type": "land",
+            "purchase_price": "1000.00",
+            "current_value": "1000.00",
+            "ownership_share": "0.00",
+        },
+    ).status_code == 422
+    assert client.post(
+        "/api/real-estate",
+        json={
+            "name": "Acquisition future",
+            "property_type": "other",
+            "acquired_on": "2999-01-01",
+            "purchase_price": "1000.00",
+            "current_value": "1000.00",
+            "ownership_share": "100.00",
+        },
+    ).status_code == 422
+
+    summary = client.get("/api/portfolio/summary").json()
+    assert summary["cost_basis"] == "125000.00"
+    assert summary["market_value"] == "150000.00"
+    assert summary["gain"] == "25000.00"
+    assert summary["holdings"] == 0
+    assert summary["properties"] == 1
+
+    allocation = client.get("/api/portfolio/allocation").json()
+    assert allocation == [
+        {"asset_class": "real_estate", "market_value": "150000.00", "weight": "1.0000"}
+    ]
+    snapshot = client.post(
+        "/api/portfolio/snapshots/generate", params={"period": "2026-01"}
+    ).json()
+    assert snapshot["cost_basis"] == "125000.00"
+    assert snapshot["market_value"] == "150000.00"
+
+    networth = client.get("/api/networth/overview").json()
+    assert networth["cash"] == "0.00"
+    assert networth["investments"] == "0.00"
+    assert networth["real_estate"] == "150000.00"
+    assert networth["debts"] == "100000.00"
+    assert networth["net_worth"] == "50000.00"
+    assert client.get("/api/networth/history").json()[-1]["net_worth"] == "50000.00"
+
+    updated = client.patch(
+        f"/api/real-estate/{asset['id']}",
+        json={"current_value": "320000.00", "address": " "},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["address"] is None
+    assert updated.json()["owned_value"] == "160000.00"
+
+    assert client.delete(f"/api/debts/{mortgage['id']}").status_code == 204
+    listed = client.get("/api/real-estate").json()
+    assert len(listed) == 1
+    assert listed[0]["debt_id"] is None
+    assert listed[0]["net_equity"] == "160000.00"
+
+    assert client.delete(f"/api/real-estate/{asset['id']}").status_code == 204
+    assert client.get("/api/real-estate").json() == []
+    assert client.delete(f"/api/real-estate/{asset['id']}").status_code == 404
 
 
 # --------------------------------------------------------------------------- #

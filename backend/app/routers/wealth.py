@@ -19,6 +19,7 @@ from ..models import (
     Debt,
     Holding,
     PortfolioSnapshot,
+    RealEstateAsset,
     Transaction,
 )
 from ..schemas import (
@@ -38,6 +39,9 @@ from ..schemas import (
     PortfolioSnapshotCreate,
     PortfolioSnapshotRead,
     PortfolioSummary,
+    RealEstateCreate,
+    RealEstateRead,
+    RealEstateUpdate,
 )
 
 router = APIRouter(tags=["wealth"])
@@ -115,6 +119,118 @@ async def delete_debt(debt_id: int, session: AsyncSession = Depends(get_session)
     if debt.account_id is not None:
         await require_account(session, debt.account_id, writable=True)
     await session.delete(debt)
+    await session.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Real estate
+# --------------------------------------------------------------------------- #
+def _real_estate_owned_values(asset: RealEstateAsset) -> tuple[Decimal, Decimal]:
+    share = Decimal(asset.ownership_share) / Decimal("100")
+    return (
+        money(Decimal(asset.purchase_price) * share),
+        money(Decimal(asset.current_value) * share),
+    )
+
+
+def _real_estate_read(asset: RealEstateAsset, debt: Debt | None) -> RealEstateRead:
+    owned_purchase_price, owned_value = _real_estate_owned_values(asset)
+    debt_balance = money(Decimal(debt.balance)) if debt is not None else Decimal("0.00")
+    return RealEstateRead(
+        id=asset.id,
+        name=asset.name,
+        property_type=asset.property_type,
+        address=asset.address,
+        acquired_on=asset.acquired_on,
+        purchase_price=money(Decimal(asset.purchase_price)),
+        current_value=money(Decimal(asset.current_value)),
+        ownership_share=Decimal(asset.ownership_share),
+        debt_id=asset.debt_id,
+        debt_name=debt.name if debt is not None else None,
+        debt_balance=debt_balance,
+        owned_purchase_price=owned_purchase_price,
+        owned_value=owned_value,
+        gain=money(owned_value - owned_purchase_price),
+        net_equity=money(owned_value - debt_balance),
+    )
+
+
+async def _validate_real_estate_debt(
+    session: AsyncSession, debt_id: int | None, asset_id: int | None = None
+) -> Debt | None:
+    if debt_id is None:
+        return None
+    debt = await session.get(Debt, debt_id)
+    if debt is None:
+        raise HTTPException(status_code=404, detail="Dette introuvable")
+    statement = select(RealEstateAsset.id).where(RealEstateAsset.debt_id == debt_id)
+    if asset_id is not None:
+        statement = statement.where(RealEstateAsset.id != asset_id)
+    if await session.scalar(statement) is not None:
+        raise HTTPException(
+            status_code=409, detail="Cette dette est deja rattachee a un bien immobilier"
+        )
+    return debt
+
+
+@router.get("/real-estate", response_model=list[RealEstateRead])
+async def list_real_estate(
+    session: AsyncSession = Depends(get_session),
+) -> list[RealEstateRead]:
+    rows = (
+        await session.execute(
+            select(RealEstateAsset, Debt)
+            .outerjoin(Debt, Debt.id == RealEstateAsset.debt_id)
+            .order_by(RealEstateAsset.name)
+        )
+    ).all()
+    return [_real_estate_read(asset, debt) for asset, debt in rows]
+
+
+@router.post("/real-estate", response_model=RealEstateRead, status_code=201)
+async def create_real_estate(
+    payload: RealEstateCreate, session: AsyncSession = Depends(get_session)
+) -> RealEstateRead:
+    debt = await _validate_real_estate_debt(session, payload.debt_id)
+    asset = RealEstateAsset(**payload.model_dump())
+    session.add(asset)
+    await session.commit()
+    await session.refresh(asset)
+    return _real_estate_read(asset, debt)
+
+
+@router.patch("/real-estate/{asset_id}", response_model=RealEstateRead)
+async def update_real_estate(
+    asset_id: int,
+    payload: RealEstateUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> RealEstateRead:
+    asset = await session.get(RealEstateAsset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    data = payload.model_dump(exclude_unset=True)
+    debt = (
+        await _validate_real_estate_debt(session, data["debt_id"], asset_id)
+        if "debt_id" in data
+        else await session.get(Debt, asset.debt_id)
+        if asset.debt_id is not None
+        else None
+    )
+    for field, value in data.items():
+        setattr(asset, field, value)
+    await session.commit()
+    await session.refresh(asset)
+    return _real_estate_read(asset, debt)
+
+
+@router.delete("/real-estate/{asset_id}", status_code=204)
+async def delete_real_estate(
+    asset_id: int, session: AsyncSession = Depends(get_session)
+) -> None:
+    asset = await session.get(RealEstateAsset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    await session.delete(asset)
     await session.commit()
 
 
@@ -280,9 +396,19 @@ async def create_aggregate_contribution(
 @router.get("/portfolio/summary", response_model=PortfolioSummary)
 async def portfolio_summary(session: AsyncSession = Depends(get_session)) -> PortfolioSummary:
     holdings = (await session.execute(select(Holding))).scalars().all()
-    cost_basis = sum((Decimal(h.quantity) * Decimal(h.average_price) for h in holdings), Decimal("0"))
-    market_value = sum(
+    properties = (await session.execute(select(RealEstateAsset))).scalars().all()
+    holdings_cost_basis = sum(
+        (Decimal(h.quantity) * Decimal(h.average_price) for h in holdings), Decimal("0")
+    )
+    holdings_market_value = sum(
         (Decimal(h.quantity) * Decimal(h.current_price) for h in holdings), Decimal("0")
+    )
+    property_values = [_real_estate_owned_values(asset) for asset in properties]
+    cost_basis = holdings_cost_basis + sum(
+        (purchase_price for purchase_price, _ in property_values), Decimal("0")
+    )
+    market_value = holdings_market_value + sum(
+        (current_value for _, current_value in property_values), Decimal("0")
     )
     contributions_total = await session.scalar(
         select(func.coalesce(func.sum(Contribution.amount), 0))
@@ -293,16 +419,21 @@ async def portfolio_summary(session: AsyncSession = Depends(get_session)) -> Por
         gain=money(market_value - cost_basis),
         contributions_total=money(contributions_total),
         holdings=len(holdings),
+        properties=len(properties),
     )
 
 
 @router.get("/portfolio/allocation", response_model=list[AllocationSlice])
 async def portfolio_allocation(session: AsyncSession = Depends(get_session)) -> list[AllocationSlice]:
     holdings = (await session.execute(select(Holding))).scalars().all()
+    properties = (await session.execute(select(RealEstateAsset))).scalars().all()
     by_class: dict[str, Decimal] = {}
     for holding in holdings:
         value = Decimal(holding.quantity) * Decimal(holding.current_price)
         by_class[holding.asset_class] = by_class.get(holding.asset_class, Decimal("0")) + value
+    for asset in properties:
+        _, value = _real_estate_owned_values(asset)
+        by_class["real_estate"] = by_class.get("real_estate", Decimal("0")) + value
     total = sum(by_class.values(), Decimal("0"))
     slices = []
     for asset_class, value in sorted(by_class.items(), key=lambda item: item[1], reverse=True):
@@ -349,10 +480,17 @@ async def generate_portfolio_snapshot(
     if len(reference) != 7 or reference[4] != "-":
         raise HTTPException(status_code=422, detail="Periode invalide (attendu AAAA-MM)")
     holdings = (await session.execute(select(Holding))).scalars().all()
-    cost_basis = sum((Decimal(h.quantity) * Decimal(h.average_price) for h in holdings), Decimal("0"))
+    properties = (await session.execute(select(RealEstateAsset))).scalars().all()
+    cost_basis = sum(
+        (Decimal(h.quantity) * Decimal(h.average_price) for h in holdings), Decimal("0")
+    )
     market_value = sum(
         (Decimal(h.quantity) * Decimal(h.current_price) for h in holdings), Decimal("0")
     )
+    for asset in properties:
+        property_cost, property_value = _real_estate_owned_values(asset)
+        cost_basis += property_cost
+        market_value += property_value
     snapshot = await session.scalar(
         select(PortfolioSnapshot).where(PortfolioSnapshot.period == reference)
     )
@@ -439,14 +577,19 @@ async def net_worth_overview(session: AsyncSession = Depends(get_session)) -> Ne
     investments = sum(
         (Decimal(h.quantity) * Decimal(h.current_price) for h in holdings), Decimal("0")
     )
+    properties = (await session.execute(select(RealEstateAsset))).scalars().all()
+    real_estate = sum(
+        (_real_estate_owned_values(asset)[1] for asset in properties), Decimal("0")
+    )
     debts = await session.scalar(select(func.coalesce(func.sum(Debt.balance), 0)))
     debts_total = Decimal(debts or 0)
 
     return NetWorthOverview(
         cash=money(cash),
         investments=money(investments),
+        real_estate=money(real_estate),
         debts=money(debts_total),
-        net_worth=money(cash + investments - debts_total),
+        net_worth=money(cash + investments + real_estate - debts_total),
     )
 
 
@@ -455,8 +598,10 @@ async def net_worth_history(session: AsyncSession = Depends(get_session)) -> lis
     """Historical net worth from cash snapshots plus cumulative contributions.
 
     Investment accounts are excluded from the cash side (their value is tracked
-    via contributions) so nothing is double counted. Current total debt is
-    subtracted from each period as a conservative baseline.
+    via contributions) so nothing is double counted. Real estate enters at its
+    owned purchase value on acquisition, with the latest valuation adjustment
+    applied in the current month. Current total debt is subtracted from each
+    period as a conservative baseline.
     """
     investment_accounts = await _investment_account_ids(session)
     snapshots = (
@@ -482,19 +627,39 @@ async def net_worth_history(session: AsyncSession = Depends(get_session)) -> lis
     ).all()
     contrib_by_period = {period: Decimal(amount or 0) for period, amount in contrib_rows}
 
+    properties = (await session.execute(select(RealEstateAsset))).scalars().all()
+    property_changes: dict[str, Decimal] = {}
+    current_period = date.today().strftime("%Y-%m")
+    for asset in properties:
+        purchase_price, current_value = _real_estate_owned_values(asset)
+        acquired_on = asset.acquired_on or asset.created_at.date()
+        acquisition_period = acquired_on.strftime("%Y-%m")
+        property_changes[acquisition_period] = (
+            property_changes.get(acquisition_period, Decimal("0")) + purchase_price
+        )
+        property_changes[current_period] = (
+            property_changes.get(current_period, Decimal("0"))
+            + current_value
+            - purchase_price
+        )
+
     debts = await session.scalar(select(func.coalesce(func.sum(Debt.balance), 0)))
     debts_total = Decimal(debts or 0)
 
-    periods = sorted(set(cash_by_period) | set(contrib_by_period))
+    periods = sorted(set(cash_by_period) | set(contrib_by_period) | set(property_changes))
     points: list[NetWorthPoint] = []
     cumulative_contrib = Decimal("0")
+    cumulative_real_estate = Decimal("0")
     for period in periods:
         cumulative_contrib += contrib_by_period.get(period, Decimal("0"))
+        cumulative_real_estate += property_changes.get(period, Decimal("0"))
         cash = cash_by_period.get(period, Decimal("0"))
         points.append(
             NetWorthPoint(
                 period=period,
-                net_worth=money(cash + cumulative_contrib - debts_total),
+                net_worth=money(
+                    cash + cumulative_contrib + cumulative_real_estate - debts_total
+                ),
             )
         )
     return points

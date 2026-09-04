@@ -39,6 +39,12 @@ export interface AccountHistoryPoint {
   balance: Money
 }
 
+export interface AccountInstitutionHistoryPoint {
+  period: string
+  institution: string
+  balance: Money
+}
+
 export interface AccountDetail extends Account {
   history: AccountHistoryPoint[]
   transaction_count: number
@@ -241,6 +247,24 @@ export interface Debt {
   archived?: boolean
 }
 
+export interface RealEstateAsset {
+  id: number
+  name: string
+  property_type: string
+  address: string | null
+  acquired_on: string | null
+  purchase_price: Money
+  current_value: Money
+  ownership_share: string
+  debt_id: number | null
+  debt_name: string | null
+  debt_balance: Money
+  owned_purchase_price: Money
+  owned_value: Money
+  gain: Money
+  net_equity: Money
+}
+
 export interface Holding {
   id: number
   account_id: number
@@ -277,6 +301,7 @@ export interface PortfolioSummary {
   gain: Money
   contributions_total: Money
   holdings: number
+  properties: number
 }
 
 export interface PerformancePoint {
@@ -291,6 +316,7 @@ export interface PerformancePoint {
 export interface NetWorthSummary {
   cash: Money
   investments: Money
+  real_estate: Money
   debts: Money
   net_worth: Money
 }

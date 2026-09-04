@@ -9,7 +9,7 @@ export type BudgetTab =
   | 'transactions'
   | 'manage'
 
-export type WealthTab = 'overview' | 'holdings' | 'debts'
+export type WealthTab = 'overview' | 'holdings' | 'real-estate' | 'debts'
 
 export type Route =
   | { name: 'dashboard' }
@@ -29,7 +29,7 @@ const budgetTabs = new Set<BudgetTab>([
   'transactions',
   'manage',
 ])
-const wealthTabs = new Set<WealthTab>(['overview', 'holdings', 'debts'])
+const wealthTabs = new Set<WealthTab>(['overview', 'holdings', 'real-estate', 'debts'])
 
 export function useRoute(): [Route, (route: Route) => void] {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash))

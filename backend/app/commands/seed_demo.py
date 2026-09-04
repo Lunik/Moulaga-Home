@@ -50,6 +50,7 @@ from ..models import (
     HouseholdMember,
     MerchantIdentity,
     PortfolioSnapshot,
+    RealEstateAsset,
     RecurringChange,
     RecurringSeries,
     SharedAccountLink,
@@ -74,6 +75,7 @@ class SeedResult:
     recurring: int
     changes: int
     debts: int
+    real_estate_assets: int
     holdings: int
     contributions: int
     households: int
@@ -103,7 +105,16 @@ async def _has_user_data(session: AsyncSession) -> bool:
     transactions = await session.scalar(select(func.count()).select_from(Transaction))
     households = await session.scalar(select(func.count()).select_from(Household))
     holdings = await session.scalar(select(func.count()).select_from(Holding))
-    return bool((accounts or 0) > 1 or transactions or households or holdings)
+    real_estate_assets = await session.scalar(
+        select(func.count()).select_from(RealEstateAsset)
+    )
+    return bool(
+        (accounts or 0) > 1
+        or transactions
+        or households
+        or holdings
+        or real_estate_assets
+    )
 
 
 async def _remove_attachment_files(session: AsyncSession) -> None:
@@ -203,8 +214,23 @@ async def _seed(
     )
     invest = Account(
         name="PEA demo", type="pea", currency="EUR",
-        initial_balance=money("0.00"), institution="Trade Republic", color="#7c3aed",
+        initial_balance=money("2634.00"), institution="Boursobank", color="#7c3aed",
         account_number="DEMO-PEA-001",
+    )
+    boursobank_checking = Account(
+        name="Compte courant Boursobank demo", type="checking", currency="EUR",
+        initial_balance=money("2750.00"), institution="Boursobank", color="#d9f99d",
+        account_number="DEMO-BOURSO-COURANT-001",
+    )
+    life_insurance = Account(
+        name="Assurance vie Boursobank demo", type="life_insurance", currency="EUR",
+        initial_balance=money("18500.00"), institution="Boursobank", color="#a855f7",
+        account_number="DEMO-BOURSO-AV-001",
+    )
+    crypto_wallet = Account(
+        name="Wallet crypto demo", type="wallet", currency="EUR",
+        initial_balance=money("4200.00"), institution="Revolut", color="#06b6d4",
+        account_number="DEMO-CRYPTO-001",
     )
     archived = Account(
         name="Compte cloture demo", type="checking", currency="EUR",
@@ -216,7 +242,17 @@ async def _seed(
         initial_balance=money("125.00"), color="#0ea5e9",
         account_number="DEMO-SANDBOX-001",
     )
-    session.add_all([savings, invest, archived, sandbox])
+    session.add_all(
+        [
+            savings,
+            invest,
+            boursobank_checking,
+            life_insurance,
+            crypto_wallet,
+            archived,
+            sandbox,
+        ]
+    )
     await session.flush()
 
     # --- Transactions across the last four cycles ------------------------- #
@@ -329,12 +365,18 @@ async def _seed(
     session.add_all([archived_income, archived_expense])
     transaction_count += 2
 
-    # --- Monthly balance snapshots for checking, savings and archive ------- #
+    # --- Monthly balance snapshots ----------------------------------------- #
     checking_running = Decimal(checking.initial_balance)
     savings_running = Decimal(savings.initial_balance)
+    additional_snapshot_series = [
+        (boursobank_checking, ("2300.00", "2450.00", "2580.00", "2750.00")),
+        (life_insurance, ("16700.00", "17450.00", "18100.00", "18500.00")),
+        (invest, ("2100.00", "2300.00", "2450.00", "2634.00")),
+        (crypto_wallet, ("3600.00", "4100.00", "3850.00", "4200.00")),
+    ]
     snapshot_count = 0
     latest_savings_snapshot: BalanceSnapshot | None = None
-    for month in months:
+    for index, month in enumerate(months):
         checking_running += checking_monthly_deltas[month]
         savings_running += savings_monthly_deltas[month]
         checking_snapshot = BalanceSnapshot(
@@ -347,9 +389,17 @@ async def _seed(
             period=month.strftime("%Y-%m"),
             balance=money(savings_running),
         )
-        session.add_all([checking_snapshot, savings_snapshot])
+        additional_snapshots = [
+            BalanceSnapshot(
+                account_id=account.id,
+                period=month.strftime("%Y-%m"),
+                balance=money(balances[index]),
+            )
+            for account, balances in additional_snapshot_series
+        ]
+        session.add_all([checking_snapshot, savings_snapshot, *additional_snapshots])
         latest_savings_snapshot = savings_snapshot
-        snapshot_count += 2
+        snapshot_count += 2 + len(additional_snapshots)
 
     archived_snapshot = BalanceSnapshot(
         account_id=archived.id,
@@ -400,8 +450,19 @@ async def _seed(
     )
 
     # --- Debts ------------------------------------------------------------- #
+    mortgage = Debt(
+        name="Pret immobilier demo",
+        principal=money("210000.00"),
+        balance=money("178000.00"),
+        interest_rate=Decimal("2.10"),
+        minimum_payment=money("920.00"),
+        due_date=date(2042, 5, 15),
+        color="#7c3aed",
+        archived=False,
+    )
     session.add_all(
         [
+            mortgage,
             Debt(name="Pret auto", principal=money("15000.00"), balance=money("8200.00"),
                  interest_rate=Decimal("2.90"), minimum_payment=money("250.00"),
                  account_id=checking.id, due_date=add_month(anchor, 1).replace(day=5),
@@ -413,6 +474,21 @@ async def _seed(
                  interest_rate=Decimal("0.00"), minimum_payment=money("0.00"),
                  color="#94a3b8", archived=True),
         ]
+    )
+    await session.flush()
+
+    # --- Real estate ------------------------------------------------------- #
+    session.add(
+        RealEstateAsset(
+            name="Appartement demo",
+            property_type="primary_residence",
+            address="12 rue des Exemples, 75000 Paris",
+            acquired_on=date(2021, 5, 15),
+            purchase_price=money("280000.00"),
+            current_value=money("310000.00"),
+            ownership_share=Decimal("100.00"),
+            debt_id=mortgage.id,
+        )
     )
 
     # --- Holdings + contributions ----------------------------------------- #
@@ -438,8 +514,8 @@ async def _seed(
     # Rising cost basis and market value so /portfolio/performance can render a
     # real gain/value history rather than a contributions-only series.
     portfolio_snapshot_count = 0
-    base_cost = Decimal("1800.00")
-    base_value = Decimal("1850.00")
+    base_cost = Decimal("281800.00")
+    base_value = Decimal("311850.00")
     for index, month in enumerate(months):
         cost_basis = money(base_cost + Decimal(index) * Decimal("200.00"))
         market_value = money(base_value + Decimal(index) * Decimal("260.00"))
@@ -547,14 +623,15 @@ async def _seed(
 
     total_categories = await session.scalar(select(func.count()).select_from(Category))
     return SeedResult(
-        accounts=5,
+        accounts=8,
         transactions=transaction_count,
         snapshots=snapshot_count,
         categories=int(total_categories or 0),
         rules=2,
         recurring=2,
         changes=1,
-        debts=3,
+        debts=4,
+        real_estate_assets=1,
         holdings=2,
         contributions=contribution_count,
         households=1,
@@ -599,6 +676,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{result.snapshots} instantanes, {result.categories} categories, "
         f"{result.rules} regles, {result.recurring} recurrence(s), "
         f"{result.changes} changement(s), {result.debts} dette(s), "
+        f"{result.real_estate_assets} bien(s) immobilier(s), "
         f"{result.holdings} actif(s), {result.contributions} versement(s), "
         f"{result.portfolio_snapshots} valorisation(s), {result.merchants} identite(s), "
         f"{result.households} foyer, {result.goals} objectif, "

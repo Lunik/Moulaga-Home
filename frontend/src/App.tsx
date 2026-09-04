@@ -70,6 +70,7 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
       queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['account-institution-history'] }),
     ])
   }
   const firstError = [

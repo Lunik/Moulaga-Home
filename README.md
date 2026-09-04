@@ -5,7 +5,7 @@ une base SQLite locale et persistante.
 
 ## Fonctionnalites
 
-- tableau de bord du patrimoine net, actifs, dettes et evolution mensuelle ;
+- tableau de bord du patrimoine net, actifs, biens immobiliers, dettes et evolution mensuelle ;
 - comptes groupes par etablissement, numero ou identifiant facultatif, historique,
   releves avec pieces jointes locales, configurations de livrets et positions ;
 - registre pagine des transactions avec pieces jointes locales, creation, edition, suppression et filtres ;
@@ -13,7 +13,8 @@ une base SQLite locale et persistante.
 - categories, sous-categories, archivage et regles deterministes ;
 - boite de categorisation et suggestions entierement locales ;
 - series recurrentes, detection de changements et echeancier previsionnel ;
-- dettes, positions, valorisations, contributions et performance du portefeuille ;
+- dettes, biens immobiliers avec quote-part et emprunt associe, positions, valorisations,
+  contributions et performance du portefeuille ;
 - foyers locaux, roles, comptes partages et objectifs communs ;
 - themes clair/sombre/systeme, formats de date et styles de navigation ;
 - identites marchandes locales par monogramme et couleur, sans appel externe.

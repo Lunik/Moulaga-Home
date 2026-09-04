@@ -97,12 +97,17 @@ def test_legacy_database_upgrades_without_data_loss(tmp_path, monkeypatch):
             "SELECT name FROM sqlite_master "
             "WHERE type = 'table' AND name = 'balance_snapshot_attachments'"
         ).fetchone()
+        real_estate_table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'real_estate_assets'"
+        ).fetchone()
     finally:
         connection.close()
     assert "account_number" in account_columns
     assert "transfer_group" in transaction_columns
     assert attachment_table is not None
     assert snapshot_attachment_table is not None
+    assert real_estate_table is not None
 
     # A safety backup must have been produced before altering the existing DB.
     backups = list(tmp_path.glob("moulaga.backup-*.db"))
@@ -137,12 +142,44 @@ def test_schema_version_is_stamped_and_idempotent(tmp_path, monkeypatch):
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     finally:
         connection.close()
-    assert version >= 7
+    assert version >= 8
 
     # Re-opening a current database performs no backup (nothing pending).
     with TestClient(main.create_app()):
         pass
     assert list(tmp_path.glob("moulaga.backup-*.db")) == []
+
+
+def test_missing_table_is_recreated_after_safety_backup(tmp_path, monkeypatch):
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()):
+        pass
+
+    db_path = tmp_path / "moulaga.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("DROP TABLE real_estate_assets")
+        connection.execute("PRAGMA user_version = 7")
+        connection.commit()
+    finally:
+        connection.close()
+
+    with TestClient(main.create_app()):
+        pass
+
+    connection = sqlite3.connect(db_path)
+    try:
+        table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'real_estate_assets'"
+        ).fetchone()
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        connection.close()
+
+    assert table is not None
+    assert version >= 8
+    assert list(tmp_path.glob("moulaga.backup-*.db"))
 
 
 def test_fresh_database_seeds_defaults_and_preferences(tmp_path, monkeypatch):

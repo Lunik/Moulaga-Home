@@ -29,7 +29,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Columns that may be missing on databases created before this schema version.
 # Values are the SQLite column definitions used by ``ALTER TABLE ADD COLUMN``.
@@ -95,6 +95,10 @@ def _pending_columns(conn: Connection) -> dict[str, dict[str, str]]:
     return pending
 
 
+def _missing_tables(conn: Connection) -> set[str]:
+    return {table for table in Base.metadata.tables if not _table_exists(conn, table)}
+
+
 def _apply_columns(conn: Connection, pending: dict[str, dict[str, str]]) -> None:
     for table, columns in pending.items():
         for name, ddl in columns.items():
@@ -120,8 +124,9 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
     async with engine.connect() as conn:
         version = await conn.scalar(text("PRAGMA user_version"))
         pending = await conn.run_sync(_pending_columns)
+        missing_tables = await conn.run_sync(_missing_tables)
 
-    if pending and pre_existing and db_path is not None:
+    if (pending or missing_tables) and pre_existing and db_path is not None:
         _backup(db_path, int(version or 0))
 
     async with engine.begin() as conn:
@@ -130,5 +135,5 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         await conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
         await conn.execute(text("PRAGMA optimize"))
 
-    if pending:
+    if pending or missing_tables:
         logger.info("Schema mis a jour vers la version %s", SCHEMA_VERSION)

@@ -632,6 +632,12 @@ textarea:focus-visible {
   gap: 0.45rem;
 }
 
+.institution-history-legend {
+  flex-wrap: wrap;
+  row-gap: 0.55rem;
+  margin-bottom: 0.75rem;
+}
+
 .legend-line {
   width: 1.35rem;
   height: 2px;
@@ -2128,6 +2134,18 @@ textarea:focus-visible {
   height: 21rem;
 }
 
+.institution-history-chart {
+  height: 22rem;
+}
+
+.chart-loading {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .statement-list,
 .data-list,
 .member-list,
@@ -2325,6 +2343,100 @@ textarea:focus-visible {
 
 .holding-value {
   text-align: right;
+}
+
+.real-estate-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.real-estate-summary > span {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface);
+}
+
+.real-estate-summary small,
+.real-estate-summary strong,
+.property-copy strong,
+.property-copy small,
+.property-value small,
+.property-value strong,
+.property-equity small,
+.property-equity strong {
+  display: block;
+}
+
+.real-estate-summary small,
+.property-copy small,
+.property-value small,
+.property-equity small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.real-estate-summary strong {
+  margin-top: 0.35rem;
+  font-size: 1.25rem;
+}
+
+.real-estate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.real-estate-list article {
+  display: grid;
+  grid-template-columns: 3rem minmax(12rem, 1fr) minmax(8rem, auto) minmax(8rem, auto) auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--surface-raised);
+}
+
+.property-mark {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border-radius: 0.8rem;
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.property-mark svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.property-copy {
+  min-width: 0;
+}
+
+.property-copy small {
+  overflow: hidden;
+  margin-top: 0.22rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.property-value,
+.property-equity {
+  text-align: right;
+}
+
+.property-value strong,
+.property-equity strong {
+  margin: 0.2rem 0;
+}
+
+.real-estate-list .row-error {
+  grid-column: 2 / -1;
 }
 
 .holding-price-editor,
@@ -3438,6 +3550,33 @@ html[data-theme="light"] .status-badge {
   .holding-list article > .row-actions {
     grid-column: 2 / -1;
     justify-content: flex-end;
+  }
+
+  .real-estate-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .real-estate-list article {
+    grid-template-columns: 3rem minmax(0, 1fr) auto;
+  }
+
+  .real-estate-list .property-copy {
+    grid-column: 2;
+  }
+
+  .real-estate-list .property-value,
+  .real-estate-list .property-equity {
+    grid-column: 2 / -1;
+    text-align: left;
+  }
+
+  .real-estate-list article > .row-actions {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .real-estate-list .row-error {
+    grid-column: 2 / -1;
   }
 
   .categorization-actions {

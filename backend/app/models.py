@@ -271,6 +271,27 @@ class Debt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class RealEstateAsset(Base):
+    __tablename__ = "real_estate_assets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    property_type: Mapped[str] = mapped_column(String(32), default="primary_residence")
+    address: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    acquired_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    purchase_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    current_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    ownership_share: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=Decimal("100.00")
+    )
+    debt_id: Mapped[int | None] = mapped_column(
+        ForeignKey("debts.id", ondelete="SET NULL"), nullable=True, unique=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    debt: Mapped[Debt | None] = relationship()
+
+
 class Holding(Base):
     __tablename__ = "holdings"
 

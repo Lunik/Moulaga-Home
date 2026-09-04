@@ -4,6 +4,8 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -14,6 +16,7 @@ import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiUpload, queryString } 
 import type {
   Account,
   AccountDetail,
+  AccountInstitutionHistoryPoint,
   AccountSnapshot,
   Category,
   Holding,
@@ -103,6 +106,54 @@ const savingsProducts = [
   { name: 'PEL', rate: '2.000', cap: '61200.00' },
 ] as const
 
+const institutionChartColors = [
+  '#615fff',
+  '#16c79a',
+  '#1da9e8',
+  '#f97316',
+  '#8758f6',
+  '#ec4899',
+  '#eab308',
+  '#14b8a6',
+  '#f43f5e',
+  '#84cc16',
+]
+
+type InstitutionChartRow = {
+  period: string
+  [key: string]: string | number
+}
+
+function buildInstitutionChart(history: AccountInstitutionHistoryPoint[]) {
+  const institutions = [...new Set(history.map((point) => point.institution))]
+    .sort((left, right) => left.localeCompare(right, 'fr'))
+  const series = institutions.map((institution, index) => ({
+    institution,
+    dataKey: `institution_${index}`,
+    color: institutionChartColors[index % institutionChartColors.length],
+  }))
+  const dataKeyByInstitution = new Map(
+    series.map(({ institution, dataKey }) => [institution, dataKey]),
+  )
+  const rowsByPeriod = new Map<string, InstitutionChartRow>()
+
+  for (const point of history) {
+    const row = rowsByPeriod.get(point.period) ?? { period: point.period }
+    const dataKey = dataKeyByInstitution.get(point.institution)
+    if (dataKey === undefined) {
+      throw new Error(`Série introuvable pour l'établissement ${point.institution}`)
+    }
+    row[dataKey] = Number(point.balance)
+    rowsByPeriod.set(point.period, row)
+  }
+
+  return {
+    data: [...rowsByPeriod.values()]
+      .sort((left, right) => left.period.localeCompare(right.period)),
+    series,
+  }
+}
+
 export function AccountsView({
   accounts,
   navigate,
@@ -116,6 +167,15 @@ export function AccountsView({
   const [typeFilter, setTypeFilter] = useState('all')
   const [showArchived, setShowArchived] = useState(false)
   const [collapsedInstitutions, setCollapsedInstitutions] = useState<Set<string>>(new Set())
+  const institutionHistory = useQuery({
+    queryKey: ['account-institution-history', showArchived, typeFilter],
+    queryFn: () => apiGet<AccountInstitutionHistoryPoint[]>(
+      `/accounts/institution-history${queryString({
+        archived: showArchived,
+        account_type: typeFilter === 'all' ? undefined : typeFilter,
+      })}`,
+    ),
+  })
   const visibleAccounts = accounts.filter((account) => {
     return account.archived === showArchived && (typeFilter === 'all' || account.type === typeFilter)
   })
@@ -132,6 +192,10 @@ export function AccountsView({
       return groups
     }, {}),
   ).sort(([left], [right]) => left.localeCompare(right, 'fr'))
+  const {
+    data: institutionChartData,
+    series: institutionChartSeries,
+  } = buildInstitutionChart(institutionHistory.data ?? [])
   const toggleInstitution = (institution: string) => {
     setCollapsedInstitutions((current) => {
       const next = new Set(current)
@@ -193,6 +257,79 @@ export function AccountsView({
           )}
         </button>
       </div>
+
+      <Panel
+        title="Évolution des soldes par établissement"
+        subtitle="Somme des relevés mensuels des comptes affichés"
+      >
+        {institutionChartSeries.length > 0 && (
+          <div
+            aria-label="Établissements représentés"
+            className="chart-legend institution-history-legend"
+            role="list"
+          >
+            {institutionChartSeries.map((series) => (
+              <span key={series.dataKey} role="listitem">
+                <i className="legend-line" style={{ background: series.color }} />
+                {series.institution}
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="chart-container institution-history-chart">
+          {institutionHistory.isLoading ? (
+            <div className="chart-loading">Chargement de l'historique…</div>
+          ) : institutionHistory.error ? (
+            <div className="error-banner" role="alert">
+              Impossible de charger l'historique : {errorMessage(institutionHistory.error)}
+            </div>
+          ) : institutionChartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={institutionChartData}
+                margin={{ top: 12, right: 18, bottom: 4, left: 0 }}
+              >
+                <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
+                <XAxis
+                  axisLine={false}
+                  dataKey="period"
+                  tick={{ fill: 'var(--muted)', fontSize: 12 }}
+                  tickLine={false}
+                />
+                <YAxis
+                  axisLine={false}
+                  padding={{ top: 12 }}
+                  tick={{ fill: 'var(--muted)', fontSize: 12 }}
+                  tickFormatter={compactMoney}
+                  tickLine={false}
+                />
+                <Tooltip
+                  contentStyle={chartTooltipStyle}
+                  formatter={(value) => money(Number(value))}
+                  labelFormatter={(label) => `Période ${label}`}
+                />
+                {institutionChartSeries.map((series) => (
+                  <Line
+                    connectNulls
+                    dataKey={series.dataKey}
+                    dot={{ fill: series.color, r: 2.5, strokeWidth: 0 }}
+                    key={series.dataKey}
+                    name={series.institution}
+                    stroke={series.color}
+                    strokeWidth={2.5}
+                    type="monotone"
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyState
+              icon="calendar"
+              text="Ajoutez des relevés mensuels pour suivre l'évolution par établissement."
+            />
+          )}
+        </div>
+      </Panel>
 
       {accountGroups.length > 0 ? (
         <div className="institution-groups">

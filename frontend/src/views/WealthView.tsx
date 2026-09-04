@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Area,
@@ -26,6 +26,7 @@ import type {
   PerformancePoint,
   PortfolioAllocation,
   PortfolioSummary,
+  RealEstateAsset,
 } from '../api/types'
 import { isRouteBeta } from '../featureValidation'
 import type { Route, WealthTab } from '../routing'
@@ -58,6 +59,7 @@ export function WealthView({
   accounts: Account[]
   navigate: (route: Route) => void
 }) {
+  const tabsRef = useRef<HTMLElement>(null)
   const summary = useQuery({
     queryKey: ['wealth-summary'],
     queryFn: () => apiGet<PortfolioSummary>('/portfolio/summary'),
@@ -78,6 +80,10 @@ export function WealthView({
     queryKey: ['debts'],
     queryFn: () => apiGet<Debt[]>('/debts'),
   })
+  const realEstate = useQuery({
+    queryKey: ['real-estate'],
+    queryFn: () => apiGet<RealEstateAsset[]>('/real-estate'),
+  })
   const performance = useQuery({
     queryKey: ['portfolio-performance'],
     queryFn: () => apiGet<PerformancePoint[]>('/portfolio/performance'),
@@ -97,14 +103,26 @@ export function WealthView({
     netWorthHistory.error,
     holdings.error,
     debts.error,
+    realEstate.error,
     performance.error,
     allocation.error,
     contributions.error,
   ].filter(Boolean)
 
+  useLayoutEffect(() => {
+    const tabs = tabsRef.current
+    const activeTab = tabs?.querySelector<HTMLButtonElement>('.active')
+    if (!tabs || !activeTab) return
+    const tabsBounds = tabs.getBoundingClientRect()
+    const activeBounds = activeTab.getBoundingClientRect()
+    tabs.scrollLeft += activeBounds.left
+      - tabsBounds.left
+      - (tabs.clientWidth - activeTab.clientWidth) / 2
+  }, [tab])
+
   return (
     <div className="view-stack">
-      <nav className="module-tabs" aria-label="Patrimoine">
+      <nav className="module-tabs" aria-label="Patrimoine" ref={tabsRef}>
         <button className={tab === 'overview' ? 'active' : ''} type="button" onClick={() => navigate({ name: 'wealth', tab: 'overview' })}>
           <Icon name="wealth" /> Vue d'ensemble
           {isRouteBeta({ name: 'wealth', tab: 'overview' }) && <BetaBadge />}
@@ -112,6 +130,10 @@ export function WealthView({
         <button className={tab === 'holdings' ? 'active' : ''} type="button" onClick={() => navigate({ name: 'wealth', tab: 'holdings' })}>
           <Icon name="holdings" /> Actifs
           {isRouteBeta({ name: 'wealth', tab: 'holdings' }) && <BetaBadge />}
+        </button>
+        <button className={tab === 'real-estate' ? 'active' : ''} type="button" onClick={() => navigate({ name: 'wealth', tab: 'real-estate' })}>
+          <Icon name="home" /> Immobilier
+          {isRouteBeta({ name: 'wealth', tab: 'real-estate' }) && <BetaBadge />}
         </button>
         <button className={tab === 'debts' ? 'active' : ''} type="button" onClick={() => navigate({ name: 'wealth', tab: 'debts' })}>
           <Icon name="debt" /> Dettes
@@ -135,6 +157,9 @@ export function WealthView({
       )}
       {tab === 'holdings' && (
         <HoldingsPanel accounts={accounts} holdings={holdings.data ?? []} />
+      )}
+      {tab === 'real-estate' && (
+        <RealEstatePanel assets={realEstate.data ?? []} debts={debts.data ?? []} />
       )}
       {tab === 'debts' && <DebtsPanel debts={debts.data ?? []} />}
     </div>
@@ -170,7 +195,9 @@ function WealthOverview({
   const recentContributions = [...contributions]
     .sort((left, right) => right.occurred_on.localeCompare(left.occurred_on))
     .slice(0, 5)
-  const assets = Number(netWorth?.cash ?? 0) + Number(netWorth?.investments ?? 0)
+  const assets = Number(netWorth?.cash ?? 0)
+    + Number(netWorth?.investments ?? 0)
+    + Number(netWorth?.real_estate ?? 0)
   const gainPercent = Number(summary?.cost_basis ?? 0) > 0
     ? (Number(summary?.gain ?? 0) / Number(summary?.cost_basis ?? 0)) * 100
     : 0
@@ -569,6 +596,284 @@ function HoldingForm({
   )
 }
 
+function RealEstatePanel({ assets, debts }: { assets: RealEstateAsset[]; debts: Debt[] }) {
+  const queryClient = useQueryClient()
+  const [showForm, setShowForm] = useState(false)
+  const [editingAsset, setEditingAsset] = useState<RealEstateAsset | null>(null)
+  const [search, setSearch] = useState('')
+  const [propertyType, setPropertyType] = useState('all')
+  const filtered = useMemo(() => {
+    const normalized = search.trim().toLocaleLowerCase('fr-FR')
+    return assets.filter((asset) => {
+      const matchesSearch =
+        !normalized
+        || asset.name.toLocaleLowerCase('fr-FR').includes(normalized)
+        || (asset.address ?? '').toLocaleLowerCase('fr-FR').includes(normalized)
+      return matchesSearch && (propertyType === 'all' || asset.property_type === propertyType)
+    })
+  }, [assets, propertyType, search])
+  const totalOwned = assets.reduce((sum, asset) => sum + Number(asset.owned_value), 0)
+  const totalDebt = assets.reduce((sum, asset) => sum + Number(asset.debt_balance), 0)
+  const totalEquity = totalOwned - totalDebt
+  const availableDebts = debts.filter(
+    (debt) => !assets.some((asset) => asset.debt_id === debt.id && asset.id !== editingAsset?.id),
+  )
+  const refresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['real-estate'] }),
+      queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+    ])
+  }
+  const closeForm = () => {
+    setShowForm(false)
+    setEditingAsset(null)
+  }
+
+  return (
+    <>
+      <section className="section-intro">
+        <p>Suivez la valeur de vos biens, votre quote-part et les emprunts associés.</p>
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() => {
+            setEditingAsset(null)
+            setShowForm((current) => !current)
+          }}
+        >
+          <Icon name="plus" /> Ajouter un bien
+        </button>
+      </section>
+      {(showForm || editingAsset) && (
+        <RealEstateForm
+          asset={editingAsset ?? undefined}
+          debts={availableDebts}
+          key={editingAsset?.id ?? 'new-property'}
+          onCancel={closeForm}
+          onSaved={async () => {
+            await refresh()
+            closeForm()
+          }}
+        />
+      )}
+      <div className="real-estate-summary">
+        <span>
+          <small>Valeur détenue</small>
+          <strong>{money(totalOwned)}</strong>
+        </span>
+        <span>
+          <small>Emprunts associés</small>
+          <strong className={totalDebt > 0 ? 'negative' : ''}>{money(totalDebt)}</strong>
+        </span>
+        <span>
+          <small>Valeur nette immobilière</small>
+          <strong className={totalEquity >= 0 ? 'positive' : 'negative'}>{money(totalEquity)}</strong>
+        </span>
+      </div>
+      <Panel
+        title="Biens immobiliers"
+        subtitle={`${assets.length} bien${assets.length === 1 ? '' : 's'} enregistré${assets.length === 1 ? '' : 's'}`}
+      >
+        <div className="filter-row">
+          <label className="search-field">
+            <Icon name="search" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Rechercher un bien ou une adresse"
+            />
+          </label>
+          <select value={propertyType} onChange={(event) => setPropertyType(event.target.value)}>
+            <option value="all">Tous les biens</option>
+            <option value="primary_residence">Résidence principale</option>
+            <option value="secondary_residence">Résidence secondaire</option>
+            <option value="rental">Locatif</option>
+            <option value="commercial">Local commercial</option>
+            <option value="land">Terrain</option>
+            <option value="other">Autre</option>
+          </select>
+        </div>
+        {filtered.length > 0 ? (
+          <div className="real-estate-list">
+            {filtered.map((asset) => (
+              <RealEstateRow
+                asset={asset}
+                key={asset.id}
+                onChanged={refresh}
+                onEdit={() => {
+                  setShowForm(false)
+                  setEditingAsset(asset)
+                }}
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            icon="home"
+            text={assets.length === 0 ? 'Ajoutez votre premier bien immobilier.' : 'Aucun bien ne correspond aux filtres.'}
+          />
+        )}
+      </Panel>
+    </>
+  )
+}
+
+function RealEstateRow({
+  asset,
+  onChanged,
+  onEdit,
+}: {
+  asset: RealEstateAsset
+  onChanged: () => Promise<void>
+  onEdit: () => void
+}) {
+  const remove = useMutation({
+    mutationFn: () => apiDelete(`/real-estate/${asset.id}`),
+    onSuccess: onChanged,
+  })
+  const gainPercent = Number(asset.owned_purchase_price) > 0
+    ? (Number(asset.gain) / Number(asset.owned_purchase_price)) * 100
+    : 0
+
+  return (
+    <article>
+      <span className="property-mark"><Icon name="home" /></span>
+      <span className="property-copy">
+        <strong>{asset.name}</strong>
+        <small>{propertyTypeLabel(asset.property_type)}{asset.address ? ` · ${asset.address}` : ''}</small>
+        <small>
+          Quote-part {Number(asset.ownership_share).toLocaleString('fr-FR', { maximumFractionDigits: 2 })}%
+          {asset.acquired_on ? ` · Acquis le ${formatDate(asset.acquired_on)}` : ''}
+        </small>
+      </span>
+      <span className="property-value">
+        <small>Valeur détenue</small>
+        <strong>{money(asset.owned_value)}</strong>
+        <small className={Number(asset.gain) >= 0 ? 'positive' : 'negative'}>
+          {signedMoney(asset.gain)} · {gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+        </small>
+      </span>
+      <span className="property-equity">
+        <small>Valeur nette</small>
+        <strong className={Number(asset.net_equity) >= 0 ? 'positive' : 'negative'}>{money(asset.net_equity)}</strong>
+        {asset.debt_name && <small>{asset.debt_name} · {money(asset.debt_balance)}</small>}
+      </span>
+      <span className="row-actions">
+        <button className="icon-action" type="button" aria-label="Modifier" onClick={onEdit}><Icon name="edit" /></button>
+        <button
+          className="icon-action"
+          type="button"
+          aria-label="Supprimer"
+          onClick={() => {
+            if (window.confirm('Supprimer ce bien immobilier ?')) remove.mutate()
+          }}
+        >
+          <Icon name="trash" />
+        </button>
+      </span>
+      {remove.error && <span className="form-error row-error">{errorMessage(remove.error)}</span>}
+    </article>
+  )
+}
+
+function RealEstateForm({
+  asset,
+  debts,
+  onCancel,
+  onSaved,
+}: {
+  asset?: RealEstateAsset
+  debts: Debt[]
+  onCancel: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [name, setName] = useState(asset?.name ?? '')
+  const [propertyType, setPropertyType] = useState(asset?.property_type ?? 'primary_residence')
+  const [address, setAddress] = useState(asset?.address ?? '')
+  const [acquiredOn, setAcquiredOn] = useState(asset?.acquired_on ?? '')
+  const [purchasePrice, setPurchasePrice] = useState(asset?.purchase_price ?? '')
+  const [currentValue, setCurrentValue] = useState(asset?.current_value ?? '')
+  const [ownershipShare, setOwnershipShare] = useState(asset?.ownership_share ?? '100')
+  const [debtId, setDebtId] = useState(asset?.debt_id ? String(asset.debt_id) : '')
+  const mutation = useMutation({
+    mutationFn: () => {
+      const payload = {
+        name,
+        property_type: propertyType,
+        address,
+        acquired_on: acquiredOn || null,
+        purchase_price: purchasePrice,
+        current_value: currentValue,
+        ownership_share: ownershipShare,
+        debt_id: debtId ? Number(debtId) : null,
+      }
+      return asset
+        ? apiPatch<RealEstateAsset>(`/real-estate/${asset.id}`, payload)
+        : apiPost<RealEstateAsset>('/real-estate', payload)
+    },
+    onSuccess: onSaved,
+  })
+
+  return (
+    <Panel
+      title={asset ? 'Modifier le bien' : 'Nouveau bien immobilier'}
+      subtitle="Les montants et l’adresse restent exclusivement dans votre base locale."
+    >
+      <form className="feature-form" onSubmit={(event: FormEvent) => {
+        event.preventDefault()
+        mutation.mutate()
+      }}>
+        <Field label="Nom">
+          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
+        </Field>
+        <Field label="Type de bien">
+          <select value={propertyType} onChange={(event) => setPropertyType(event.target.value)}>
+            <option value="primary_residence">Résidence principale</option>
+            <option value="secondary_residence">Résidence secondaire</option>
+            <option value="rental">Locatif</option>
+            <option value="commercial">Local commercial</option>
+            <option value="land">Terrain</option>
+            <option value="other">Autre</option>
+          </select>
+        </Field>
+        <Field label="Adresse">
+          <input value={address} onChange={(event) => setAddress(event.target.value)} maxLength={200} placeholder="Facultatif" />
+        </Field>
+        <Field label="Date d’acquisition">
+          <input type="date" value={acquiredOn} onChange={(event) => setAcquiredOn(event.target.value)} />
+        </Field>
+        <Field label="Prix d’achat">
+          <input type="number" min="0" step="0.01" value={purchasePrice} onChange={(event) => setPurchasePrice(event.target.value)} required />
+        </Field>
+        <Field label="Valeur actuelle">
+          <input type="number" min="0" step="0.01" value={currentValue} onChange={(event) => setCurrentValue(event.target.value)} required />
+        </Field>
+        <Field label="Quote-part (%)">
+          <input type="number" min="0.01" max="100" step="0.01" value={ownershipShare} onChange={(event) => setOwnershipShare(event.target.value)} required />
+        </Field>
+        <Field label="Emprunt associé">
+          <select value={debtId} onChange={(event) => setDebtId(event.target.value)}>
+            <option value="">Aucun emprunt</option>
+            {debts.map((debt) => (
+              <option key={debt.id} value={debt.id}>{debt.name} · {money(debt.balance)}</option>
+            ))}
+          </select>
+        </Field>
+        <div className="form-buttons">
+          <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
+          <button className="primary-button" type="submit" disabled={mutation.isPending}>
+            {mutation.isPending ? 'Enregistrement…' : asset ? 'Enregistrer' : 'Ajouter'}
+          </button>
+        </div>
+      </form>
+      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
+    </Panel>
+  )
+}
+
 function DebtsPanel({ debts }: { debts: Debt[] }) {
   const queryClient = useQueryClient()
   const [showForm, setShowForm] = useState(false)
@@ -587,8 +892,12 @@ function DebtsPanel({ debts }: { debts: Debt[] }) {
         <DebtForm
           onCancel={() => setShowForm(false)}
           onSaved={async () => {
-            await queryClient.invalidateQueries({ queryKey: ['debts'] })
-            await queryClient.invalidateQueries({ queryKey: ['net-worth'] })
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['debts'] }),
+              queryClient.invalidateQueries({ queryKey: ['real-estate'] }),
+              queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
+              queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+            ])
             setShowForm(false)
           }}
         />
@@ -613,8 +922,12 @@ function DebtRow({ debt }: { debt: Debt }) {
   const [editing, setEditing] = useState(false)
   const [remaining, setRemaining] = useState(debt.balance)
   const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ['debts'] })
-    await queryClient.invalidateQueries({ queryKey: ['net-worth'] })
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['debts'] }),
+      queryClient.invalidateQueries({ queryKey: ['real-estate'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+    ])
   }
   const update = useMutation({
     mutationFn: () => apiPatch<Debt>(`/debts/${debt.id}`, { balance: remaining }),
@@ -734,6 +1047,18 @@ function assetLabel(assetClass: Holding['asset_class']): string {
     other: 'Autre',
   }
   return labels[assetClass] ?? assetClass
+}
+
+function propertyTypeLabel(propertyType: RealEstateAsset['property_type']): string {
+  const labels: Record<string, string> = {
+    primary_residence: 'Résidence principale',
+    secondary_residence: 'Résidence secondaire',
+    rental: 'Bien locatif',
+    commercial: 'Local commercial',
+    land: 'Terrain',
+    other: 'Autre',
+  }
+  return labels[propertyType] ?? propertyType
 }
 
 function holdingGainPercent(holding: Holding): number {

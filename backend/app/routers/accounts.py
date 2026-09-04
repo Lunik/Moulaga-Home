@@ -38,6 +38,7 @@ from ..schemas import (
     BalanceSnapshotCreate,
     BalanceSnapshotRead,
     BalanceSnapshotUpdate,
+    InstitutionHistoryPoint,
 )
 
 router = APIRouter(tags=["accounts"])
@@ -86,6 +87,60 @@ async def _has_dependencies(session: AsyncSession, account_id: int) -> bool:
         if dependency_id is not None:
             return True
     return False
+
+
+@router.get(
+    "/accounts/institution-history",
+    response_model=list[InstitutionHistoryPoint],
+)
+async def list_institution_history(
+    archived: bool = False,
+    account_type: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[InstitutionHistoryPoint]:
+    institution = func.coalesce(
+        func.nullif(func.trim(Account.institution), ""),
+        "Établissement non renseigné",
+    )
+    statement = (
+        select(
+            Account.id.label("account_id"),
+            BalanceSnapshot.period.label("period"),
+            institution.label("institution"),
+            BalanceSnapshot.balance.label("balance"),
+        )
+        .join(Account, Account.id == BalanceSnapshot.account_id)
+        .where(Account.archived.is_(archived))
+        .order_by(BalanceSnapshot.period, Account.id)
+    )
+    if account_type is not None:
+        statement = statement.where(Account.type == account_type)
+
+    rows = (await session.execute(statement)).all()
+    snapshots_by_period: dict[str, list[tuple[int, str, Decimal]]] = {}
+    for account_id, period, institution_name, balance in rows:
+        snapshots_by_period.setdefault(period, []).append(
+            (account_id, institution_name, Decimal(balance))
+        )
+
+    latest_by_account: dict[int, tuple[str, Decimal]] = {}
+    history: list[InstitutionHistoryPoint] = []
+    for period, snapshots in snapshots_by_period.items():
+        for account_id, institution_name, balance in snapshots:
+            latest_by_account[account_id] = (institution_name, balance)
+
+        totals: dict[str, Decimal] = {}
+        for institution_name, balance in latest_by_account.values():
+            totals[institution_name] = totals.get(institution_name, Decimal("0.00")) + balance
+        history.extend(
+            InstitutionHistoryPoint(
+                period=period,
+                institution=institution_name,
+                balance=money(balance),
+            )
+            for institution_name, balance in sorted(totals.items())
+        )
+    return history
 
 
 @router.get("/accounts/{account_id}", response_model=AccountDetail)

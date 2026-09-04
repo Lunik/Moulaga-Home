@@ -19,6 +19,7 @@ export type IconName =
   | 'edit'
   | 'family'
   | 'grid'
+  | 'home'
   | 'holdings'
   | 'plus'
   | 'receipt'
@@ -103,6 +104,12 @@ export function Icon({ name, className }: { name: IconName; className?: string }
         <rect x="14" y="3" width="7" height="7" rx="1" />
         <rect x="3" y="14" width="7" height="7" rx="1" />
         <rect x="14" y="14" width="7" height="7" rx="1" />
+      </>
+    ),
+    home: (
+      <>
+        <path d="m3 11 9-8 9 8" />
+        <path d="M5 10v10h14V10M9 20v-6h6v6" />
       </>
     ),
     holdings: (
