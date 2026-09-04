@@ -66,11 +66,30 @@ Le dashboard doit montrer :
 - Les suggestions, logos et identites marchandes ne doivent effectuer aucun appel reseau.
 - Les mutations d'un foyer exigent un acteur et un role suffisant.
 
+## Seed de demonstration
+
+- `backend/app/commands/seed_demo.py` est le contrat de demonstration et de QA visuelle de
+  l'application. Toute fonctionnalite ajoutee ou modifiee doit mettre a jour cette seed dans le
+  meme changement afin de fournir un cas synthetique coherent et directement testable.
+- Chaque nouvel etat visible ou parcours metier doit etre represente, notamment les variantes
+  actives/archivees, les donnees liees, les etats vides utiles et les seuils comme la pagination.
+- `backend/tests/test_seed_demo.py` doit verifier les donnees et les routes necessaires au nouveau
+  parcours. Une fonctionnalite n'est pas terminee si seule son implementation est testee avec des
+  fixtures isolees.
+- La seed ne doit contenir aucune donnee bancaire reelle. Les pieces jointes de demonstration sont
+  generees a l'execution sous `MOULAGA_DATA_DIR`, jamais ajoutees au depot.
+- `MOULAGA_DEMO_MODE=true` est explicitement destructif : l'entrypoint Docker execute la seed avec
+  `--reset` a chaque demarrage. Le Compose l'active par defaut ; l'utilisateur doit retirer cette
+  variable avant de commencer a conserver ses modifications ou d'importer ses donnees.
+- Hors mode demonstration, conserver les gardes de securite de la commande : refus de `/data`,
+  refus d'ecraser une base sans `--reset` et absence de chemins locaux dans les sorties.
+
 ## Vérification
 
 Avant de conclure une modification :
 
 ```bash
+cd backend && .venv/bin/python -m pytest tests/test_seed_demo.py
 cd backend && .venv/bin/python -m ruff check app tests && .venv/bin/python -m pytest
 cd frontend && npm run build && npm run lint
 ```

@@ -25,9 +25,11 @@ import type {
   Transaction,
   TransactionCount,
 } from '../api/types'
+import { isRouteBeta } from '../featureValidation'
 import type { BudgetTab, Route } from '../routing'
 import {
   AmountDirectionToggle,
+  BetaBadge,
   EmptyState,
   Field,
   Icon,
@@ -88,6 +90,7 @@ export function BudgetView({
           >
             <Icon name={item.icon} />
             {item.label}
+            {isRouteBeta({ name: 'budget', tab: item.id }) && <BetaBadge />}
             {item.id === 'categorize' && (
               <span className="nav-count">{transactions.filter((transaction) => transaction.category_id === null).length}</span>
             )}

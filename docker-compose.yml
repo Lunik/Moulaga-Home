@@ -11,6 +11,9 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      # Destructif : retirez cette variable pour conserver les donnees entre les demarrages.
+      MOULAGA_DEMO_MODE: "true"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
       interval: 30s

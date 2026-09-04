@@ -29,13 +29,14 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 
 # Columns that may be missing on databases created before this schema version.
 # Values are the SQLite column definitions used by ``ALTER TABLE ADD COLUMN``.
 EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     "accounts": {
         "institution": "VARCHAR(120)",
+        "account_number": "VARCHAR(120)",
         "color": "VARCHAR(16) DEFAULT '#4f46e5' NOT NULL",
         "archived": "BOOLEAN DEFAULT 0 NOT NULL",
         "savings_product": "VARCHAR(64)",

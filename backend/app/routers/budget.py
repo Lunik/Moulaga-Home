@@ -14,6 +14,7 @@ from ..common import money
 from ..db import get_session
 from ..models import Account, Category, Transaction
 from ..schemas import (
+    DEPRECATED_ACCOUNT_TYPES,
     AccountCreate,
     AccountRead,
     CategoryBreakdown,
@@ -54,6 +55,8 @@ async def list_accounts(
 
 @router.post("/accounts", response_model=AccountRead, status_code=201)
 async def create_account(payload: AccountCreate, session: AsyncSession = Depends(get_session)) -> AccountRead:
+    if payload.type in DEPRECATED_ACCOUNT_TYPES:
+        raise HTTPException(status_code=422, detail="Ce type de compte n'est plus disponible")
     account = Account(**payload.model_dump())
     session.add(account)
     try:

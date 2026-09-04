@@ -6,17 +6,21 @@ from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ..account_access import ensure_account_writable, require_account
+from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import money
 from ..db import get_session
 from ..models import (
     Account,
     BalanceSnapshot,
+    BalanceSnapshotAttachment,
     Debt,
     Goal,
     Holding,
@@ -25,10 +29,12 @@ from ..models import (
     Transaction,
 )
 from ..schemas import (
+    DEPRECATED_ACCOUNT_TYPES,
     AccountDetail,
     AccountHistoryPoint,
     AccountRead,
     AccountUpdate,
+    BalanceSnapshotAttachmentRead,
     BalanceSnapshotCreate,
     BalanceSnapshotRead,
     BalanceSnapshotUpdate,
@@ -105,6 +111,7 @@ async def get_account(
         currency=account.currency,
         initial_balance=account.initial_balance,
         institution=account.institution,
+        account_number=account.account_number,
         color=account.color,
         archived=account.archived,
         savings_product=account.savings_product,
@@ -128,6 +135,9 @@ async def update_account(
     account = await _require_account(session, account_id)
     ensure_account_writable(account)
     data = payload.model_dump(exclude_unset=True)
+    requested_type = data.get("type")
+    if requested_type in DEPRECATED_ACCOUNT_TYPES and requested_type != account.type:
+        raise HTTPException(status_code=422, detail="Ce type de compte n'est plus disponible")
     for field, value in data.items():
         setattr(account, field, value)
     try:
@@ -222,6 +232,17 @@ async def archive_account(
 # --------------------------------------------------------------------------- #
 # Monthly balance snapshots
 # --------------------------------------------------------------------------- #
+def _snapshot_read(snapshot: BalanceSnapshot) -> BalanceSnapshotRead:
+    return BalanceSnapshotRead.model_validate(snapshot).model_copy(
+        update={"attachment_count": len(snapshot.attachments)}
+    )
+
+
+def _remove_snapshot_files(snapshot: BalanceSnapshot) -> None:
+    for attachment in snapshot.attachments:
+        remove_attachment(attachment.stored_path)
+
+
 @router.get("/accounts/{account_id}/snapshots", response_model=list[BalanceSnapshotRead])
 async def list_snapshots(
     account_id: int, session: AsyncSession = Depends(get_session)
@@ -230,11 +251,12 @@ async def list_snapshots(
     rows = (
         await session.execute(
             select(BalanceSnapshot)
+            .options(selectinload(BalanceSnapshot.attachments))
             .where(BalanceSnapshot.account_id == account_id)
             .order_by(BalanceSnapshot.period)
         )
     ).scalars().all()
-    return [BalanceSnapshotRead.model_validate(row) for row in rows]
+    return [_snapshot_read(row) for row in rows]
 
 
 async def _require_snapshot(
@@ -242,8 +264,17 @@ async def _require_snapshot(
     account_id: int,
     snapshot_id: int,
 ) -> BalanceSnapshot:
-    snapshot = await session.get(BalanceSnapshot, snapshot_id)
-    if snapshot is None or snapshot.account_id != account_id:
+    snapshot = (
+        await session.execute(
+            select(BalanceSnapshot)
+            .options(selectinload(BalanceSnapshot.attachments))
+            .where(
+                BalanceSnapshot.id == snapshot_id,
+                BalanceSnapshot.account_id == account_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if snapshot is None:
         raise HTTPException(status_code=404, detail="Releve introuvable")
     return snapshot
 
@@ -268,8 +299,7 @@ async def upsert_snapshot(
         session.add(existing)
     existing.balance = money(payload.balance)
     await session.commit()
-    await session.refresh(existing)
-    return BalanceSnapshotRead.model_validate(existing)
+    return _snapshot_read(await _require_snapshot(session, account_id, existing.id))
 
 
 @router.patch(
@@ -295,8 +325,7 @@ async def update_snapshot(
             status_code=409,
             detail="Un releve existe deja pour cette periode",
         ) from exc
-    await session.refresh(snapshot)
-    return BalanceSnapshotRead.model_validate(snapshot)
+    return _snapshot_read(await _require_snapshot(session, account_id, snapshot.id))
 
 
 @router.delete("/accounts/{account_id}/snapshots/{snapshot_id}", status_code=204)
@@ -308,6 +337,7 @@ async def delete_snapshot(
     account = await _require_account(session, account_id)
     ensure_account_writable(account)
     snapshot = await _require_snapshot(session, account_id, snapshot_id)
+    _remove_snapshot_files(snapshot)
     await session.delete(snapshot)
     await session.commit()
 
@@ -333,7 +363,9 @@ async def generate_snapshots(
         snap.period: snap
         for snap in (
             await session.execute(
-                select(BalanceSnapshot).where(BalanceSnapshot.account_id == account_id)
+                select(BalanceSnapshot)
+                .options(selectinload(BalanceSnapshot.attachments))
+                .where(BalanceSnapshot.account_id == account_id)
             )
         ).scalars().all()
     }
@@ -350,14 +382,148 @@ async def generate_snapshots(
     generated_periods = {period for period, _delta in rows}
     for period, snapshot in existing.items():
         if period not in generated_periods:
+            _remove_snapshot_files(snapshot)
             await session.delete(snapshot)
     await session.commit()
 
     refreshed = (
         await session.execute(
             select(BalanceSnapshot)
+            .options(selectinload(BalanceSnapshot.attachments))
             .where(BalanceSnapshot.account_id == account_id)
             .order_by(BalanceSnapshot.period)
         )
     ).scalars().all()
-    return [BalanceSnapshotRead.model_validate(row) for row in refreshed]
+    return [_snapshot_read(row) for row in refreshed]
+
+
+def _snapshot_attachment_read(
+    attachment: BalanceSnapshotAttachment,
+) -> BalanceSnapshotAttachmentRead:
+    return BalanceSnapshotAttachmentRead(
+        id=attachment.id,
+        snapshot_id=attachment.snapshot_id,
+        original_name=attachment.original_name,
+        storage_path=f"/{attachment.stored_path}",
+        content_type=attachment.content_type,
+        size=attachment.size,
+    )
+
+
+async def _require_snapshot_attachment(
+    session: AsyncSession,
+    account_id: int,
+    snapshot_id: int,
+    attachment_id: int,
+) -> BalanceSnapshotAttachment:
+    await _require_snapshot(session, account_id, snapshot_id)
+    attachment = await session.get(BalanceSnapshotAttachment, attachment_id)
+    if attachment is None or attachment.snapshot_id != snapshot_id:
+        raise HTTPException(status_code=404, detail="Piece jointe introuvable")
+    return attachment
+
+
+@router.get(
+    "/accounts/{account_id}/snapshots/{snapshot_id}/attachments",
+    response_model=list[BalanceSnapshotAttachmentRead],
+)
+async def list_snapshot_attachments(
+    account_id: int,
+    snapshot_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[BalanceSnapshotAttachmentRead]:
+    await _require_snapshot(session, account_id, snapshot_id)
+    rows = (
+        await session.execute(
+            select(BalanceSnapshotAttachment)
+            .where(BalanceSnapshotAttachment.snapshot_id == snapshot_id)
+            .order_by(
+                BalanceSnapshotAttachment.created_at,
+                BalanceSnapshotAttachment.id,
+            )
+        )
+    ).scalars().all()
+    return [_snapshot_attachment_read(row) for row in rows]
+
+
+@router.post(
+    "/accounts/{account_id}/snapshots/{snapshot_id}/attachments",
+    response_model=BalanceSnapshotAttachmentRead,
+    status_code=201,
+)
+async def upload_snapshot_attachment(
+    account_id: int,
+    snapshot_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> BalanceSnapshotAttachmentRead:
+    account = await _require_account(session, account_id)
+    ensure_account_writable(account)
+    await _require_snapshot(session, account_id, snapshot_id)
+    content_type = file.content_type
+    original_name, stored_path, size = await store_attachment(file)
+    attachment = BalanceSnapshotAttachment(
+        snapshot_id=snapshot_id,
+        original_name=original_name,
+        stored_path=stored_path,
+        content_type=content_type,
+        size=size,
+    )
+    session.add(attachment)
+    try:
+        await session.commit()
+    except SQLAlchemyError:
+        remove_attachment(stored_path)
+        raise
+    await session.refresh(attachment)
+    return _snapshot_attachment_read(attachment)
+
+
+@router.get(
+    "/accounts/{account_id}/snapshots/{snapshot_id}/attachments/{attachment_id}/download",
+    response_model=None,
+)
+async def download_snapshot_attachment(
+    account_id: int,
+    snapshot_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    attachment = await _require_snapshot_attachment(
+        session,
+        account_id,
+        snapshot_id,
+        attachment_id,
+    )
+    path = attachment_path(attachment.stored_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Fichier de piece jointe introuvable")
+    return FileResponse(
+        path,
+        filename=attachment.original_name,
+        media_type=attachment.content_type or "application/octet-stream",
+        content_disposition_type="attachment",
+    )
+
+
+@router.delete(
+    "/accounts/{account_id}/snapshots/{snapshot_id}/attachments/{attachment_id}",
+    status_code=204,
+)
+async def delete_snapshot_attachment(
+    account_id: int,
+    snapshot_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    account = await _require_account(session, account_id)
+    ensure_account_writable(account)
+    attachment = await _require_snapshot_attachment(
+        session,
+        account_id,
+        snapshot_id,
+        attachment_id,
+    )
+    remove_attachment(attachment.stored_path)
+    await session.delete(attachment)
+    await session.commit()

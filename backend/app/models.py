@@ -44,6 +44,7 @@ class Account(Base):
     currency: Mapped[str] = mapped_column(String(3), default="EUR")
     initial_balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
     institution: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    account_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
     color: Mapped[str] = mapped_column(String(16), default="#4f46e5")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     savings_product: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -80,6 +81,26 @@ class BalanceSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     account: Mapped[Account] = relationship(back_populates="snapshots")
+    attachments: Mapped[list[BalanceSnapshotAttachment]] = relationship(
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+    )
+
+
+class BalanceSnapshotAttachment(Base):
+    __tablename__ = "balance_snapshot_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("balance_snapshots.id", ondelete="CASCADE"), index=True
+    )
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(512), unique=True)
+    content_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    snapshot: Mapped[BalanceSnapshot] = relationship(back_populates="attachments")
 
 
 class Category(Base):

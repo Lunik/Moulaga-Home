@@ -6,7 +6,8 @@ une base SQLite locale et persistante.
 ## Fonctionnalites
 
 - tableau de bord du patrimoine net, actifs, dettes et evolution mensuelle ;
-- comptes groupes par etablissement, historique, releves, configurations de livrets et positions ;
+- comptes groupes par etablissement, numero ou identifiant facultatif, historique,
+  releves avec pieces jointes locales, configurations de livrets et positions ;
 - registre pagine des transactions avec pieces jointes locales, creation, edition, suppression et filtres ;
 - cycle budgetaire configurable, enveloppes, cashflow Sankey et ventilation hierarchique ;
 - categories, sous-categories, archivage et regles deterministes ;
@@ -30,10 +31,14 @@ confidentielles. Ils ne doivent jamais etre copies dans le depot ou les logs.
 - aucune donnee bancaire n'est envoyee a un modele ou un service tiers ;
 - les identites marchandes sont saisies et stockees localement, sans telechargement de logo ;
 - les donnees de test et de demonstration sont entierement synthetiques.
-- les pieces jointes sont conservees sous `MOULAGA_DATA_DIR/attached` dans des chemins haches ;
-  elles restent sensibles et hors du depot Git.
+- les pieces jointes des transactions et releves sont conservees sous
+  `MOULAGA_DATA_DIR/attached` dans des chemins haches ; elles restent sensibles et hors du depot Git.
 
 ## Demarrage Docker
+
+Le fichier `docker-compose.yml` active le mode demonstration par defaut. Chaque demarrage du
+conteneur efface la base et les pieces jointes presentes dans `./data`, puis recree la seed
+synthetique :
 
 ```bash
 docker compose up --build
@@ -41,8 +46,15 @@ docker compose up --build
 
 Ouvrir ensuite <http://localhost:8000>.
 
-Le volume `./data:/data` conserve la base `./data/moulaga.db` lors des redemarrages et
-reconstructions du conteneur.
+Pour commencer a conserver les modifications dans le temps, retirer
+`MOULAGA_DEMO_MODE: "true"` de `docker-compose.yml`, puis recreer le conteneur :
+
+```bash
+docker compose up -d --force-recreate
+```
+
+Sans cette variable, l'image utilise `MOULAGA_DEMO_MODE=false` et le volume `./data:/data`
+conserve la base `./data/moulaga.db` lors des redemarrages et reconstructions du conteneur.
 
 ## Demarrage en developpement
 
@@ -66,6 +78,9 @@ npm run dev
 Vite proxifie `/api` vers <http://localhost:8000>.
 
 ## Base persistante et migrations
+
+Les operations de cette section supposent que `MOULAGA_DEMO_MODE` a ete retire du Compose. Tant
+que le mode demonstration est actif, le prochain demarrage remplace toutes les donnees.
 
 SQLite devient la source de verite apres la reprise initiale. Au demarrage, Moulaga :
 
@@ -124,8 +139,8 @@ duplique pas les transactions.
 
 ## Donnees fictives pour la QA
 
-La commande suivante refuse le repertoire `/data` par defaut et doit cibler un dossier temporaire
-explicite :
+Le demarrage Docker standard active deja la seed de demonstration et la recree a chaque demarrage.
+Pour lancer la meme seed manuellement hors du conteneur, utiliser un dossier temporaire explicite :
 
 ```bash
 MOULAGA_DATA_DIR=/tmp/moulaga-demo .venv/bin/moulaga-seed-demo --reset
@@ -133,7 +148,12 @@ MOULAGA_DATA_DIR=/tmp/moulaga-demo \
   .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8010
 ```
 
-Ne jamais utiliser `--reset` contre une base utilisateur.
+Cette seed fournit des scenarios synthetiques pour chaque fonctionnalite, notamment les comptes
+actifs et archives, l'epargne et sa projection, les positions, les transferts, la pagination, les
+releves et les pieces jointes. Toute nouvelle fonctionnalite doit enrichir la seed et
+`backend/tests/test_seed_demo.py` dans le meme changement.
+
+Ne jamais activer `MOULAGA_DEMO_MODE` ni utiliser `--reset` contre une base utilisateur.
 
 ## Verification
 

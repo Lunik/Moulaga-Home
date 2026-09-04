@@ -73,6 +73,7 @@ def test_legacy_database_upgrades_without_data_loss(tmp_path, monkeypatch):
         assert historic["archived"] is False
         assert historic["color"] == "#4f46e5"
         assert historic["balance"] == "70.00"  # 100.00 initial - 30.00 expense preserved
+        assert historic["account_number"] is None
         assert historic["savings_product"] is None
         assert historic["annual_interest_rate"] is None
         assert historic["legal_cap"] is None
@@ -82,6 +83,9 @@ def test_legacy_database_upgrades_without_data_loss(tmp_path, monkeypatch):
 
     connection = sqlite3.connect(db_path)
     try:
+        account_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(accounts)")
+        }
         transaction_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(transactions)")
         }
@@ -89,10 +93,16 @@ def test_legacy_database_upgrades_without_data_loss(tmp_path, monkeypatch):
             "SELECT name FROM sqlite_master "
             "WHERE type = 'table' AND name = 'transaction_attachments'"
         ).fetchone()
+        snapshot_attachment_table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'balance_snapshot_attachments'"
+        ).fetchone()
     finally:
         connection.close()
+    assert "account_number" in account_columns
     assert "transfer_group" in transaction_columns
     assert attachment_table is not None
+    assert snapshot_attachment_table is not None
 
     # A safety backup must have been produced before altering the existing DB.
     backups = list(tmp_path.glob("moulaga.backup-*.db"))
@@ -127,7 +137,7 @@ def test_schema_version_is_stamped_and_idempotent(tmp_path, monkeypatch):
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     finally:
         connection.close()
-    assert version >= 5
+    assert version >= 7
 
     # Re-opening a current database performs no backup (nothing pending).
     with TestClient(main.create_app()):

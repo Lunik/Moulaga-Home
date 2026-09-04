@@ -6,8 +6,8 @@ rich but entirely synthetic, non-PII data across every domain of the app.
 Safety rules:
 
 * it refuses to run against the default production data directory (``/data``)
-  unless an explicit ``MOULAGA_DATABASE_URL`` is configured, so it can never
-  accidentally target real banking data;
+  unless an explicit ``MOULAGA_DATABASE_URL`` is configured or
+  ``MOULAGA_DEMO_MODE`` explicitly enables destructive demo startup;
 * it refuses to overwrite a database that already holds user data unless the
   ``--reset`` flag is supplied;
 * it never prints or logs the concrete database path.
@@ -22,17 +22,22 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 
+from fastapi import UploadFile
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..attachments import remove_attachment, store_attachment
 from ..common import add_month, get_preferences, money
 from ..config import settings
 from ..db import SessionLocal, engine, init_db
 from ..models import (
     Account,
     BalanceSnapshot,
+    BalanceSnapshotAttachment,
     Base,
     CategorizationRule,
     Category,
@@ -49,6 +54,7 @@ from ..models import (
     RecurringSeries,
     SharedAccountLink,
     Transaction,
+    TransactionAttachment,
 )
 
 DEFAULT_DATA_DIR = Path("/data")
@@ -74,13 +80,20 @@ class SeedResult:
     goals: int
     portfolio_snapshots: int
     merchants: int
+    transaction_attachments: int
+    snapshot_attachments: int
 
 
 def _guard_data_dir() -> None:
-    if settings.database_url is None and settings.data_dir == DEFAULT_DATA_DIR:
+    if (
+        settings.database_url is None
+        and settings.data_dir == DEFAULT_DATA_DIR
+        and not settings.demo_mode
+    ):
         raise SeedError(
             "Refuse d'ecrire dans le repertoire de donnees par defaut. "
-            "Definis MOULAGA_DATA_DIR vers un dossier de QA dedie."
+            "Definis MOULAGA_DATA_DIR vers un dossier de QA dedie ou active "
+            "explicitement MOULAGA_DEMO_MODE."
         )
 
 
@@ -91,6 +104,17 @@ async def _has_user_data(session: AsyncSession) -> bool:
     households = await session.scalar(select(func.count()).select_from(Household))
     holdings = await session.scalar(select(func.count()).select_from(Holding))
     return bool((accounts or 0) > 1 or transactions or households or holdings)
+
+
+async def _remove_attachment_files(session: AsyncSession) -> None:
+    for model in (TransactionAttachment, BalanceSnapshotAttachment):
+        stored_paths = (await session.scalars(select(model.stored_path))).all()
+        for stored_path in stored_paths:
+            remove_attachment(stored_path)
+
+
+async def _store_demo_file(filename: str, payload: bytes) -> tuple[str, str, int]:
+    return await store_attachment(UploadFile(BytesIO(payload), filename=filename))
 
 
 async def seed_demo(reset: bool = False) -> SeedResult:
@@ -104,19 +128,30 @@ async def seed_demo(reset: bool = False) -> SeedResult:
             raise SeedError(
                 "La base contient deja des donnees. Relance avec --reset pour la reinitialiser."
             )
+        if reset:
+            await _remove_attachment_files(session)
 
     if reset:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
         await init_db()
 
+    created_attachment_paths: list[str] = []
     async with SessionLocal() as session:
-        result = await _seed(session)
-        await session.commit()
+        try:
+            result = await _seed(session, created_attachment_paths)
+            await session.commit()
+        except (OSError, SQLAlchemyError):
+            for stored_path in created_attachment_paths:
+                remove_attachment(stored_path)
+            raise
     return result
 
 
-async def _seed(session: AsyncSession) -> SeedResult:
+async def _seed(
+    session: AsyncSession,
+    created_attachment_paths: list[str],
+) -> SeedResult:
     # Enable the privacy-gated local features so QA can view them.
     prefs = await get_preferences(session)
     prefs.local_merchant_identities = True
@@ -157,56 +192,172 @@ async def _seed(session: AsyncSession) -> SeedResult:
     checking.currency = "EUR"
     checking.initial_balance = money("1200.00")
     checking.institution = "BNP Paribas"
+    checking.account_number = "DEMO-COURANT-001"
     checking.color = "#4f46e5"
     savings = Account(
         name="Livret epargne demo", type="savings", currency="EUR",
         initial_balance=money("5000.00"), institution="BNP Paribas", color="#16a34a",
+        account_number="DEMO-LIVRET-001",
         savings_product="Livret A", annual_interest_rate=Decimal("1.700"),
         legal_cap=money("22950.00"),
     )
     invest = Account(
-        name="PEA demo", type="investment", currency="EUR",
+        name="PEA demo", type="pea", currency="EUR",
         initial_balance=money("0.00"), institution="Trade Republic", color="#7c3aed",
+        account_number="DEMO-PEA-001",
     )
-    session.add_all([savings, invest])
+    archived = Account(
+        name="Compte cloture demo", type="checking", currency="EUR",
+        initial_balance=money("0.00"), institution="Credit Agricole", color="#94a3b8",
+        account_number="DEMO-ARCHIVE-001", archived=True,
+    )
+    sandbox = Account(
+        name="Compte bac a sable demo", type="cash", currency="EUR",
+        initial_balance=money("125.00"), color="#0ea5e9",
+        account_number="DEMO-SANDBOX-001",
+    )
+    session.add_all([savings, invest, archived, sandbox])
     await session.flush()
 
     # --- Transactions across the last four cycles ------------------------- #
     anchor = date.today().replace(day=1)
     months = [add_month(anchor, -offset) for offset in range(3, -1, -1)]
     transaction_count = 0
+    checking_monthly_deltas = {month: Decimal("0.00") for month in months}
+    savings_monthly_deltas = {month: Decimal("0.00") for month in months}
+    receipt_transaction: Transaction | None = None
     for month in months:
         rows = [
-            (month.replace(day=1), "Salaire mensuel", money("2500.00"), salaire.id),
-            (month.replace(day=3), "Loyer", money("-750.00"), logement.id),
-            (month.replace(day=6), "Fournisseur ELECTRICITE", money("-95.00"), electricite.id),
-            (month.replace(day=6), "Abonnement INTERNET", money("-39.99"), internet.id),
-            (month.replace(day=8), "Achat SUPERMARCHE", money("-84.30"), courses.id),
-            (month.replace(day=15), "Achat SUPERMARCHE", money("-61.20"), courses.id),
-            (month.replace(day=18), "Cinema", money("-24.00"), loisirs.id),
-            (month.replace(day=20), "Carburant STATION", money("-58.40"), transport.id),
-            (month.replace(day=22), "Paiement sans categorie", money("-12.50"), None),
+            (month.replace(day=1), "Salaire mensuel", money("2500.00"), salaire.id, None),
+            (month.replace(day=3), "Loyer", money("-750.00"), logement.id, None),
+            (
+                month.replace(day=6),
+                "Fournisseur ELECTRICITE",
+                money("-95.00"),
+                electricite.id,
+                None,
+            ),
+            (
+                month.replace(day=6),
+                "Abonnement INTERNET",
+                money("-39.99"),
+                internet.id,
+                None,
+            ),
+            (
+                month.replace(day=8),
+                "Achat SUPERMARCHE",
+                money("-84.30"),
+                courses.id,
+                "Ticket de caisse synthetique joint."
+                if month == months[-1]
+                else None,
+            ),
+            (month.replace(day=15), "Achat SUPERMARCHE", money("-61.20"), courses.id, None),
+            (month.replace(day=18), "Cinema", money("-24.00"), loisirs.id, None),
+            (month.replace(day=20), "Carburant STATION", money("-58.40"), transport.id, None),
+            (month.replace(day=22), "Paiement sans categorie", money("-12.50"), None, None),
         ]
-        for booked_at, description, amount, category_id in rows:
-            session.add(
-                Transaction(
-                    booked_at=booked_at, description=description, amount=amount,
-                    account_id=checking.id, category_id=category_id,
-                )
+        for booked_at, description, amount, category_id, notes in rows:
+            transaction = Transaction(
+                booked_at=booked_at,
+                description=description,
+                amount=amount,
+                account_id=checking.id,
+                category_id=category_id,
+                notes=notes,
             )
+            session.add(transaction)
+            checking_monthly_deltas[month] += amount
+            if notes is not None:
+                receipt_transaction = transaction
             transaction_count += 1
 
-    # --- Monthly balance snapshots for the checking account --------------- #
-    running = Decimal(checking.initial_balance)
-    snapshot_count = 0
-    for month in months:
-        running += money("2500.00") - money("1125.39")
-        session.add(
-            BalanceSnapshot(
-                account_id=checking.id, period=month.strftime("%Y-%m"), balance=money(running)
+        # Enough ordinary ledger entries to exercise account-level pagination.
+        for index in range(17):
+            amount = money("-2.00")
+            session.add(
+                Transaction(
+                    booked_at=month.replace(day=9 + index),
+                    description=f"Achat quotidien demo {month:%m}-{index + 1:02d}",
+                    amount=amount,
+                    account_id=checking.id,
+                    category_id=loisirs.id,
+                )
             )
+            checking_monthly_deltas[month] += amount
+            transaction_count += 1
+
+        transfer_amount = money("250.00")
+        transfer_group = f"demo-transfer-{month:%Y-%m}"
+        session.add_all(
+            [
+                Transaction(
+                    booked_at=month.replace(day=12),
+                    description="Transfert vers Livret epargne demo",
+                    amount=-transfer_amount,
+                    account_id=checking.id,
+                    transfer_group=transfer_group,
+                ),
+                Transaction(
+                    booked_at=month.replace(day=12),
+                    description="Transfert depuis Compte courant demo",
+                    amount=transfer_amount,
+                    account_id=savings.id,
+                    transfer_group=transfer_group,
+                ),
+            ]
         )
-        snapshot_count += 1
+        checking_monthly_deltas[month] -= transfer_amount
+        savings_monthly_deltas[month] += transfer_amount
+        transaction_count += 2
+
+    archived_income = Transaction(
+        booked_at=months[0].replace(day=2),
+        description="Solde initial avant cloture",
+        amount=money("400.00"),
+        account_id=archived.id,
+        category_id=salaire.id,
+    )
+    archived_expense = Transaction(
+        booked_at=months[0].replace(day=24),
+        description="Cloture du compte demo",
+        amount=money("-400.00"),
+        account_id=archived.id,
+        notes="Compte conserve en lecture seule pour la QA.",
+    )
+    session.add_all([archived_income, archived_expense])
+    transaction_count += 2
+
+    # --- Monthly balance snapshots for checking, savings and archive ------- #
+    checking_running = Decimal(checking.initial_balance)
+    savings_running = Decimal(savings.initial_balance)
+    snapshot_count = 0
+    latest_savings_snapshot: BalanceSnapshot | None = None
+    for month in months:
+        checking_running += checking_monthly_deltas[month]
+        savings_running += savings_monthly_deltas[month]
+        checking_snapshot = BalanceSnapshot(
+            account_id=checking.id,
+            period=month.strftime("%Y-%m"),
+            balance=money(checking_running),
+        )
+        savings_snapshot = BalanceSnapshot(
+            account_id=savings.id,
+            period=month.strftime("%Y-%m"),
+            balance=money(savings_running),
+        )
+        session.add_all([checking_snapshot, savings_snapshot])
+        latest_savings_snapshot = savings_snapshot
+        snapshot_count += 2
+
+    archived_snapshot = BalanceSnapshot(
+        account_id=archived.id,
+        period=months[0].strftime("%Y-%m"),
+        balance=money("0.00"),
+    )
+    session.add(archived_snapshot)
+    snapshot_count += 1
 
     # --- Categorization rules --------------------------------------------- #
     session.add_all(
@@ -341,9 +492,62 @@ async def _seed(session: AsyncSession) -> SeedResult:
     )
 
     await session.flush()
+    if receipt_transaction is None or latest_savings_snapshot is None:
+        raise SeedError("Les donnees de demonstration des comptes sont incompletes.")
+
+    transaction_attachments = [
+        (
+            receipt_transaction,
+            "justificatif-courses-demo.txt",
+            b"Moulaga QA - justificatif de transaction entierement synthetique.\n",
+        ),
+        (
+            archived_expense,
+            "justificatif-compte-archive-demo.txt",
+            b"Moulaga QA - justificatif synthetique conserve en lecture seule.\n",
+        ),
+    ]
+    for transaction, filename, payload in transaction_attachments:
+        original_name, stored_path, size = await _store_demo_file(filename, payload)
+        created_attachment_paths.append(stored_path)
+        session.add(
+            TransactionAttachment(
+                transaction_id=transaction.id,
+                original_name=original_name,
+                stored_path=stored_path,
+                content_type="text/plain",
+                size=size,
+            )
+        )
+
+    snapshot_attachments = [
+        (
+            latest_savings_snapshot,
+            "releve-livret-demo.txt",
+            b"Moulaga QA - releve mensuel d'epargne entierement synthetique.\n",
+        ),
+        (
+            archived_snapshot,
+            "releve-compte-archive-demo.txt",
+            b"Moulaga QA - releve synthetique d'un compte archive.\n",
+        ),
+    ]
+    for snapshot, filename, payload in snapshot_attachments:
+        original_name, stored_path, size = await _store_demo_file(filename, payload)
+        created_attachment_paths.append(stored_path)
+        session.add(
+            BalanceSnapshotAttachment(
+                snapshot_id=snapshot.id,
+                original_name=original_name,
+                stored_path=stored_path,
+                content_type="text/plain",
+                size=size,
+            )
+        )
+
     total_categories = await session.scalar(select(func.count()).select_from(Category))
     return SeedResult(
-        accounts=3,
+        accounts=5,
         transactions=transaction_count,
         snapshots=snapshot_count,
         categories=int(total_categories or 0),
@@ -357,6 +561,8 @@ async def _seed(session: AsyncSession) -> SeedResult:
         goals=1,
         portfolio_snapshots=portfolio_snapshot_count,
         merchants=merchant_count,
+        transaction_attachments=len(transaction_attachments),
+        snapshot_attachments=len(snapshot_attachments),
     )
 
 
@@ -395,7 +601,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{result.changes} changement(s), {result.debts} dette(s), "
         f"{result.holdings} actif(s), {result.contributions} versement(s), "
         f"{result.portfolio_snapshots} valorisation(s), {result.merchants} identite(s), "
-        f"{result.households} foyer, {result.goals} objectif."
+        f"{result.households} foyer, {result.goals} objectif, "
+        f"{result.transaction_attachments} justificatif(s) de transaction, "
+        f"{result.snapshot_attachments} releve(s) joint(s)."
     )
     return 0
 

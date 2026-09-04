@@ -22,6 +22,7 @@ Ce dépôt utilise `.copilot/` pour centraliser les instructions et les compéte
 ## Vérification avant de terminer
 
 ```bash
+skill: "demo-seed-check"
 skill: "web-build-test"
 ```
 

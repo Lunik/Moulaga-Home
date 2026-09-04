@@ -11,4 +11,17 @@ if [ ! -w "$DATA_DIR" ]; then
   exit 1
 fi
 
+case "${MOULAGA_DEMO_MODE:-false}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    echo "Mode demo actif : reinitialisation des donnees synthetiques."
+    moulaga-seed-demo --reset
+    ;;
+  0|false|FALSE|False|no|NO|No|off|OFF|Off|"")
+    ;;
+  *)
+    echo "ERREUR : MOULAGA_DEMO_MODE doit etre un booleen (true ou false)." >&2
+    exit 1
+    ;;
+esac
+
 exec "$@"

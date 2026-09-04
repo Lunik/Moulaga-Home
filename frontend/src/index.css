@@ -255,6 +255,17 @@ textarea:focus-visible {
   letter-spacing: -0.045em;
 }
 
+.page-title,
+.nav-label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.page-title {
+  flex-wrap: wrap;
+}
+
 .page-date {
   margin: 0;
   color: var(--muted);
@@ -1034,6 +1045,14 @@ textarea:focus-visible {
   font-size: 0.75rem;
 }
 
+.account-number {
+  display: block;
+  margin-top: 0.2rem;
+  overflow-wrap: anywhere;
+  color: var(--faint);
+  font-size: 0.7rem;
+}
+
 .account-balance {
   margin-top: 1.4rem;
   font-size: 1.75rem;
@@ -1223,7 +1242,7 @@ textarea:focus-visible {
 
 .savings-config-form {
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr 1fr auto;
+  grid-template-columns: 1.2fr 0.8fr 1fr;
   align-items: end;
   gap: 0.75rem;
 }
@@ -1253,11 +1272,16 @@ textarea:focus-visible {
 }
 
 .account-transaction-form {
-  margin-bottom: 1rem;
-  padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  background: var(--surface-raised);
+  margin: 0;
+}
+
+.account-transaction-form .inline-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.account-transaction-form .form-buttons {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
 }
 
 .categorization-summary {
@@ -1347,16 +1371,6 @@ textarea:focus-visible {
 .savings-history-chart {
   height: 21rem;
   margin-top: 1rem;
-}
-
-.savings-history-legend {
-  margin-top: 0.5rem;
-}
-
-.legend-line.projection {
-  height: 0;
-  border-top: 2px dashed #615fff;
-  background: transparent;
 }
 
 .destructive-button {
@@ -1529,6 +1543,17 @@ textarea:focus-visible {
 .attachment-table-row > td {
   padding: 0 !important;
   background: #111113;
+}
+
+.snapshot-attachment-panel {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--line);
+}
+
+.snapshot-attachment-panel .attachment-manager {
+  padding: 1rem 0 0.5rem;
 }
 
 .attachment-manager {
@@ -1769,6 +1794,30 @@ textarea:focus-visible {
   border-color: rgb(97 95 255 / 35%);
   background: rgb(97 95 255 / 16%);
   color: #b6b5ff;
+}
+
+.beta-badge {
+  flex: none;
+  padding: 0.22rem 0.45rem;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.page-title .beta-badge {
+  margin-top: 0.25rem;
+}
+
+.nav-label .beta-badge {
+  padding: 0.16rem 0.35rem;
+  font-size: 0.52rem;
+}
+
+.module-tabs .beta-badge {
+  padding: 0.16rem 0.35rem;
+  font-size: 0.5rem;
 }
 
 .progress-track {
@@ -3042,8 +3091,10 @@ textarea:focus-visible {
     display: flex;
     flex: 1;
     flex-direction: row;
-    justify-content: flex-end;
+    justify-content: safe flex-end;
     gap: 0.25rem;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
   [data-navigation="topbar"] .nav-item {
@@ -3064,6 +3115,10 @@ textarea:focus-visible {
   [data-navigation="topbar"] .nav-item > svg,
   [data-navigation="topbar"] .storage-status {
     display: none;
+  }
+
+  [data-navigation="topbar"] .nav-item {
+    flex: none;
   }
 }
 
@@ -3158,7 +3213,7 @@ html[data-theme="light"] .status-badge {
 
   .main-navigation {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.4rem;
   }
 
@@ -3217,10 +3272,6 @@ html[data-theme="light"] .status-badge {
     padding-inline: 0.65rem;
   }
 
-  .main-navigation {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .nav-item {
     min-width: 0;
     flex-direction: column;
@@ -3234,6 +3285,11 @@ html[data-theme="light"] .status-badge {
     font-size: 0.67rem;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .nav-label {
+    flex-direction: column;
+    gap: 0.15rem;
   }
 
   .nav-icon svg {
@@ -3287,10 +3343,6 @@ html[data-theme="light"] .status-badge {
   .savings-config-form,
   .savings-metrics {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .savings-config-form .primary-button {
-    width: 100%;
   }
 
   .institution-group-header {

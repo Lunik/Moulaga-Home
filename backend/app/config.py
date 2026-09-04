@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     database_url: str | None = None
     cors_origins: str = ""
     log_level: str = "INFO"
+    demo_mode: bool = False
 
     @property
     def db_path(self) -> Path:

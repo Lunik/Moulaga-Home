@@ -1,4 +1,4 @@
-"""Local transaction attachment storage under the configured data directory."""
+"""Local attachment storage under the configured data directory."""
 
 from __future__ import annotations
 

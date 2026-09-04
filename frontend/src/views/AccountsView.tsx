@@ -17,11 +17,12 @@ import type {
   AccountSnapshot,
   Category,
   Holding,
+  StoredAttachment,
   Transaction,
-  TransactionAttachment,
   TransactionCount,
 } from '../api/types'
 import type { Route } from '../routing'
+import { calculateSavingsProjection } from '../savingsProjection'
 import {
   AmountDirectionToggle,
   EmptyState,
@@ -79,7 +80,6 @@ const institutions = [
 const accountTypeOptions = [
   { value: 'checking', label: 'Compte courant' },
   { value: 'savings', label: 'Épargne' },
-  { value: 'investment', label: 'Investissement' },
   { value: 'pea', label: 'PEA' },
   { value: 'securities', label: 'Compte-titres' },
   { value: 'life_insurance', label: 'Assurance-vie' },
@@ -87,6 +87,7 @@ const accountTypeOptions = [
   { value: 'wallet', label: 'Wallet crypto' },
 ] as const
 const positionAccountTypes = new Set([
+  // Kept so accounts created before the generic type was removed remain usable.
   'investment',
   'pea',
   'securities',
@@ -267,6 +268,9 @@ function AccountCard({
       <div className="account-card-copy">
         <h2>{account.name}</h2>
         <p>{account.institution || 'Établissement non renseigné'}</p>
+        {account.account_number && (
+          <small className="account-number">ID : {account.account_number}</small>
+        )}
       </div>
       <strong className="account-balance">{money(account.balance)}</strong>
       <div className="account-meta">
@@ -407,7 +411,7 @@ export function AccountDetailView({
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setShowSnapshot((current) => !current)}
+              onClick={() => setShowSnapshot(true)}
             >
               <Icon name="calendar" /> Ajouter un relevé
             </button>
@@ -559,6 +563,41 @@ export function AccountDetailView({
         />
       )}
 
+      {showSnapshot && !readOnly && (
+        <Modal
+          title="Nouveau relevé"
+          description="Enregistrez le solde de clôture d'un mois."
+          onClose={() => setShowSnapshot(false)}
+        >
+          <SnapshotForm
+            account={account.data}
+            onCancel={() => setShowSnapshot(false)}
+            onSaved={async () => {
+              await refreshDetail()
+              setShowSnapshot(false)
+            }}
+          />
+        </Modal>
+      )}
+
+      {showTransaction && !readOnly && (
+        <Modal
+          title="Nouvelle transaction"
+          description="Ajoutez un dépôt ou un retrait sur ce compte."
+          onClose={() => setShowTransaction(false)}
+        >
+          <AccountTransactionForm
+            account={account.data}
+            categories={categories}
+            onCancel={() => setShowTransaction(false)}
+            onSaved={async () => {
+              await refreshDetail()
+              setShowTransaction(false)
+            }}
+          />
+        </Modal>
+      )}
+
       {showEdit && !readOnly && (
         <EditAccountForm
           account={account.data}
@@ -570,19 +609,6 @@ export function AccountDetailView({
         />
       )}
 
-      {showSnapshot && !readOnly && (
-        <Panel title="Nouveau relevé" subtitle="Enregistrez le solde de clôture d'un mois.">
-          <SnapshotForm
-            account={account.data}
-            onCancel={() => setShowSnapshot(false)}
-            onSaved={async () => {
-              await refreshDetail()
-              setShowSnapshot(false)
-            }}
-          />
-        </Panel>
-      )}
-
       <section className="account-detail-hero">
         <div className="detail-account-title">
           <InstitutionLogo institution={account.data.institution} />
@@ -592,7 +618,10 @@ export function AccountDetailView({
         </div>
         <p>Solde actuel</p>
         <strong>{money(account.data.balance)}</strong>
-        <small>{account.data.institution || 'Établissement non renseigné'}</small>
+        <small>
+          {account.data.institution || 'Établissement non renseigné'}
+          {account.data.account_number && ` · ID : ${account.data.account_number}`}
+        </small>
       </section>
 
       {account.data.type === 'savings' ? (
@@ -637,7 +666,19 @@ export function AccountDetailView({
         />
       )}
 
-      <Panel title="Relevés mensuels" subtitle={`${snapshots.data?.length ?? 0} relevé${snapshots.data?.length === 1 ? '' : 's'}`}>
+      <Panel
+        title="Relevés mensuels"
+        subtitle={`${snapshots.data?.length ?? 0} relevé${snapshots.data?.length === 1 ? '' : 's'}`}
+        action={!readOnly ? (
+          <button
+            className="primary-button small-button"
+            type="button"
+            onClick={() => setShowSnapshot(true)}
+          >
+            <Icon name="calendar" /> Ajouter un relevé
+          </button>
+        ) : undefined}
+      >
         {(snapshots.data ?? []).length > 0 ? (
           <div className="statement-list">
             {[...(snapshots.data ?? [])].sort((left, right) => right.period.localeCompare(left.period)).map((snapshot) => (
@@ -662,7 +703,7 @@ export function AccountDetailView({
           <button
             className="primary-button small-button"
             type="button"
-            onClick={() => setShowTransaction((current) => !current)}
+            onClick={() => setShowTransaction(true)}
           >
             <Icon name="plus" /> Ajouter une transaction
           </button>
@@ -686,17 +727,6 @@ export function AccountDetailView({
               Catégoriser <Icon name="arrow" />
             </button>
           </div>
-        )}
-        {showTransaction && !readOnly && (
-          <AccountTransactionForm
-            account={account.data}
-            categories={categories}
-            onCancel={() => setShowTransaction(false)}
-            onSaved={async () => {
-              await refreshDetail()
-              setShowTransaction(false)
-            }}
-          />
         )}
         <div className="data-table-wrap">
           <table className="transaction-table">
@@ -766,6 +796,7 @@ function SnapshotRow({
   readOnly: boolean
 }) {
   const [editing, setEditing] = useState(false)
+  const [showAttachments, setShowAttachments] = useState(false)
   const [period, setPeriod] = useState(snapshot.period)
   const [balance, setBalance] = useState(snapshot.balance)
   const update = useMutation({
@@ -822,23 +853,47 @@ function SnapshotRow({
     <div className="statement-row">
       <span>{snapshot.period}</span>
       <strong>{money(snapshot.balance)}</strong>
-      {!readOnly && (
+      {(!readOnly || snapshot.attachment_count > 0) && (
         <span className="row-actions">
-          <button className="icon-action" type="button" aria-label="Modifier le relevé" onClick={() => setEditing(true)}>
-            <Icon name="edit" />
-          </button>
           <button
-            className="icon-action"
+            className="icon-action attachment-button"
             type="button"
-            aria-label="Supprimer le relevé"
-            disabled={remove.isPending}
-            onClick={() => {
-              if (window.confirm(`Supprimer le relevé ${snapshot.period} ?`)) remove.mutate()
-            }}
+            aria-label={`Pièces jointes${snapshot.attachment_count > 0 ? ` (${snapshot.attachment_count})` : ''}`}
+            aria-expanded={showAttachments}
+            onClick={() => setShowAttachments((current) => !current)}
           >
-            <Icon name="trash" />
+            <Icon name="attachment" />
+            {snapshot.attachment_count > 0 && (
+              <span className="attachment-count-badge">{snapshot.attachment_count}</span>
+            )}
           </button>
+          {!readOnly && (
+            <>
+              <button className="icon-action" type="button" aria-label="Modifier le relevé" onClick={() => setEditing(true)}>
+                <Icon name="edit" />
+              </button>
+              <button
+                className="icon-action"
+                type="button"
+                aria-label="Supprimer le relevé"
+                disabled={remove.isPending}
+                onClick={() => {
+                  if (window.confirm(`Supprimer le relevé ${snapshot.period} ?`)) remove.mutate()
+                }}
+              >
+                <Icon name="trash" />
+              </button>
+            </>
+          )}
         </span>
+      )}
+      {showAttachments && (
+        <div className="snapshot-attachment-panel">
+          <AttachmentManager
+            owner={{ kind: 'snapshot', accountId, snapshotId: snapshot.id }}
+            readOnly={readOnly}
+          />
+        </div>
       )}
       {remove.error && <span className="form-error row-error">{errorMessage(remove.error)}</span>}
     </div>
@@ -926,7 +981,10 @@ function AccountTransactionRow({
       {showAttachments && (
         <tr className="attachment-table-row">
           <td colSpan={5}>
-            <AttachmentManager readOnly={readOnly} transactionId={transaction.id} />
+            <AttachmentManager
+              owner={{ kind: 'transaction', transactionId: transaction.id }}
+              readOnly={readOnly}
+            />
           </td>
         </tr>
       )}
@@ -934,30 +992,37 @@ function AccountTransactionRow({
   )
 }
 
-function AttachmentManager({
-  transactionId,
-  readOnly,
-}: {
-  transactionId: number
-  readOnly: boolean
-}) {
+type AttachmentOwner =
+  | { kind: 'transaction'; transactionId: number }
+  | { kind: 'snapshot'; accountId: number; snapshotId: number }
+
+function AttachmentManager({ owner, readOnly }: { owner: AttachmentOwner; readOnly: boolean }) {
   const queryClient = useQueryClient()
   const [file, setFile] = useState<File | null>(null)
   const [inputKey, setInputKey] = useState(0)
+  const resourcePath = owner.kind === 'transaction'
+    ? `/transactions/${owner.transactionId}`
+    : `/accounts/${owner.accountId}/snapshots/${owner.snapshotId}`
+  const attachmentQueryKey = owner.kind === 'transaction'
+    ? ['transaction-attachments', owner.transactionId]
+    : ['snapshot-attachments', owner.accountId, owner.snapshotId]
+  const parentQueryKey = owner.kind === 'transaction'
+    ? ['transactions']
+    : ['account-snapshots', owner.accountId]
   const attachments = useQuery({
-    queryKey: ['transaction-attachments', transactionId],
-    queryFn: () => apiGet<TransactionAttachment[]>(`/transactions/${transactionId}/attachments`),
+    queryKey: attachmentQueryKey,
+    queryFn: () => apiGet<StoredAttachment[]>(`${resourcePath}/attachments`),
   })
   const refresh = () => Promise.all([
-    queryClient.invalidateQueries({ queryKey: ['transaction-attachments', transactionId] }),
-    queryClient.invalidateQueries({ queryKey: ['transactions'] }),
+    queryClient.invalidateQueries({ queryKey: attachmentQueryKey }),
+    queryClient.invalidateQueries({ queryKey: parentQueryKey }),
   ])
   const upload = useMutation({
     mutationFn: () => {
       if (!file) throw new Error('Choisissez un fichier à joindre.')
       const data = new FormData()
       data.append('file', file)
-      return apiUpload<TransactionAttachment>(`/transactions/${transactionId}/attachments`, data)
+      return apiUpload<StoredAttachment>(`${resourcePath}/attachments`, data)
     },
     onSuccess: async () => {
       setFile(null)
@@ -967,7 +1032,7 @@ function AttachmentManager({
   })
   const remove = useMutation({
     mutationFn: (attachmentId: number) => apiDelete(
-      `/transactions/${transactionId}/attachments/${attachmentId}`,
+      `${resourcePath}/attachments/${attachmentId}`,
     ),
     onSuccess: refresh,
   })
@@ -1006,7 +1071,7 @@ function AttachmentManager({
             <div key={attachment.id}>
               <Icon name="attachment" />
               <span>
-                <a href={`/api/transactions/${transactionId}/attachments/${attachment.id}/download`}>
+                <a href={`/api${resourcePath}/attachments/${attachment.id}/download`}>
                   {attachment.original_name}
                 </a>
                 <small>{formatFileSize(attachment.size)}</small>
@@ -1237,40 +1302,52 @@ function SavingsConfigurator({
       annual_interest_rate: annualRate,
       legal_cap: legalCap,
     }),
-    onSuccess: onSaved,
+    onSuccess: async () => {
+      await onSaved()
+      setShowConfig(false)
+    },
   })
-  const currentBalance = Math.max(0, Number(account.balance))
-  const projectedBalance = currentBalance * (1 + Number(annualRate || 0) / 100)
-  const cap = Number(legalCap || 0)
-  const chartData: Array<{
-    period: string
-    balance?: number
-    projection?: number
-  }> = snapshots.map((snapshot) => ({ ...snapshot }))
-  const latestSnapshot = chartData.at(-1)
-  if (latestSnapshot) latestSnapshot.projection = latestSnapshot.balance
-  chartData.push(
-    { period: "Aujourd'hui", projection: currentBalance },
-    { period: 'Dans 1 an', projection: projectedBalance },
+  const projection = calculateSavingsProjection(
+    snapshots,
+    Number(account.balance),
+    Number(annualRate || 0),
+    new Date().getFullYear(),
   )
+  const cap = Number(legalCap || 0)
   return (
     <Panel
       title="Historique et projection"
-      subtitle="Relevés mensuels et projection à un an, hors nouveaux versements."
+      subtitle={`Projection fin ${projection.year}, pondérée par les soldes de clôture mensuels.`}
       action={!readOnly ? (
-        <button
-          className="secondary-button small-button"
-          type="button"
-          onClick={() => setShowConfig((current) => !current)}
-        >
-          <Icon name={showConfig ? 'close' : 'settings'} />
-          {showConfig ? 'Masquer' : 'Configurer'}
-        </button>
+        showConfig ? (
+          <button
+            key="save-savings-config"
+            className="primary-button small-button"
+            type="submit"
+            form="savings-config-form"
+            disabled={mutation.isPending}
+          >
+            <Icon name="check" /> Sauvegarder
+          </button>
+        ) : (
+          <button
+            key="open-savings-config"
+            className="secondary-button small-button"
+            type="button"
+            onClick={(event) => {
+              event.preventDefault()
+              setShowConfig(true)
+            }}
+          >
+            <Icon name="settings" /> Configurer
+          </button>
+        )
       ) : undefined}
     >
       {showConfig && !readOnly && (
         <>
           <form
+            id="savings-config-form"
             className="savings-config-form"
             onSubmit={(event: FormEvent) => {
               event.preventDefault()
@@ -1319,65 +1396,53 @@ function SavingsConfigurator({
                 required
               />
             </Field>
-            <button className="primary-button" type="submit" disabled={mutation.isPending}>
-              Enregistrer la configuration
-            </button>
           </form>
           {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
         </>
       )}
       <div className="savings-metrics">
         <article>
-          <span>Solde actuel</span>
-          <strong>{money(currentBalance)}</strong>
+          <span>Dernier solde connu</span>
+          <strong>{money(projection.referenceBalance)}</strong>
+          <small>{projection.referencePeriod ? `Relevé ${projection.referencePeriod}` : 'Solde actuel du compte'}</small>
         </article>
         <article>
           <span>Plafond légal</span>
           <strong>{money(cap)}</strong>
         </article>
         <article>
-          <span>Projection dans 1 an</span>
-          <strong>{money(projectedBalance)}</strong>
-          <small>+{money(projectedBalance - currentBalance)} d'intérêts estimés</small>
+          <span>Projection fin {projection.year}</span>
+          <strong>{money(projection.projectedBalance)}</strong>
+          <small>+{money(projection.estimatedInterest)} d'intérêts estimés selon les soldes mensuels</small>
         </article>
       </div>
       <div className="chart-container savings-history-chart">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
-            <defs>
-              <linearGradient id="savings-history-fill" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="#16c79a" stopOpacity={0.3} />
-                <stop offset="100%" stopColor="#16c79a" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
-            <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-            <YAxis axisLine={false} padding={{ top: 12 }} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
-            <Tooltip contentStyle={chartTooltipStyle} formatter={(value) => money(Number(value))} />
-            <Area
-              dataKey="balance"
-              fill="url(#savings-history-fill)"
-              name="Relevé"
-              stroke="#16c79a"
-              strokeWidth={2.5}
-              type="monotone"
-            />
-            <Area
-              dataKey="projection"
-              dot={{ fill: '#615fff', r: 4 }}
-              fill="transparent"
-              name="Projection"
-              stroke="#615fff"
-              strokeDasharray="7 7"
-              strokeWidth={2.5}
-              type="monotone"
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="chart-legend savings-history-legend">
-        <span><i className="legend-line" /> Relevés</span>
-        <span><i className="legend-line projection" /> Projection</span>
+        {snapshots.length > 0 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={snapshots} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
+              <defs>
+                <linearGradient id="savings-history-fill" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stopColor="#16c79a" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="#16c79a" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
+              <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+              <YAxis axisLine={false} padding={{ top: 12 }} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
+              <Tooltip contentStyle={chartTooltipStyle} formatter={(value) => money(Number(value))} />
+              <Area
+                dataKey="balance"
+                fill="url(#savings-history-fill)"
+                name="Relevé"
+                stroke="#16c79a"
+                strokeWidth={2.5}
+                type="monotone"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <EmptyState icon="calendar" text="Ajoutez le premier relevé mensuel pour construire l'historique." />
+        )}
       </div>
     </Panel>
   )
@@ -1387,6 +1452,7 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
   const [name, setName] = useState('')
   const [type, setType] = useState('checking')
   const [institution, setInstitution] = useState('')
+  const [accountNumber, setAccountNumber] = useState('')
   const [initialBalance, setInitialBalance] = useState('0')
   const mutation = useMutation({
     mutationFn: () => apiPost<Account>('/accounts', {
@@ -1394,6 +1460,7 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
       type,
       currency: 'EUR',
       institution: institution || null,
+      account_number: accountNumber || null,
       initial_balance: initialBalance,
       ...(type === 'savings' ? {
         savings_product: savingsProducts[0].name,
@@ -1411,6 +1478,14 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
       }}>
         <Field label="Nom"><input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required /></Field>
         <InstitutionField institution={institution} onChange={setInstitution} />
+        <Field label="Numéro / identifiant du compte">
+          <input
+            value={accountNumber}
+            onChange={(event) => setAccountNumber(event.target.value)}
+            maxLength={120}
+            spellCheck={false}
+          />
+        </Field>
         <Field label="Type">
           <select value={type} onChange={(event) => setType(event.target.value)}>
             {accountTypeOptions.map((option) => (
@@ -1433,12 +1508,14 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
   const [name, setName] = useState(account.name)
   const [type, setType] = useState(account.type)
   const [institution, setInstitution] = useState(account.institution ?? '')
+  const [accountNumber, setAccountNumber] = useState(account.account_number ?? '')
   const [initialBalance, setInitialBalance] = useState(account.initial_balance)
   const mutation = useMutation({
     mutationFn: () => apiPatch<Account>(`/accounts/${account.id}`, {
       name,
       type,
       institution: institution || null,
+      account_number: accountNumber || null,
       initial_balance: initialBalance,
       ...(type === 'savings' && account.type !== 'savings' ? {
         savings_product: savingsProducts[0].name,
@@ -1456,8 +1533,19 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
       }}>
         <Field label="Nom"><input value={name} onChange={(event) => setName(event.target.value)} required /></Field>
         <InstitutionField institution={institution} onChange={setInstitution} />
+        <Field label="Numéro / identifiant du compte">
+          <input
+            value={accountNumber}
+            onChange={(event) => setAccountNumber(event.target.value)}
+            maxLength={120}
+            spellCheck={false}
+          />
+        </Field>
         <Field label="Type">
           <select value={type} onChange={(event) => setType(event.target.value)}>
+            {!accountTypeOptions.some((option) => option.value === type) && (
+              <option value={type}>{accountType(type)}</option>
+            )}
             {accountTypeOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
@@ -1591,6 +1679,7 @@ function SnapshotForm({ account, onCancel, onSaved }: { account: Account; onCanc
 }
 
 function accountType(type: string): string {
+  if (type === 'investment') return 'Investissement (ancien type)'
   return accountTypeOptions.find((option) => option.value === type)?.label ?? type
 }
 

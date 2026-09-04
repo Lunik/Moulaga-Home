@@ -8,8 +8,9 @@ Ce répertoire centralise les consignes et compétences partagées par les clien
 .copilot/
 ├── instructions.md
 ├── skills/
-│   ├── web-build-test/
-│   └── budget-import-check/
+│   ├── budget-import-check/
+│   ├── demo-seed-check/
+│   └── web-build-test/
 └── README.md
 ```
 
@@ -22,10 +23,13 @@ Ce répertoire centralise les consignes et compétences partagées par les clien
 
 ## Quand utiliser une skill
 
-Invokes via `skill: "web-build-test"` ou `skill: "budget-import-check"` dans un chat Copilot.
+Invocation via `skill: "demo-seed-check"`, `skill: "web-build-test"` ou
+`skill: "budget-import-check"` dans un chat Copilot.
 
 ## Règles
 
 - Ne pas dupliquer les compétences dans plusieurs emplacements.
 - Mettre les règles métier dans `AGENTS.md`, pas dans les skills.
-- Garder les fichiers de dépôt cohérents avec le usage local de données bancaires sensibles.
+- Garder les fichiers de dépôt cohérents avec l'usage local de données bancaires sensibles.
+- Pour tout changement fonctionnel, maintenir la seed avec `demo-seed-check` avant la validation
+  globale avec `web-build-test`.

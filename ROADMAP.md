@@ -20,6 +20,7 @@ Mode operatoire :
 - auditer un palier a la fois ;
 - extraire les ecarts avant de passer au suivant ;
 - transformer immediatement les ecarts en tickets actionnables ;
+- conserver le label `Beta` dans l'IHM tant que la surface n'est pas validee dans le journal d'audit ;
 - garder les features niche et les garanties specifiques pour la fin.
 
 ### Paliers d'audit

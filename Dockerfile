@@ -26,7 +26,8 @@ FROM python:3.12-slim-bookworm AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    MOULAGA_DATA_DIR=/data
+    MOULAGA_DATA_DIR=/data \
+    MOULAGA_DEMO_MODE=false
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

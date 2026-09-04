@@ -79,6 +79,10 @@ export function DashboardView({
   const gainPercent = Number(portfolio.data?.cost_basis ?? 0) > 0
     ? (Number(portfolio.data?.gain ?? 0) / Number(portfolio.data?.cost_basis ?? 0)) * 100
     : 0
+  const historyData = (history.data ?? []).map((point) => ({
+    ...point,
+    net_worth: Number(point.net_worth),
+  }))
 
   return (
     <div className="view-stack">
@@ -104,9 +108,9 @@ export function DashboardView({
       <section className="dashboard-grid">
         <Panel title="Évolution du patrimoine net" subtitle="Actifs moins dettes">
           <div className="chart-container">
-            {(history.data?.length ?? 0) > 0 ? (
+            {historyData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={history.data} margin={{ top: 12, right: 10, left: -8, bottom: 0 }}>
+                <AreaChart data={historyData} margin={{ top: 12, right: 10, left: -8, bottom: 0 }}>
                   <defs>
                     <linearGradient id="dashboard-net-fill" x1="0" x2="0" y1="0" y2="1">
                       <stop offset="0%" stopColor="#16c79a" stopOpacity={0.3} />
@@ -115,7 +119,7 @@ export function DashboardView({
                   </defs>
                   <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
                   <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
+                  <YAxis axisLine={false} padding={{ top: 12 }} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
                   <Tooltip contentStyle={chartTooltipStyle} formatter={(value) => money(Number(value))} />
                   <Area dataKey="net_worth" name="Patrimoine" type="monotone" stroke="#16c79a" strokeWidth={2.5} fill="url(#dashboard-net-fill)" />
                 </AreaChart>

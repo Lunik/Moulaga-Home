@@ -224,12 +224,14 @@ def test_account_archive_and_patch(client):
         json={
             "name": "  Compte principal  ",
             "institution": "Banque locale",
+            "account_number": "  FR76 SYNTHETIQUE  ",
             "color": "#123456",
         },
     )
     assert patched.status_code == 200
     assert patched.json()["name"] == "Compte principal"
     assert patched.json()["institution"] == "Banque locale"
+    assert patched.json()["account_number"] == "FR76 SYNTHETIQUE"
     assert patched.json()["transaction_count"] == 1
 
     listed = client.get("/api/accounts").json()
@@ -241,6 +243,22 @@ def test_account_archive_and_patch(client):
         f"/api/accounts/{account_id}", json={"initial_balance": "1.001"}
     )
     assert invalid_precision.status_code == 422
+    cleared_number = client.patch(
+        f"/api/accounts/{account_id}", json={"account_number": "   "}
+    )
+    assert cleared_number.status_code == 200
+    assert cleared_number.json()["account_number"] is None
+
+    deprecated_create = client.post(
+        "/api/accounts",
+        json={"name": "Ancien investissement", "type": "investment"},
+    )
+    assert deprecated_create.status_code == 422
+    deprecated_update = client.patch(
+        f"/api/accounts/{account_id}",
+        json={"type": "investment"},
+    )
+    assert deprecated_update.status_code == 422
 
     archived = client.post(f"/api/accounts/{account_id}/archive")
     assert archived.json()["archived"] is True
@@ -397,6 +415,65 @@ def test_transaction_attachments_use_hashed_local_paths(client, tmp_path):
     assert not second_file.exists()
 
 
+def test_snapshot_attachments_use_hashed_local_paths(client, tmp_path):
+    account_id = _account_id(client)
+    snapshot = client.put(
+        f"/api/accounts/{account_id}/snapshots",
+        json={"period": "2026-09", "balance": "123.45"},
+    ).json()
+    assert snapshot["attachment_count"] == 0
+
+    payload = b"%PDF-1.4 releve bancaire synthetique"
+    uploaded = client.post(
+        f"/api/accounts/{account_id}/snapshots/{snapshot['id']}/attachments",
+        files={"file": ("../../releve septembre.pdf", payload, "application/pdf")},
+    )
+    assert uploaded.status_code == 201
+    attachment = uploaded.json()
+    relative_path = attachment["storage_path"].lstrip("/")
+    parts = relative_path.split("/")
+    assert parts[0] == "attached"
+    assert len(parts[1]) == 2
+    assert len(parts[2]) == 2
+    assert len(parts[3]) == 64
+    assert parts[4] == "releve-septembre.pdf"
+    stored_file = tmp_path / relative_path
+    assert stored_file.read_bytes() == payload
+
+    snapshots = client.get(f"/api/accounts/{account_id}/snapshots").json()
+    assert snapshots[0]["attachment_count"] == 1
+    listed = client.get(
+        f"/api/accounts/{account_id}/snapshots/{snapshot['id']}/attachments"
+    ).json()
+    assert [item["id"] for item in listed] == [attachment["id"]]
+    downloaded = client.get(
+        f"/api/accounts/{account_id}/snapshots/{snapshot['id']}"
+        f"/attachments/{attachment['id']}/download"
+    )
+    assert downloaded.content == payload
+    assert "attachment" in downloaded.headers["content-disposition"]
+
+    deleted = client.delete(
+        f"/api/accounts/{account_id}/snapshots/{snapshot['id']}"
+        f"/attachments/{attachment['id']}"
+    )
+    assert deleted.status_code == 204
+    assert not stored_file.exists()
+    assert client.get(
+        f"/api/accounts/{account_id}/snapshots"
+    ).json()[0]["attachment_count"] == 0
+
+    second = client.post(
+        f"/api/accounts/{account_id}/snapshots/{snapshot['id']}/attachments",
+        files={"file": ("releve.pdf", payload, "application/pdf")},
+    ).json()
+    second_file = tmp_path / second["storage_path"].lstrip("/")
+    assert client.delete(
+        f"/api/accounts/{account_id}/snapshots/{snapshot['id']}"
+    ).status_code == 204
+    assert not second_file.exists()
+
+
 def test_archived_account_is_read_only_across_linked_resources(client):
     account_id = _account_id(client)
     transaction = client.post(
@@ -415,6 +492,10 @@ def test_archived_account_is_read_only_across_linked_resources(client):
     snapshot = client.put(
         f"/api/accounts/{account_id}/snapshots",
         json={"period": "2026-01", "balance": "10.00"},
+    ).json()
+    snapshot_attachment = client.post(
+        f"/api/accounts/{account_id}/snapshots/{snapshot['id']}/attachments",
+        files={"file": ("releve.txt", b"releve synthetique", "text/plain")},
     ).json()
     holding = client.post(
         "/api/holdings",
@@ -463,6 +544,14 @@ def test_archived_account_is_read_only_across_linked_resources(client):
         client.delete(
             f"/api/transactions/{transaction['id']}/attachments/{attachment['id']}"
         ),
+        client.post(
+            f"/api/accounts/{account_id}/snapshots/{snapshot['id']}/attachments",
+            files={"file": ("autre.txt", b"interdit", "text/plain")},
+        ),
+        client.delete(
+            f"/api/accounts/{account_id}/snapshots/{snapshot['id']}"
+            f"/attachments/{snapshot_attachment['id']}"
+        ),
         client.put(
             f"/api/accounts/{account_id}/snapshots",
             json={"period": "2026-02", "balance": "15.00"},
@@ -500,6 +589,13 @@ def test_archived_account_is_read_only_across_linked_resources(client):
     ).status_code == 200
     assert client.get(f"/api/accounts/{account_id}/snapshots").status_code == 200
     assert client.get(
+        f"/api/accounts/{account_id}/snapshots/{snapshot['id']}/attachments"
+    ).status_code == 200
+    assert client.get(
+        f"/api/accounts/{account_id}/snapshots/{snapshot['id']}"
+        f"/attachments/{snapshot_attachment['id']}/download"
+    ).status_code == 200
+    assert client.get(
         "/api/holdings", params={"account_id": account_id}
     ).status_code == 200
 
@@ -531,12 +627,14 @@ def test_savings_configuration_is_persisted(client):
             "name": "Livret synthetique",
             "type": "savings",
             "currency": "EUR",
+            "account_number": "LIVRET-SYNTH-01",
             "savings_product": "Livret A",
             "annual_interest_rate": "1.700",
             "legal_cap": "22950.00",
         },
     )
     assert created.status_code == 201
+    assert created.json()["account_number"] == "LIVRET-SYNTH-01"
     assert created.json()["savings_product"] == "Livret A"
     assert created.json()["annual_interest_rate"] == "1.700"
     assert created.json()["legal_cap"] == "22950.00"
@@ -720,7 +818,7 @@ def test_holdings_portfolio_and_networth_no_double_count(client):
     cash_account = _account_id(client)  # seeded checking account, balance 0
     invest = client.post(
         "/api/accounts",
-        json={"name": "PEA", "type": "investment", "initial_balance": "1000.00"},
+        json={"name": "PEA", "type": "pea", "initial_balance": "1000.00"},
     ).json()
 
     # Give the cash account a positive balance to check the cash side.
@@ -892,7 +990,7 @@ def test_transaction_pagination_offset_and_count(client):
 def test_portfolio_snapshots_and_performance(client):
     invest = client.post(
         "/api/accounts",
-        json={"name": "PEA", "type": "investment", "initial_balance": "0.00"},
+        json={"name": "PEA", "type": "pea", "initial_balance": "0.00"},
     ).json()
     holding = client.post(
         "/api/holdings",
@@ -938,7 +1036,7 @@ def test_portfolio_snapshots_and_performance(client):
 def test_aggregate_contributions(client):
     invest = client.post(
         "/api/accounts",
-        json={"name": "PEA", "type": "investment", "initial_balance": "0.00"},
+        json={"name": "PEA", "type": "pea", "initial_balance": "0.00"},
     ).json()
     holding = client.post(
         "/api/holdings",
@@ -1025,7 +1123,7 @@ def test_cycle_overview_enriched_metrics(client):
     account_id = _account_id(client)
     invest = client.post(
         "/api/accounts",
-        json={"name": "PEA", "type": "investment", "initial_balance": "0.00"},
+        json={"name": "PEA", "type": "pea", "initial_balance": "0.00"},
     ).json()
     logement = _category(client, "Logement")
     client.patch(f"/api/categories/{logement['id']}", json={"monthly_budget": "500.00"})

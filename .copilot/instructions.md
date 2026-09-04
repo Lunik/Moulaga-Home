@@ -7,6 +7,8 @@ Avant toute modification, lire dans l'ordre :
 1. `AGENTS.md` — conventions, architecture, règles métier.
 2. `README.md` — démarrage et usage.
 3. `backend/tests/` et le code des routes si l'impact touche l'API.
+4. `backend/app/commands/seed_demo.py` et `backend/tests/test_seed_demo.py` pour tout changement
+   fonctionnel.
 
 ## Ce que c'est
 
@@ -28,6 +30,7 @@ Moulaga est une application auto-hébergée de gestion de budget personnel, avec
 Toujours faire au minimum :
 
 ```bash
+cd backend && .venv/bin/python -m pytest tests/test_seed_demo.py
 cd backend && .venv/bin/python -m ruff check app tests && .venv/bin/python -m pytest
 cd frontend && npm run build && npm run lint
 ```
@@ -36,6 +39,7 @@ cd frontend && npm run build && npm run lint
 
 - `web-build-test` — vérifie backend + frontend après une modification
 - `budget-import-check` — vérifie la commande de migration bancaire initiale
+- `demo-seed-check` — maintient la seed synthétique comme catalogue exécutable des fonctionnalités
 
 ## Règles métier
 
@@ -50,10 +54,16 @@ cd frontend && npm run build && npm run lint
 - Les pieces jointes restent sous `MOULAGA_DATA_DIR/attached`, hors Git, dans des chemins haches.
 - Les projections de livrets reposent sur le taux du compte et n'anticipent aucun versement.
 - Aucune suggestion ou identite marchande ne doit appeler un service externe.
+- Toute fonctionnalite ajoutee ou modifiee doit avoir un scenario synthetique dans
+  `backend/app/commands/seed_demo.py` et une assertion de contrat dans
+  `backend/tests/test_seed_demo.py`.
+- `MOULAGA_DEMO_MODE=true` reinitialise volontairement la base de demonstration a chaque demarrage
+  Docker. Il faut retirer cette variable avant tout usage persistant ou import de donnees.
 
 ## Workflow
 
 1. Comprendre le besoin et vérifier les conventions dans `AGENTS.md`.
-2. Modifier uniquement le périmètre nécessaire.
-3. Vérifier le build et les tests.
-4. Ne pas publier de données bancaires ni de pièces jointes sensibles.
+2. Identifier le scenario de demonstration du changement et mettre a jour la seed et son test.
+3. Modifier uniquement le périmètre nécessaire.
+4. Utiliser `demo-seed-check`, puis vérifier le build et les tests avec `web-build-test`.
+5. Ne pas publier de données bancaires ni de pièces jointes sensibles.

@@ -4,8 +4,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiGet } from './api/client'
 import type { Account, AppSettings, Category, MerchantIdentity, Transaction } from './api/types'
 import { ViewErrorBoundary } from './ErrorBoundary'
+import { isRouteBeta } from './featureValidation'
 import { type Route, useRoute } from './routing'
-import { Icon, configureUiPreferences, errorMessage, longToday } from './ui'
+import { BetaBadge, Icon, configureUiPreferences, errorMessage, longToday } from './ui'
 
 const AccountsView = lazy(() => import('./views/AccountsView').then((module) => ({ default: module.AccountsView })))
 const AccountDetailView = lazy(() => import('./views/AccountsView').then((module) => ({ default: module.AccountDetailView })))
@@ -67,6 +68,7 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ['budget-spending'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-cashflow'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
       queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
     ])
   }
@@ -87,7 +89,10 @@ export default function App() {
         <header className="page-header">
           <div>
             <p className="page-date">{longToday()}</p>
-            <h1>{pageTitle}</h1>
+            <div className="page-title">
+              <h1>{pageTitle}</h1>
+              {isRouteBeta(route) && <BetaBadge />}
+            </div>
           </div>
         </header>
 
@@ -164,7 +169,13 @@ function Sidebar({
             onClick={() => navigate(item.route)}
           >
             <span className="nav-icon"><Icon name={item.icon} /></span>
-            <span className="nav-copy"><strong>{item.label}</strong><small>{item.caption}</small></span>
+            <span className="nav-copy">
+              <span className="nav-label">
+                <strong>{item.label}</strong>
+                {isRouteBeta(item.route) && <BetaBadge />}
+              </span>
+              <small>{item.caption}</small>
+            </span>
             <Icon name="arrow" />
           </button>
         ))}

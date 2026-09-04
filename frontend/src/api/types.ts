@@ -18,6 +18,7 @@ export interface Account {
   initial_balance: Money
   balance: Money
   institution: string | null
+  account_number: string | null
   archived: boolean
   transaction_count: number
   savings_product: string | null
@@ -30,6 +31,7 @@ export interface AccountSnapshot {
   account_id: number
   period: string
   balance: Money
+  attachment_count: number
 }
 
 export interface AccountHistoryPoint {
@@ -69,13 +71,20 @@ export interface Transaction {
   attachment_count: number
 }
 
-export interface TransactionAttachment {
+export interface StoredAttachment {
   id: number
-  transaction_id: number
   original_name: string
   storage_path: string
   content_type: string | null
   size: number
+}
+
+export interface TransactionAttachment extends StoredAttachment {
+  transaction_id: number
+}
+
+export interface AccountSnapshotAttachment extends StoredAttachment {
+  snapshot_id: number
 }
 
 export interface TransactionCount {

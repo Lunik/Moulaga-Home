@@ -228,7 +228,7 @@ export function Modal({
   title: string
   description?: string
   children?: ReactNode
-  actions: ReactNode
+  actions?: ReactNode
   onClose: () => void
 }) {
   useEffect(() => {
@@ -263,7 +263,7 @@ export function Modal({
           </button>
         </header>
         {children && <div className="modal-content">{children}</div>}
-        <footer className="modal-actions">{actions}</footer>
+        {actions && <footer className="modal-actions">{actions}</footer>}
       </section>
     </div>
   )
@@ -344,6 +344,18 @@ export function StatusBadge({
   tone?: 'neutral' | 'positive' | 'negative' | 'warning' | 'primary'
 }) {
   return <span className={`status-badge ${tone}`}>{children}</span>
+}
+
+export function BetaBadge() {
+  return (
+    <span
+      aria-label="Fonctionnalité bêta, en attente de validation"
+      className="status-badge warning beta-badge"
+      title="Fonctionnalité en attente de validation"
+    >
+      Bêta
+    </span>
+  )
 }
 
 export function MerchantAvatar({

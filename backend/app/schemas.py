@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 HEX_COLOR = r"^#[0-9a-fA-F]{6}$"
 _MONEY = {"max_digits": 12, "decimal_places": 2}
+DEPRECATED_ACCOUNT_TYPES = frozenset({"investment"})
 
 
 def _strip_required(value: str) -> str:
@@ -31,6 +32,7 @@ class AccountCreate(BaseModel):
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     initial_balance: Decimal = Field(default=Decimal("0.00"), **_MONEY)
     institution: str | None = Field(default=None, max_length=120)
+    account_number: str | None = Field(default=None, max_length=120)
     color: str = Field(default="#4f46e5", pattern=HEX_COLOR)
     savings_product: str | None = Field(default=None, max_length=64)
     annual_interest_rate: Decimal | None = Field(
@@ -43,9 +45,9 @@ class AccountCreate(BaseModel):
     def strip_required(cls, value: str) -> str:
         return _strip_required(value)
 
-    @field_validator("savings_product")
+    @field_validator("account_number", "savings_product")
     @classmethod
-    def strip_savings_product(cls, value: str | None) -> str | None:
+    def strip_optional(cls, value: str | None) -> str | None:
         if value is None:
             return None
         cleaned = value.strip()
@@ -72,6 +74,7 @@ class AccountUpdate(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     initial_balance: Decimal | None = Field(default=None, **_MONEY)
     institution: str | None = Field(default=None, max_length=120)
+    account_number: str | None = Field(default=None, max_length=120)
     color: str | None = Field(default=None, pattern=HEX_COLOR)
     archived: bool | None = None
     savings_product: str | None = Field(default=None, max_length=64)
@@ -92,9 +95,9 @@ class AccountUpdate(BaseModel):
     def normalize_currency(cls, value: str | None) -> str | None:
         return value.upper() if value else value
 
-    @field_validator("savings_product")
+    @field_validator("account_number", "savings_product")
     @classmethod
-    def strip_savings_product(cls, value: str | None) -> str | None:
+    def strip_optional(cls, value: str | None) -> str | None:
         if value is None:
             return None
         cleaned = value.strip()
@@ -117,6 +120,16 @@ class BalanceSnapshotRead(BaseModel):
     account_id: int
     period: str
     balance: Decimal
+    attachment_count: int = 0
+
+
+class BalanceSnapshotAttachmentRead(BaseModel):
+    id: int
+    snapshot_id: int
+    original_name: str
+    storage_path: str
+    content_type: str | None
+    size: int
 
 
 class BalanceSnapshotCreate(BaseModel):
