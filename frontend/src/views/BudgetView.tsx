@@ -867,7 +867,7 @@ function TransactionLedger({
     <>
       <section className="section-intro">
         <p>Registre complet de tous les mouvements persistants.</p>
-        <button className="primary-button" type="button" onClick={() => setShowForm((current) => !current)}><Icon name="plus" />Ajouter</button>
+        <button className="primary-button" type="button" onClick={() => setShowForm((current) => !current)}><Icon name="plus" />Ajouter une transaction</button>
       </section>
       {showForm && <TransactionForm accounts={accounts} categories={categories} onCancel={() => setShowForm(false)} onSaved={async () => { await refreshLedger(); setShowForm(false) }} />}
       {(pageQuery.error || countQuery.error) && <div className="error-banner">{errorMessage(pageQuery.error ?? countQuery.error)}</div>}

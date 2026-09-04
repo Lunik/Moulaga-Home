@@ -89,11 +89,6 @@ export default function App() {
             <p className="page-date">{longToday()}</p>
             <h1>{pageTitle}</h1>
           </div>
-          {route.name !== 'settings' && route.name !== 'account' && (
-            <button className="primary-button page-action" type="button" onClick={() => navigate({ name: 'budget', tab: 'transactions' })}>
-              <Icon name="plus" />Ajouter une transaction
-            </button>
-          )}
         </header>
 
         {firstError && <div className="error-banner" role="alert">Impossible de charger les données locales : {errorMessage(firstError)}</div>}
