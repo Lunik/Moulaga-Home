@@ -227,7 +227,7 @@ async def _seed(
     )
     boursobank_checking = Account(
         name="Compte courant Boursobank demo", type="checking", currency="EUR",
-        initial_balance=money("2750.00"), institution="Boursobank", color="#d9f99d",
+        initial_balance=money("2150.00"), institution="Boursobank", color="#d9f99d",
         account_number="DEMO-BOURSO-COURANT-001",
     )
     life_insurance = Account(
@@ -269,6 +269,13 @@ async def _seed(
     transaction_count = 0
     checking_monthly_deltas = {month: Decimal("0.00") for month in months}
     savings_monthly_deltas = {month: Decimal("0.00") for month in months}
+    boursobank_monthly_deltas = {month: Decimal("0.00") for month in months}
+    boursobank_monthly_expenses = (
+        money("-350.00"),
+        money("-350.00"),
+        money("-370.00"),
+        money("-330.00"),
+    )
     receipt_transaction: Transaction | None = None
     session.add(
         Transaction(
@@ -280,7 +287,7 @@ async def _seed(
         )
     )
     transaction_count += 1
-    for month in months:
+    for month_index, month in enumerate(months):
         rows = [
             (month.replace(day=1), "Salaire mensuel", money("2500.00"), salaire.id, None),
             (month.replace(day=3), "Loyer", money("-750.00"), logement.id, None),
@@ -325,6 +332,33 @@ async def _seed(
             checking_monthly_deltas[month] += amount
             if notes is not None:
                 receipt_transaction = transaction
+            transaction_count += 1
+
+        boursobank_rows = [
+            (
+                month.replace(day=5),
+                "Revenu complementaire demo",
+                money("500.00"),
+                salaire.id,
+            ),
+            (
+                month.replace(day=17),
+                "Courses compte Boursobank demo",
+                boursobank_monthly_expenses[month_index],
+                courses.id,
+            ),
+        ]
+        for booked_at, description, amount, category_id in boursobank_rows:
+            session.add(
+                Transaction(
+                    booked_at=booked_at,
+                    description=description,
+                    amount=amount,
+                    account_id=boursobank_checking.id,
+                    category_id=category_id,
+                )
+            )
+            boursobank_monthly_deltas[month] += amount
             transaction_count += 1
 
         # Enough ordinary ledger entries to exercise account-level pagination.
@@ -386,8 +420,8 @@ async def _seed(
     # --- Monthly balance snapshots ----------------------------------------- #
     checking_running = Decimal(checking.initial_balance)
     savings_running = Decimal(savings.initial_balance)
+    boursobank_running = Decimal(boursobank_checking.initial_balance)
     additional_snapshot_series = [
-        (boursobank_checking, ("2300.00", "2450.00", "2580.00", "2750.00")),
         (life_insurance, ("16700.00", "17450.00", "18100.00", "18500.00")),
         (invest, ("2100.00", "2300.00", "2450.00", "2634.00")),
         (crypto_wallet, ("3600.00", "4100.00", "3850.00", "4200.00")),
@@ -397,6 +431,7 @@ async def _seed(
     for index, month in enumerate(months):
         checking_running += checking_monthly_deltas[month]
         savings_running += savings_monthly_deltas[month]
+        boursobank_running += boursobank_monthly_deltas[month]
         checking_snapshot = BalanceSnapshot(
             account_id=checking.id,
             period=month.strftime("%Y-%m"),
@@ -407,6 +442,11 @@ async def _seed(
             period=month.strftime("%Y-%m"),
             balance=money(savings_running),
         )
+        boursobank_snapshot = BalanceSnapshot(
+            account_id=boursobank_checking.id,
+            period=month.strftime("%Y-%m"),
+            balance=money(boursobank_running),
+        )
         additional_snapshots = [
             BalanceSnapshot(
                 account_id=account.id,
@@ -415,9 +455,16 @@ async def _seed(
             )
             for account, balances in additional_snapshot_series
         ]
-        session.add_all([checking_snapshot, savings_snapshot, *additional_snapshots])
+        session.add_all(
+            [
+                checking_snapshot,
+                savings_snapshot,
+                boursobank_snapshot,
+                *additional_snapshots,
+            ]
+        )
         latest_savings_snapshot = savings_snapshot
-        snapshot_count += 2 + len(additional_snapshots)
+        snapshot_count += 3 + len(additional_snapshots)
 
     archived_snapshot = BalanceSnapshot(
         account_id=archived.id,

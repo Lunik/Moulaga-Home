@@ -134,6 +134,7 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         assert boursobank_checking["type"] == "checking"
         assert boursobank_checking["institution"] == "Boursobank"
         assert boursobank_checking["balance"] == "2750.00"
+        assert boursobank_checking["transaction_count"] == 8
         assert life_insurance["type"] == "life_insurance"
         assert life_insurance["institution"] == "Boursobank"
         assert life_insurance["balance"] == "18500.00"
@@ -151,6 +152,15 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
             "/api/transactions",
             params={"account_id": checking["id"], "limit": 1000},
         ).json()
+        boursobank_transactions = client.get(
+            "/api/transactions",
+            params={"account_id": boursobank_checking["id"], "limit": 1000},
+        ).json()
+        assert len(boursobank_transactions) == 8
+        assert sum(
+            transaction["amount"] == "500.00"
+            for transaction in boursobank_transactions
+        ) == 4
         receipt_transaction = next(
             transaction
             for transaction in checking_transactions
@@ -199,6 +209,25 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
             "/api/transactions/count",
             params={"account_id": checking["id"], "uncategorized": True},
         ).json()["count"] == 4
+
+        source_cashflow = client.get(
+            "/api/budget/cashflow", params={"by": "source"}
+        ).json()
+        positive_sources = {
+            flow["label"] for flow in source_cashflow if flow["inflow"] != "0.00"
+        }
+        assert positive_sources == {
+            "Compte courant demo",
+            "Compte courant Boursobank demo",
+        }
+        boursobank_flow = next(
+            flow
+            for flow in source_cashflow
+            if flow["label"] == "Compte courant Boursobank demo"
+        )
+        assert boursobank_flow["inflow"] == "500.00"
+        assert boursobank_flow["outflow"] == "330.00"
+        assert boursobank_flow["net"] == "170.00"
 
         for account in (boursobank_checking, life_insurance, pea, crypto_wallet):
             assert len(
