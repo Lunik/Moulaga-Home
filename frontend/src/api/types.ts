@@ -18,7 +18,6 @@ export interface Account {
   initial_balance: Money
   balance: Money
   institution: string | null
-  color: string
   archived: boolean
   transaction_count: number
   savings_product: string | null

@@ -1344,9 +1344,19 @@ textarea:focus-visible {
   margin-top: 0.25rem;
 }
 
-.savings-projection-chart {
-  height: 18rem;
+.savings-history-chart {
+  height: 21rem;
   margin-top: 1rem;
+}
+
+.savings-history-legend {
+  margin-top: 0.5rem;
+}
+
+.legend-line.projection {
+  height: 0;
+  border-top: 2px dashed #615fff;
+  background: transparent;
 }
 
 .destructive-button {

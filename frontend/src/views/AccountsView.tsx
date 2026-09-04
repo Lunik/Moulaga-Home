@@ -4,9 +4,6 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -386,6 +383,9 @@ export function AccountDetailView({
   if (!account.data) return <div className="error-banner">{errors.length > 0 ? errorMessage(errors[0]) : 'Compte introuvable.'}</div>
   const readOnly = account.data.archived
   const balance = Number(account.data.balance)
+  const snapshotChartData = [...(snapshots.data ?? [])]
+    .sort((left, right) => left.period.localeCompare(right.period))
+    .map((snapshot) => ({ ...snapshot, balance: Number(snapshot.balance) }))
   const transferTargets = accounts.filter((candidate) => (
     candidate.id !== accountId
     && !candidate.archived
@@ -595,29 +595,38 @@ export function AccountDetailView({
         <small>{account.data.institution || 'Établissement non renseigné'}</small>
       </section>
 
-      <Panel title="Historique" subtitle="Relevés mensuels persistants">
-        <div className="chart-container account-history-chart">
-          {(snapshots.data?.length ?? 0) > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={[...(snapshots.data ?? [])].sort((left, right) => left.period.localeCompare(right.period))}>
-                <defs>
-                  <linearGradient id="account-history-fill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#16c79a" stopOpacity={0.3} />
-                    <stop offset="100%" stopColor="#16c79a" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
-                <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
-                <Tooltip contentStyle={chartTooltipStyle} labelFormatter={(value) => String(value)} formatter={(value) => money(Number(value))} />
-                <Area dataKey="balance" type="monotone" stroke="#16c79a" strokeWidth={2.5} fill="url(#account-history-fill)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyState icon="calendar" text="Ajoutez le premier relevé mensuel pour construire l'historique." />
-          )}
-        </div>
-      </Panel>
+      {account.data.type === 'savings' ? (
+        <SavingsConfigurator
+          account={account.data}
+          onSaved={refreshDetail}
+          readOnly={readOnly}
+          snapshots={snapshotChartData}
+        />
+      ) : (
+        <Panel title="Historique" subtitle="Relevés mensuels persistants">
+          <div className="chart-container account-history-chart">
+            {snapshotChartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={snapshotChartData}>
+                  <defs>
+                    <linearGradient id="account-history-fill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#16c79a" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#16c79a" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
+                  <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+                  <YAxis axisLine={false} padding={{ top: 12 }} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
+                  <Tooltip contentStyle={chartTooltipStyle} labelFormatter={(value) => String(value)} formatter={(value) => money(Number(value))} />
+                  <Area dataKey="balance" type="monotone" stroke="#16c79a" strokeWidth={2.5} fill="url(#account-history-fill)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <EmptyState icon="calendar" text="Ajoutez le premier relevé mensuel pour construire l'historique." />
+            )}
+          </div>
+        </Panel>
+      )}
 
       {positionsEnabled && (
         <AccountPositions
@@ -626,10 +635,6 @@ export function AccountDetailView({
           navigate={navigate}
           readOnly={readOnly}
         />
-      )}
-
-      {account.data.type === 'savings' && (
-        <SavingsConfigurator account={account.data} onSaved={refreshDetail} readOnly={readOnly} />
       )}
 
       <Panel title="Relevés mensuels" subtitle={`${snapshots.data?.length ?? 0} relevé${snapshots.data?.length === 1 ? '' : 's'}`}>
@@ -1198,10 +1203,12 @@ function SavingsConfigurator({
   account,
   onSaved,
   readOnly,
+  snapshots,
 }: {
   account: Account
   onSaved: () => Promise<void>
   readOnly: boolean
+  snapshots: Array<{ period: string; balance: number }>
 }) {
   const defaultProduct = savingsProducts[0]
   const [showConfig, setShowConfig] = useState(false)
@@ -1235,14 +1242,21 @@ function SavingsConfigurator({
   const currentBalance = Math.max(0, Number(account.balance))
   const projectedBalance = currentBalance * (1 + Number(annualRate || 0) / 100)
   const cap = Number(legalCap || 0)
-  const projectionData = [
-    { period: "Aujourd'hui", balance: currentBalance },
-    { period: 'Dans 1 an', balance: projectedBalance },
-  ]
+  const chartData: Array<{
+    period: string
+    balance?: number
+    projection?: number
+  }> = snapshots.map((snapshot) => ({ ...snapshot }))
+  const latestSnapshot = chartData.at(-1)
+  if (latestSnapshot) latestSnapshot.projection = latestSnapshot.balance
+  chartData.push(
+    { period: "Aujourd'hui", projection: currentBalance },
+    { period: 'Dans 1 an', projection: projectedBalance },
+  )
   return (
     <Panel
-      title="Configuration du livret"
-      subtitle="Barèmes préremplis et modifiables ; projection hors nouveaux versements."
+      title="Historique et projection"
+      subtitle="Relevés mensuels et projection à un an, hors nouveaux versements."
       action={!readOnly ? (
         <button
           className="secondary-button small-button"
@@ -1327,31 +1341,43 @@ function SavingsConfigurator({
           <small>+{money(projectedBalance - currentBalance)} d'intérêts estimés</small>
         </article>
       </div>
-      <div className="chart-container savings-projection-chart">
+      <div className="chart-container savings-history-chart">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={projectionData} margin={{ top: 24, right: 24, bottom: 4, left: 8 }}>
+          <AreaChart data={chartData} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
+            <defs>
+              <linearGradient id="savings-history-fill" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="#16c79a" stopOpacity={0.3} />
+                <stop offset="100%" stopColor="#16c79a" stopOpacity={0} />
+              </linearGradient>
+            </defs>
             <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
             <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-            <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
+            <YAxis axisLine={false} padding={{ top: 12 }} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
             <Tooltip contentStyle={chartTooltipStyle} formatter={(value) => money(Number(value))} />
-            {cap > 0 && (
-              <ReferenceLine
-                ifOverflow="extendDomain"
-                y={cap}
-                stroke="var(--warning)"
-                strokeDasharray="7 7"
-                label={{ value: 'Plafond légal', fill: 'var(--warning)', fontSize: 12, position: 'insideTopRight' }}
-              />
-            )}
-            <Line
+            <Area
               dataKey="balance"
-              dot={{ fill: '#16c79a', r: 4 }}
+              fill="url(#savings-history-fill)"
+              name="Relevé"
               stroke="#16c79a"
               strokeWidth={2.5}
               type="monotone"
             />
-          </LineChart>
+            <Area
+              dataKey="projection"
+              dot={{ fill: '#615fff', r: 4 }}
+              fill="transparent"
+              name="Projection"
+              stroke="#615fff"
+              strokeDasharray="7 7"
+              strokeWidth={2.5}
+              type="monotone"
+            />
+          </AreaChart>
         </ResponsiveContainer>
+      </div>
+      <div className="chart-legend savings-history-legend">
+        <span><i className="legend-line" /> Relevés</span>
+        <span><i className="legend-line projection" /> Projection</span>
       </div>
     </Panel>
   )
@@ -1362,7 +1388,6 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
   const [type, setType] = useState('checking')
   const [institution, setInstitution] = useState('')
   const [initialBalance, setInitialBalance] = useState('0')
-  const [color, setColor] = useState('#615fff')
   const mutation = useMutation({
     mutationFn: () => apiPost<Account>('/accounts', {
       name,
@@ -1370,7 +1395,6 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
       currency: 'EUR',
       institution: institution || null,
       initial_balance: initialBalance,
-      color,
       ...(type === 'savings' ? {
         savings_product: savingsProducts[0].name,
         annual_interest_rate: savingsProducts[0].rate,
@@ -1395,7 +1419,6 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
           </select>
         </Field>
         <Field label="Solde initial"><input type="number" step="0.01" value={initialBalance} onChange={(event) => setInitialBalance(event.target.value)} required /></Field>
-        <Field label="Couleur"><input className="color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
           <button className="primary-button" type="submit" disabled={mutation.isPending}>Créer</button>
@@ -1411,14 +1434,12 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
   const [type, setType] = useState(account.type)
   const [institution, setInstitution] = useState(account.institution ?? '')
   const [initialBalance, setInitialBalance] = useState(account.initial_balance)
-  const [color, setColor] = useState(account.color ?? '#615fff')
   const mutation = useMutation({
     mutationFn: () => apiPatch<Account>(`/accounts/${account.id}`, {
       name,
       type,
       institution: institution || null,
       initial_balance: initialBalance,
-      color,
       ...(type === 'savings' && account.type !== 'savings' ? {
         savings_product: savingsProducts[0].name,
         annual_interest_rate: savingsProducts[0].rate,
@@ -1443,7 +1464,6 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
           </select>
         </Field>
         <Field label="Solde initial"><input type="number" step="0.01" value={initialBalance} onChange={(event) => setInitialBalance(event.target.value)} required /></Field>
-        <Field label="Couleur"><input className="color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
           <button className="primary-button" type="submit" disabled={mutation.isPending}>Enregistrer</button>

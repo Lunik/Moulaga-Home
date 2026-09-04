@@ -71,7 +71,7 @@ export function DashboardView({
     .map((account, index) => ({
       name: account.name,
       value: Number(account.balance),
-      color: account.color ?? colors[index % colors.length],
+      color: colors[index % colors.length],
     }))
   const activeDebts = (debts.data ?? []).filter((debt) => !debt.archived)
   const firstError = [netWorth.error, history.error, portfolio.error, debts.error].find(Boolean)
