@@ -41,4 +41,4 @@ cd frontend && npm run build && npm run lint
 - La migration doit rester atomique et idempotente.
 - Les migrations de schema doivent sauvegarder une base existante avant modification.
 - La categorisation privee et les identites marchandes restent entierement locales.
-- `ROADMAP.md` trace les 26 surfaces fonctionnelles et leur validation.
+- `ROADMAP.md` trace les 26 surfaces fonctionnelles, leur validation et l'ordre d'audit iteratif.

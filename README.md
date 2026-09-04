@@ -17,7 +17,8 @@ une base SQLite locale et persistante.
 - themes clair/sombre/systeme, formats de date et styles de navigation ;
 - identites marchandes locales par monogramme et couleur, sans appel externe.
 
-La correspondance avec les 26 maquettes est detaillee dans [ROADMAP.md](ROADMAP.md).
+La correspondance avec les 26 maquettes et l'ordre d'audit iteratif des fonctionnalites sont
+decrits dans [ROADMAP.md](ROADMAP.md).
 
 ## Confidentialite
 
