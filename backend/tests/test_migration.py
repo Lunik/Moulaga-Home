@@ -73,9 +73,26 @@ def test_legacy_database_upgrades_without_data_loss(tmp_path, monkeypatch):
         assert historic["archived"] is False
         assert historic["color"] == "#4f46e5"
         assert historic["balance"] == "70.00"  # 100.00 initial - 30.00 expense preserved
+        assert historic["savings_product"] is None
+        assert historic["annual_interest_rate"] is None
+        assert historic["legal_cap"] is None
 
         transactions = client.get("/api/transactions").json()
         assert any(t["description"] == "Depense historique" for t in transactions)
+
+    connection = sqlite3.connect(db_path)
+    try:
+        transaction_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(transactions)")
+        }
+        attachment_table = connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'transaction_attachments'"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert "transfer_group" in transaction_columns
+    assert attachment_table is not None
 
     # A safety backup must have been produced before altering the existing DB.
     backups = list(tmp_path.glob("moulaga.backup-*.db"))
@@ -87,6 +104,17 @@ def test_legacy_database_upgrades_without_data_loss(tmp_path, monkeypatch):
         response = client.patch(f"/api/categories/{category['id']}", json={"archived": True})
         assert response.status_code == 200
         assert response.json()["archived"] is True
+        account = client.get("/api/accounts").json()[0]
+        savings = client.patch(
+            f"/api/accounts/{account['id']}",
+            json={
+                "savings_product": "Livret A",
+                "annual_interest_rate": "1.700",
+                "legal_cap": "22950.00",
+            },
+        )
+        assert savings.status_code == 200
+        assert savings.json()["legal_cap"] == "22950.00"
 
 
 def test_schema_version_is_stamped_and_idempotent(tmp_path, monkeypatch):
@@ -99,7 +127,7 @@ def test_schema_version_is_stamped_and_idempotent(tmp_path, monkeypatch):
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     finally:
         connection.close()
-    assert version >= 2
+    assert version >= 5
 
     # Re-opening a current database performs no backup (nothing pending).
     with TestClient(main.create_app()):

@@ -27,6 +27,7 @@ import type {
 } from '../api/types'
 import type { BudgetTab, Route } from '../routing'
 import {
+  AmountDirectionToggle,
   EmptyState,
   Field,
   Icon,
@@ -35,6 +36,7 @@ import {
   ProgressBar,
   StatusBadge,
   chartTooltipStyle,
+  directedAmount,
   errorMessage,
   formatDate,
   formatMonth,
@@ -42,6 +44,7 @@ import {
   localDateInputValue,
   money,
   signedMoney,
+  type TransactionDirection,
 } from '../ui'
 
 const budgetTabs: Array<{ id: BudgetTab; label: string; icon: Parameters<typeof Icon>[0]['name'] }> = [
@@ -961,20 +964,22 @@ function TransactionRow({ categories, transaction, onSaved }: { categories: Cate
 function TransactionForm({ accounts, categories, onCancel, onSaved }: { accounts: Account[]; categories: Category[]; onCancel: () => void; onSaved: () => Promise<void> }) {
   const [date, setDate] = useState(localDateInputValue)
   const [description, setDescription] = useState('')
+  const [direction, setDirection] = useState<TransactionDirection>('withdrawal')
   const [amount, setAmount] = useState('')
   const [accountId, setAccountId] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [notes, setNotes] = useState('')
   const mutation = useMutation({
-    mutationFn: () => apiPost<Transaction>('/transactions', { booked_at: date, description, amount, account_id: Number(accountId || accounts[0]?.id), category_id: categoryId ? Number(categoryId) : null, notes: notes || null }),
+    mutationFn: () => apiPost<Transaction>('/transactions', { booked_at: date, description, amount: directedAmount(amount, direction), account_id: Number(accountId || accounts[0]?.id), category_id: categoryId ? Number(categoryId) : null, notes: notes || null }),
     onSuccess: onSaved,
   })
   return (
-    <Panel title="Nouvelle transaction" subtitle="Montant négatif pour une dépense, positif pour un revenu.">
+    <Panel title="Nouvelle transaction" subtitle="Choisissez un dépôt ou un retrait, puis saisissez un montant positif.">
+      <AmountDirectionToggle value={direction} onChange={setDirection} />
       <form className="feature-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate() }}>
         <Field label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></Field>
         <Field label="Libellé"><input value={description} onChange={(event) => setDescription(event.target.value)} required /></Field>
-        <Field label="Montant"><input type="number" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
+        <Field label="Montant"><input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
         <Field label="Compte"><select value={accountId} onChange={(event) => setAccountId(event.target.value)}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
         <Field label="Catégorie"><select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">Sans catégorie</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
         <Field label="Note"><input value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>

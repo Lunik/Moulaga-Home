@@ -20,15 +20,10 @@ export interface Account {
   institution: string | null
   color: string
   archived: boolean
-}
-
-export interface AccountPocket {
-  id: number
-  account_id: number
-  name: string
-  allocated: Money
-  target: Money | null
-  color: string
+  transaction_count: number
+  savings_product: string | null
+  annual_interest_rate: string | null
+  legal_cap: Money | null
 }
 
 export interface AccountSnapshot {
@@ -44,7 +39,6 @@ export interface AccountHistoryPoint {
 }
 
 export interface AccountDetail extends Account {
-  pockets: AccountPocket[]
   history: AccountHistoryPoint[]
   transaction_count: number
 }
@@ -72,6 +66,17 @@ export interface Transaction {
   category_name: string | null
   category_kind: 'income' | 'expense' | null
   notes: string | null
+  transfer_group: string | null
+  attachment_count: number
+}
+
+export interface TransactionAttachment {
+  id: number
+  transaction_id: number
+  original_name: string
+  storage_path: string
+  content_type: string | null
+  size: number
 }
 
 export interface TransactionCount {

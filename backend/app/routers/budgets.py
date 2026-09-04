@@ -42,7 +42,11 @@ async def _period_bounds(
 
 
 def _in_cycle(statement: Select, start: date, end: date) -> Select:
-    return statement.where(Transaction.booked_at >= start, Transaction.booked_at <= end)
+    return statement.where(
+        Transaction.booked_at >= start,
+        Transaction.booked_at <= end,
+        Transaction.transfer_group.is_(None),
+    )
 
 
 @router.get("/overview", response_model=BudgetCycleOverview)
@@ -146,7 +150,8 @@ async def envelopes(
                 Transaction,
                 (Transaction.category_id == Category.id)
                 & (Transaction.booked_at >= start)
-                & (Transaction.booked_at <= end),
+                & (Transaction.booked_at <= end)
+                & Transaction.transfer_group.is_(None),
             )
             .where(
                 Category.kind == "expense",
@@ -217,7 +222,11 @@ async def cashflow(
             select(Category.id, Category.name, inflow, outflow)
             .select_from(Transaction)
             .outerjoin(Category, Transaction.category_id == Category.id)
-            .where(Transaction.booked_at >= start, Transaction.booked_at <= end)
+            .where(
+                Transaction.booked_at >= start,
+                Transaction.booked_at <= end,
+                Transaction.transfer_group.is_(None),
+            )
             .group_by(Category.id)
             .order_by(Category.name)
         )

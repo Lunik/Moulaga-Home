@@ -25,6 +25,7 @@ async def _spent_this_month(session: AsyncSession, category_id: int) -> Decimal:
             Transaction.category_id == category_id,
             Transaction.booked_at >= month_start,
             Transaction.amount < 0,
+            Transaction.transfer_group.is_(None),
         )
     )
     return money(abs(Decimal(total or 0)))

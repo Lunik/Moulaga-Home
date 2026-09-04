@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 
 import type { MerchantIdentity } from './api/types'
@@ -5,6 +6,8 @@ import type { MerchantIdentity } from './api/types'
 export type IconName =
   | 'accounts'
   | 'alert'
+  | 'archive'
+  | 'attachment'
   | 'arrow'
   | 'back'
   | 'budget'
@@ -43,6 +46,15 @@ export function Icon({ name, className }: { name: IconName; className?: string }
         <path d="M12 3 2.5 20h19L12 3Z" />
         <path d="M12 9v4M12 17h.01" />
       </>
+    ),
+    archive: (
+      <>
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M3 9h18M10 13h4" />
+      </>
+    ),
+    attachment: (
+      <path d="m20.5 11.5-8.7 8.7a5 5 0 0 1-7.1-7.1l9.2-9.2a3.5 3.5 0 0 1 5 5l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.3-8.3" />
     ),
     arrow: <path d="m9 18 6-6-6-6" />,
     back: <path d="m15 18-6-6 6-6" />,
@@ -206,6 +218,93 @@ export function Panel({
   )
 }
 
+export function Modal({
+  title,
+  description,
+  children,
+  actions,
+  onClose,
+}: {
+  title: string
+  description?: string
+  children?: ReactNode
+  actions: ReactNode
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [onClose])
+
+  return (
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <section aria-modal="true" className="modal-card" role="dialog" aria-labelledby="modal-title">
+        <header className="modal-header">
+          <div>
+            <h2 id="modal-title">{title}</h2>
+            {description && <p>{description}</p>}
+          </div>
+          <button className="icon-action" type="button" aria-label="Fermer" onClick={onClose}>
+            <Icon name="close" />
+          </button>
+        </header>
+        {children && <div className="modal-content">{children}</div>}
+        <footer className="modal-actions">{actions}</footer>
+      </section>
+    </div>
+  )
+}
+
+export type TransactionDirection = 'deposit' | 'withdrawal'
+
+export function AmountDirectionToggle({
+  value,
+  onChange,
+}: {
+  value: TransactionDirection
+  onChange: (value: TransactionDirection) => void
+}) {
+  return (
+    <div className="amount-direction-toggle" role="group" aria-label="Type de mouvement">
+      <button
+        className={value === 'deposit' ? 'active' : ''}
+        type="button"
+        aria-pressed={value === 'deposit'}
+        onClick={() => onChange('deposit')}
+      >
+        + Dépôt
+      </button>
+      <button
+        className={value === 'withdrawal' ? 'active' : ''}
+        type="button"
+        aria-pressed={value === 'withdrawal'}
+        onClick={() => onChange('withdrawal')}
+      >
+        − Retrait
+      </button>
+    </div>
+  )
+}
+
+export function directedAmount(value: string, direction: TransactionDirection): string {
+  const absolute = Math.abs(Number(value))
+  return String(direction === 'deposit' ? absolute : -absolute)
+}
+
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="field">
@@ -263,6 +362,65 @@ export function MerchantAvatar({
       title={identity?.label}
     >
       {identity?.monogram || initials(description)}
+    </span>
+  )
+}
+
+const institutionBrands: Record<string, { mark: string; background: string; color?: string }> = {
+  'ABN AMRO': { mark: 'ABN', background: '#009b77' },
+  'Banca Intesa Sanpaolo': { mark: 'ISP', background: '#007a53' },
+  'Banco Santander': { mark: 'S', background: '#ec0000' },
+  'Bank of Ireland': { mark: 'BOI', background: '#006a4d' },
+  Barclays: { mark: 'B', background: '#00aeef' },
+  BBVA: { mark: 'BBVA', background: '#004481' },
+  'BNP Paribas': { mark: 'BNP', background: '#008a5e' },
+  Boursobank: { mark: 'B', background: '#d50072' },
+  "Caisse d’Épargne": { mark: 'CE', background: '#e30613' },
+  Commerzbank: { mark: 'CB', background: '#ffcc00', color: '#111113' },
+  'Crédit Agricole': { mark: 'CA', background: '#168b70' },
+  'Crédit Mutuel': { mark: 'CM', background: '#e30613' },
+  'Danske Bank': { mark: 'DB', background: '#003755' },
+  'Deutsche Bank': { mark: 'DB', background: '#0018a8' },
+  Fortuneo: { mark: 'F', background: '#5b8f22' },
+  'Hello bank!': { mark: 'hb!', background: '#ee1b7a' },
+  HSBC: { mark: 'HSBC', background: '#db0011' },
+  ING: { mark: 'ING', background: '#ff6200' },
+  KBC: { mark: 'KBC', background: '#0066b3' },
+  'La Banque Postale': { mark: 'LBP', background: '#005ca9' },
+  LCL: { mark: 'LCL', background: '#0065a8' },
+  'Lloyds Bank': { mark: 'L', background: '#006a4d' },
+  Monabanq: { mark: 'M', background: '#f07c00' },
+  N26: { mark: 'N26', background: '#36a18b' },
+  NatWest: { mark: 'NW', background: '#5a287d' },
+  'Raiffeisen Bank': { mark: 'RB', background: '#ffe500', color: '#111113' },
+  Revolut: { mark: 'R', background: '#191c1f' },
+  'Société Générale': { mark: 'SG', background: '#e50a30' },
+  'Trade Republic': { mark: 'TR', background: '#111113' },
+  UniCredit: { mark: 'UC', background: '#e30613' },
+  'Volkswagen Bank': { mark: 'VW', background: '#001e50' },
+  Wise: { mark: 'W', background: '#163300' },
+}
+
+export function InstitutionLogo({
+  institution,
+  className = '',
+}: {
+  institution: string | null | undefined
+  className?: string
+}) {
+  const label = institution?.trim() || 'Établissement non renseigné'
+  const brand = institution ? institutionBrands[institution] : undefined
+  const style: CSSProperties | undefined = brand
+    ? { background: brand.background, color: brand.color ?? '#fff' }
+    : undefined
+  return (
+    <span
+      aria-label={`Logo ${label}`}
+      className={`institution-logo ${className}`.trim()}
+      style={style}
+      title={label}
+    >
+      {brand?.mark ?? (institution ? initials(institution) : <Icon name="accounts" />)}
     </span>
   )
 }

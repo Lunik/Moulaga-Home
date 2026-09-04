@@ -14,6 +14,7 @@ import {
   EmptyState,
   Field,
   Icon,
+  InstitutionLogo,
   Panel,
   ProgressBar,
   StatusBadge,
@@ -146,16 +147,19 @@ export function FamilyView({ accounts }: { accounts: Account[] }) {
             >
               {(sharedAccounts.data ?? []).length > 0 ? (
                 <div className="shared-account-grid">
-                  {sharedAccounts.data?.map((account, index) => (
-                    <article key={account.id}>
-                      <span className={`account-avatar palette-${index % 6}`}>{initials(account.account_name ?? accounts.find((item) => item.id === account.account_id)?.name ?? 'Compte')}</span>
-                      <div>
-                        <strong>{account.account_name ?? accounts.find((item) => item.id === account.account_id)?.name ?? `Compte ${account.account_id}`}</strong>
-                        <small>Compte partagé</small>
-                      </div>
-                      <strong>{money(account.balance ?? accounts.find((item) => item.id === account.account_id)?.balance)}</strong>
-                    </article>
-                  ))}
+                  {sharedAccounts.data?.map((account) => {
+                    const linkedAccount = accounts.find((item) => item.id === account.account_id)
+                    return (
+                      <article key={account.id}>
+                        <InstitutionLogo institution={linkedAccount?.institution} />
+                        <div>
+                          <strong>{account.account_name ?? linkedAccount?.name ?? `Compte ${account.account_id}`}</strong>
+                          <small>Compte partagé</small>
+                        </div>
+                        <strong>{money(account.balance ?? linkedAccount?.balance)}</strong>
+                      </article>
+                    )
+                  })}
                 </div>
               ) : (
                 <EmptyState icon="accounts" text="Aucun compte partagé dans ce foyer." />

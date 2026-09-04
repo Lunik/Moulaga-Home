@@ -29,14 +29,27 @@ class AccountCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     type: str = Field(default="checking", min_length=1, max_length=32)
     currency: str = Field(default="EUR", min_length=3, max_length=3)
-    initial_balance: Decimal = Decimal("0.00")
+    initial_balance: Decimal = Field(default=Decimal("0.00"), **_MONEY)
     institution: str | None = Field(default=None, max_length=120)
     color: str = Field(default="#4f46e5", pattern=HEX_COLOR)
+    savings_product: str | None = Field(default=None, max_length=64)
+    annual_interest_rate: Decimal | None = Field(
+        default=None, ge=0, le=100, max_digits=6, decimal_places=3
+    )
+    legal_cap: Decimal | None = Field(default=None, ge=0, **_MONEY)
 
     @field_validator("name", "type", "currency")
     @classmethod
     def strip_required(cls, value: str) -> str:
         return _strip_required(value)
+
+    @field_validator("savings_product")
+    @classmethod
+    def strip_savings_product(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
     @field_validator("currency")
     @classmethod
@@ -50,51 +63,51 @@ class AccountRead(AccountCreate):
     id: int
     archived: bool = False
     balance: Decimal = Decimal("0.00")
+    transaction_count: int = 0
 
 
 class AccountUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     type: str | None = Field(default=None, min_length=1, max_length=32)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
-    initial_balance: Decimal | None = None
+    initial_balance: Decimal | None = Field(default=None, **_MONEY)
     institution: str | None = Field(default=None, max_length=120)
     color: str | None = Field(default=None, pattern=HEX_COLOR)
     archived: bool | None = None
+    savings_product: str | None = Field(default=None, max_length=64)
+    annual_interest_rate: Decimal | None = Field(
+        default=None, ge=0, le=100, max_digits=6, decimal_places=3
+    )
+    legal_cap: Decimal | None = Field(default=None, ge=0, **_MONEY)
+
+    @field_validator("name", "type", "currency")
+    @classmethod
+    def strip_required(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("Champ obligatoire")
+        return _strip_required(value)
 
     @field_validator("currency")
     @classmethod
     def normalize_currency(cls, value: str | None) -> str | None:
         return value.upper() if value else value
 
-
-class AccountPocketCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    allocated: Decimal = Field(default=Decimal("0.00"), **_MONEY)
-    target: Decimal | None = Field(default=None, ge=0, **_MONEY)
-    color: str = Field(default="#0ea5e9", pattern=HEX_COLOR)
-
-    @field_validator("name")
+    @field_validator("savings_product")
     @classmethod
-    def strip_name(cls, value: str) -> str:
-        return _strip_required(value)
+    def strip_savings_product(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
-
-class AccountPocketUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=120)
-    allocated: Decimal | None = Field(default=None, **_MONEY)
-    target: Decimal | None = Field(default=None, ge=0, **_MONEY)
-    color: str | None = Field(default=None, pattern=HEX_COLOR)
-
-
-class AccountPocketRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    account_id: int
-    name: str
-    allocated: Decimal
-    target: Decimal | None
-    color: str
+    @field_validator("initial_balance", "color", "archived")
+    @classmethod
+    def reject_null(
+        cls, value: Decimal | str | bool | None
+    ) -> Decimal | str | bool:
+        if value is None:
+            raise ValueError("Ce champ ne peut pas etre nul")
+        return value
 
 
 class BalanceSnapshotRead(BaseModel):
@@ -110,6 +123,38 @@ class BalanceSnapshotCreate(BaseModel):
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
     balance: Decimal = Field(**_MONEY)
 
+    @field_validator("period")
+    @classmethod
+    def validate_period(cls, value: str) -> str:
+        try:
+            date.fromisoformat(f"{value}-01")
+        except ValueError as exc:
+            raise ValueError("Periode invalide") from exc
+        return value
+
+
+class BalanceSnapshotUpdate(BaseModel):
+    period: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    balance: Decimal | None = Field(default=None, **_MONEY)
+
+    @field_validator("period")
+    @classmethod
+    def validate_period(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("La periode ne peut pas etre nulle")
+        try:
+            date.fromisoformat(f"{value}-01")
+        except ValueError as exc:
+            raise ValueError("Periode invalide") from exc
+        return value
+
+    @field_validator("balance")
+    @classmethod
+    def reject_null_balance(cls, value: Decimal | None) -> Decimal:
+        if value is None:
+            raise ValueError("Le solde ne peut pas etre nul")
+        return value
+
 
 class AccountHistoryPoint(BaseModel):
     period: str
@@ -117,7 +162,6 @@ class AccountHistoryPoint(BaseModel):
 
 
 class AccountDetail(AccountRead):
-    pockets: list[AccountPocketRead] = Field(default_factory=list)
     history: list[AccountHistoryPoint] = Field(default_factory=list)
     transaction_count: int = 0
 
@@ -202,6 +246,17 @@ class TransactionRead(TransactionCreate):
     account_name: str = ""
     category_name: str | None = None
     category_kind: str | None = None
+    transfer_group: str | None = None
+    attachment_count: int = 0
+
+
+class TransactionAttachmentRead(BaseModel):
+    id: int
+    transaction_id: int
+    original_name: str
+    storage_path: str
+    content_type: str | None
+    size: int
 
 
 class TransactionCount(BaseModel):

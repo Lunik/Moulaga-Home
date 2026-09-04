@@ -132,21 +132,17 @@ def test_category_cycle_is_rejected(client):
 
 
 # --------------------------------------------------------------------------- #
-# Accounts: pockets and snapshots
+# Accounts: snapshots
 # --------------------------------------------------------------------------- #
-def test_account_pockets_and_snapshot_generation(client):
+def test_account_snapshot_generation(client):
     account_id = _account_id(client)
-    pocket = client.post(
-        f"/api/accounts/{account_id}/pockets",
-        json={"name": "Vacances", "allocated": "150.00", "target": "600.00"},
-    )
-    assert pocket.status_code == 201
+    assert client.get("/api/accounts").json()[0]["balance"] == "0.00"
 
-    client.post(
+    january = client.post(
         "/api/transactions",
         json={"booked_at": "2026-01-15", "description": "Depense", "amount": "-50.00",
               "account_id": account_id},
-    )
+    ).json()
     client.post(
         "/api/transactions",
         json={"booked_at": "2026-02-15", "description": "Depense", "amount": "-25.00",
@@ -164,20 +160,398 @@ def test_account_pockets_and_snapshot_generation(client):
 
     detail = client.get(f"/api/accounts/{account_id}").json()
     assert detail["transaction_count"] == 2
-    assert len(detail["pockets"]) == 1
     assert len(detail["history"]) == 2
+
+    invalid_period = client.put(
+        f"/api/accounts/{account_id}/snapshots",
+        json={"period": "2026-13", "balance": "10.00"},
+    )
+    assert invalid_period.status_code == 422
+
+    assert client.delete(f"/api/transactions/{january['id']}").status_code == 204
+    rebuilt = client.post(f"/api/accounts/{account_id}/snapshots/generate").json()
+    assert {snapshot["period"]: snapshot["balance"] for snapshot in rebuilt} == {
+        "2026-02": "-25.00"
+    }
+
+
+def test_account_snapshot_can_be_edited_and_deleted(client):
+    account_id = _account_id(client)
+    created = client.put(
+        f"/api/accounts/{account_id}/snapshots",
+        json={"period": "2026-01", "balance": "120.00"},
+    ).json()
+    client.put(
+        f"/api/accounts/{account_id}/snapshots",
+        json={"period": "2026-02", "balance": "140.00"},
+    )
+
+    updated = client.patch(
+        f"/api/accounts/{account_id}/snapshots/{created['id']}",
+        json={"period": "2026-03", "balance": "150.50"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["period"] == "2026-03"
+    assert updated.json()["balance"] == "150.50"
+
+    duplicate = client.patch(
+        f"/api/accounts/{account_id}/snapshots/{created['id']}",
+        json={"period": "2026-02"},
+    )
+    assert duplicate.status_code == 409
+
+    deleted = client.delete(
+        f"/api/accounts/{account_id}/snapshots/{created['id']}"
+    )
+    assert deleted.status_code == 204
+    remaining = client.get(f"/api/accounts/{account_id}/snapshots").json()
+    assert [snapshot["period"] for snapshot in remaining] == ["2026-02"]
 
 
 def test_account_archive_and_patch(client):
     account_id = _account_id(client)
+    client.post(
+        "/api/transactions",
+        json={
+            "booked_at": "2026-01-15",
+            "description": "Operation synthetique",
+            "amount": "10.00",
+            "account_id": account_id,
+        },
+    )
     patched = client.patch(
-        f"/api/accounts/{account_id}", json={"institution": "Banque locale", "color": "#123456"}
+        f"/api/accounts/{account_id}",
+        json={
+            "name": "  Compte principal  ",
+            "institution": "Banque locale",
+            "color": "#123456",
+        },
     )
     assert patched.status_code == 200
+    assert patched.json()["name"] == "Compte principal"
     assert patched.json()["institution"] == "Banque locale"
+    assert patched.json()["transaction_count"] == 1
+
+    listed = client.get("/api/accounts").json()
+    assert listed[0]["transaction_count"] == 1
+
+    null_name = client.patch(f"/api/accounts/{account_id}", json={"name": None})
+    assert null_name.status_code == 422
+    invalid_precision = client.patch(
+        f"/api/accounts/{account_id}", json={"initial_balance": "1.001"}
+    )
+    assert invalid_precision.status_code == 422
 
     archived = client.post(f"/api/accounts/{account_id}/archive")
     assert archived.json()["archived"] is True
+    assert client.get("/api/accounts").json() == []
+
+    archived_accounts = client.get(
+        "/api/accounts", params={"include_archived": True}
+    ).json()
+    assert len(archived_accounts) == 1
+    assert archived_accounts[0]["archived"] is True
+    assert archived_accounts[0]["transaction_count"] == 1
+
+    blocked_patch = client.patch(
+        f"/api/accounts/{account_id}", json={"archived": False}
+    )
+    assert blocked_patch.status_code == 409
+
+    restored = client.post(
+        f"/api/accounts/{account_id}/archive", params={"archived": False}
+    )
+    assert restored.status_code == 200
+    assert restored.json()["archived"] is False
+    assert len(client.get("/api/accounts").json()) == 1
+
+
+def test_account_delete_is_limited_to_accounts_without_dependencies(client):
+    created = client.post(
+        "/api/accounts",
+        json={
+            "name": "Compte cree par erreur",
+            "type": "checking",
+            "currency": "EUR",
+        },
+    ).json()
+
+    deleted = client.delete(f"/api/accounts/{created['id']}")
+    assert deleted.status_code == 204
+    assert client.get(f"/api/accounts/{created['id']}").status_code == 404
+
+    account_id = _account_id(client)
+    client.post(
+        "/api/transactions",
+        json={
+            "booked_at": "2026-01-15",
+            "description": "Operation a conserver",
+            "amount": "10.00",
+            "account_id": account_id,
+        },
+    )
+    refused = client.delete(f"/api/accounts/{account_id}")
+    assert refused.status_code == 409
+    assert "Archivez-le" in refused.json()["detail"]
+    assert client.get(f"/api/accounts/{account_id}").status_code == 200
+
+
+def test_account_archive_can_transfer_positive_balance_neutrally(client):
+    source = client.post(
+        "/api/accounts",
+        json={"name": "Compte source", "initial_balance": "100.00"},
+    ).json()
+    destination = client.post(
+        "/api/accounts",
+        json={"name": "Compte destination", "initial_balance": "25.00"},
+    ).json()
+
+    archived = client.post(
+        f"/api/accounts/{source['id']}/archive",
+        params={"transfer_to_account_id": destination["id"]},
+    )
+    assert archived.status_code == 200
+    assert archived.json()["archived"] is True
+    assert client.get(f"/api/accounts/{source['id']}").json()["balance"] == "0.00"
+    assert client.get(f"/api/accounts/{destination['id']}").json()["balance"] == "125.00"
+
+    transfers = [
+        item
+        for item in client.get("/api/transactions").json()
+        if item["transfer_group"] is not None
+    ]
+    assert len(transfers) == 2
+    assert transfers[0]["transfer_group"] == transfers[1]["transfer_group"]
+    assert client.patch(
+        f"/api/transactions/{transfers[0]['id']}",
+        json={"amount": "1.00"},
+    ).status_code == 409
+
+    overview = client.get("/api/overview").json()
+    assert overview["income_current_month"] == "0.00"
+    assert overview["expenses_current_month"] == "0.00"
+    assert client.get(
+        "/api/transactions/count",
+        params={"uncategorized": True},
+    ).json()["count"] == 0
+    assert client.get("/api/categorization/inbox").json() == []
+
+
+def test_transaction_attachments_use_hashed_local_paths(client, tmp_path):
+    account_id = _account_id(client)
+    transaction = client.post(
+        "/api/transactions",
+        json={
+            "booked_at": "2026-01-15",
+            "description": "Transaction avec justificatif",
+            "amount": "-10.00",
+            "account_id": account_id,
+        },
+    ).json()
+    payload = b"%PDF-1.4 contenu synthetique"
+    uploaded = client.post(
+        f"/api/transactions/{transaction['id']}/attachments",
+        files={"file": ("../../recu test.pdf", payload, "application/pdf")},
+    )
+    assert uploaded.status_code == 201
+    attachment = uploaded.json()
+    relative_path = attachment["storage_path"].lstrip("/")
+    parts = relative_path.split("/")
+    assert parts[0] == "attached"
+    assert len(parts[1]) == 2
+    assert len(parts[2]) == 2
+    assert len(parts[3]) == 64
+    assert parts[4] == "recu-test.pdf"
+    stored_file = tmp_path / relative_path
+    assert stored_file.read_bytes() == payload
+    transaction_after_upload = client.get(
+        f"/api/transactions/{transaction['id']}"
+    ).json()
+    assert transaction_after_upload["attachment_count"] == 1
+
+    listed = client.get(
+        f"/api/transactions/{transaction['id']}/attachments"
+    ).json()
+    assert [item["id"] for item in listed] == [attachment["id"]]
+    downloaded = client.get(
+        f"/api/transactions/{transaction['id']}/attachments/{attachment['id']}/download"
+    )
+    assert downloaded.content == payload
+    assert "attachment" in downloaded.headers["content-disposition"]
+
+    deleted = client.delete(
+        f"/api/transactions/{transaction['id']}/attachments/{attachment['id']}"
+    )
+    assert deleted.status_code == 204
+    assert not stored_file.exists()
+    assert client.get(
+        f"/api/transactions/{transaction['id']}"
+    ).json()["attachment_count"] == 0
+
+    second = client.post(
+        f"/api/transactions/{transaction['id']}/attachments",
+        files={"file": ("facture.pdf", payload, "application/pdf")},
+    ).json()
+    second_file = tmp_path / second["storage_path"].lstrip("/")
+    assert client.delete(f"/api/transactions/{transaction['id']}").status_code == 204
+    assert not second_file.exists()
+
+
+def test_archived_account_is_read_only_across_linked_resources(client):
+    account_id = _account_id(client)
+    transaction = client.post(
+        "/api/transactions",
+        json={
+            "booked_at": "2026-01-15",
+            "description": "Operation archivee",
+            "amount": "10.00",
+            "account_id": account_id,
+        },
+    ).json()
+    attachment = client.post(
+        f"/api/transactions/{transaction['id']}/attachments",
+        files={"file": ("preuve.txt", b"preuve synthetique", "text/plain")},
+    ).json()
+    snapshot = client.put(
+        f"/api/accounts/{account_id}/snapshots",
+        json={"period": "2026-01", "balance": "10.00"},
+    ).json()
+    holding = client.post(
+        "/api/holdings",
+        json={
+            "account_id": account_id,
+            "name": "Position synthetique",
+            "quantity": "1",
+            "average_price": "10",
+            "current_price": "11",
+        },
+    ).json()
+    recurring = client.post(
+        "/api/recurring",
+        json={
+            "label": "Recurrence synthetique",
+            "account_id": account_id,
+            "frequency": "monthly",
+            "next_due": "2026-02-01",
+            "amount": "-5.00",
+        },
+    ).json()
+
+    assert client.post(f"/api/accounts/{account_id}/archive").status_code == 200
+
+    blocked = [
+        client.patch(f"/api/accounts/{account_id}", json={"name": "Interdit"}),
+        client.delete(f"/api/accounts/{account_id}"),
+        client.post(
+            "/api/transactions",
+            json={
+                "booked_at": "2026-02-01",
+                "description": "Interdite",
+                "amount": "1.00",
+                "account_id": account_id,
+            },
+        ),
+        client.patch(
+            f"/api/transactions/{transaction['id']}",
+            json={"description": "Interdite"},
+        ),
+        client.delete(f"/api/transactions/{transaction['id']}"),
+        client.post(
+            f"/api/transactions/{transaction['id']}/attachments",
+            files={"file": ("autre.txt", b"interdit", "text/plain")},
+        ),
+        client.delete(
+            f"/api/transactions/{transaction['id']}/attachments/{attachment['id']}"
+        ),
+        client.put(
+            f"/api/accounts/{account_id}/snapshots",
+            json={"period": "2026-02", "balance": "15.00"},
+        ),
+        client.patch(
+            f"/api/accounts/{account_id}/snapshots/{snapshot['id']}",
+            json={"balance": "20.00"},
+        ),
+        client.delete(
+            f"/api/accounts/{account_id}/snapshots/{snapshot['id']}"
+        ),
+        client.post(f"/api/accounts/{account_id}/snapshots/generate"),
+        client.patch(
+            f"/api/holdings/{holding['id']}",
+            json={"current_price": "12.00"},
+        ),
+        client.delete(f"/api/holdings/{holding['id']}"),
+        client.post(
+            f"/api/holdings/{holding['id']}/contributions",
+            json={"amount": "10.00", "occurred_on": "2026-01-20"},
+        ),
+        client.patch(
+            f"/api/recurring/{recurring['id']}",
+            json={"status": "paused"},
+        ),
+        client.delete(f"/api/recurring/{recurring['id']}"),
+    ]
+    assert all(response.status_code == 409 for response in blocked)
+    assert all("lecture seule" in response.json()["detail"] for response in blocked)
+
+    assert client.get(f"/api/accounts/{account_id}").status_code == 200
+    assert client.get(f"/api/transactions/{transaction['id']}").status_code == 200
+    assert client.get(
+        f"/api/transactions/{transaction['id']}/attachments"
+    ).status_code == 200
+    assert client.get(f"/api/accounts/{account_id}/snapshots").status_code == 200
+    assert client.get(
+        "/api/holdings", params={"account_id": account_id}
+    ).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("account_type", "name"),
+    [
+        ("wallet", "Wallet crypto synthetique"),
+        ("life_insurance", "Assurance vie synthetique"),
+    ],
+)
+def test_investment_account_types_are_persisted(client, account_type, name):
+    created = client.post(
+        "/api/accounts",
+        json={
+            "name": name,
+            "type": account_type,
+            "currency": "EUR",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["type"] == account_type
+
+
+def test_savings_configuration_is_persisted(client):
+    created = client.post(
+        "/api/accounts",
+        json={
+            "name": "Livret synthetique",
+            "type": "savings",
+            "currency": "EUR",
+            "savings_product": "Livret A",
+            "annual_interest_rate": "1.700",
+            "legal_cap": "22950.00",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["savings_product"] == "Livret A"
+    assert created.json()["annual_interest_rate"] == "1.700"
+    assert created.json()["legal_cap"] == "22950.00"
+
+    updated = client.patch(
+        f"/api/accounts/{created.json()['id']}",
+        json={
+            "savings_product": "LDDS",
+            "annual_interest_rate": "1.700",
+            "legal_cap": "12000.00",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["savings_product"] == "LDDS"
+    assert updated.json()["legal_cap"] == "12000.00"
 
 
 # --------------------------------------------------------------------------- #
@@ -364,6 +738,13 @@ def test_holdings_portfolio_and_networth_no_double_count(client):
     assert holding["cost_basis"] == "800.00"
     assert holding["market_value"] == "1000.00"
     assert holding["gain"] == "200.00"
+    filtered_holdings = client.get(
+        "/api/holdings", params={"account_id": invest["id"]}
+    ).json()
+    assert [item["id"] for item in filtered_holdings] == [holding["id"]]
+    assert client.get(
+        "/api/holdings", params={"account_id": 999999}
+    ).status_code == 404
 
     client.post(
         f"/api/holdings/{holding['id']}/contributions",

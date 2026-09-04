@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_access import require_account
 from ..common import add_month, money
 from ..db import get_session
 from ..models import Account, Category, RecurringChange, RecurringSeries, Transaction
@@ -66,8 +67,7 @@ def _advance(day: date, frequency: str) -> date:
 
 
 async def _require_account(session: AsyncSession, account_id: int) -> None:
-    if await session.get(Account, account_id) is None:
-        raise HTTPException(status_code=404, detail="Compte introuvable")
+    await require_account(session, account_id, writable=True)
 
 
 async def _require_category(session: AsyncSession, category_id: int) -> None:
@@ -173,6 +173,7 @@ async def update_series(
     series = await session.get(RecurringSeries, series_id)
     if series is None:
         raise HTTPException(status_code=404, detail="Serie introuvable")
+    await require_account(session, series.account_id, writable=True)
     data = payload.model_dump(exclude_unset=True)
     if data.get("category_id") is not None:
         await _require_category(session, data["category_id"])
@@ -188,6 +189,7 @@ async def delete_series(series_id: int, session: AsyncSession = Depends(get_sess
     series = await session.get(RecurringSeries, series_id)
     if series is None:
         raise HTTPException(status_code=404, detail="Serie introuvable")
+    await require_account(session, series.account_id, writable=True)
     await session.delete(series)
     await session.commit()
 
@@ -241,7 +243,11 @@ async def forecast(
 async def detect(session: AsyncSession = Depends(get_session)) -> DetectResult:
     transactions = (
         await session.execute(
-            select(Transaction).order_by(Transaction.account_id, Transaction.booked_at)
+            select(Transaction)
+            .join(Account, Transaction.account_id == Account.id)
+            .where(Account.archived.is_(False))
+            .where(Transaction.transfer_group.is_(None))
+            .order_by(Transaction.account_id, Transaction.booked_at)
         )
     ).scalars().all()
 
@@ -380,11 +386,12 @@ async def act_on_change(
         raise HTTPException(status_code=404, detail="Changement introuvable")
     if change.status != "pending":
         raise HTTPException(status_code=409, detail="Changement deja traite")
+    series = await session.get(RecurringSeries, change.series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="Serie introuvable")
+    await require_account(session, series.account_id, writable=True)
 
     if action == "accept":
-        series = await session.get(RecurringSeries, change.series_id)
-        if series is None:
-            raise HTTPException(status_code=404, detail="Serie introuvable")
         if change.detected_amount is not None:
             series.amount = money(change.detected_amount)
         if change.detected_next_due is not None:

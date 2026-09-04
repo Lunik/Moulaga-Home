@@ -15,9 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_access import require_account
 from ..common import get_preferences
 from ..db import get_session
-from ..models import CategorizationRule, Category, Transaction
+from ..models import Account, CategorizationRule, Category, Transaction
 from ..schemas import (
     InboxItem,
     RuleApplyResult,
@@ -126,7 +127,14 @@ async def apply_rules(
         )
     ).scalars().all()
 
-    statement = select(Transaction)
+    statement = (
+        select(Transaction)
+        .join(Account, Transaction.account_id == Account.id)
+        .where(
+            Transaction.transfer_group.is_(None),
+            Account.archived.is_(False),
+        )
+    )
     if only_uncategorized:
         statement = statement.where(Transaction.category_id.is_(None))
     transactions = (await session.execute(statement)).scalars().all()
@@ -154,7 +162,12 @@ async def inbox(
     rows = (
         await session.execute(
             select(Transaction)
-            .where(Transaction.category_id.is_(None))
+            .join(Account, Transaction.account_id == Account.id)
+            .where(
+                Transaction.category_id.is_(None),
+                Transaction.transfer_group.is_(None),
+                Account.archived.is_(False),
+            )
             .order_by(Transaction.booked_at.desc(), Transaction.id.desc())
             .limit(limit)
         )
@@ -198,6 +211,12 @@ async def suggest(
     transaction = await session.get(Transaction, transaction_id)
     if transaction is None:
         raise HTTPException(status_code=404, detail="Transaction introuvable")
+    await require_account(session, transaction.account_id, writable=True)
+    if transaction.transfer_group is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Un transfert interne ne doit pas etre categorise",
+        )
 
     threshold = Decimal(prefs.private_categorization_confidence)
 
@@ -255,9 +274,13 @@ async def suggest(
         target_tokens,
         (
             await session.execute(
-                select(Transaction.description, Transaction.category_id).where(
+                select(Transaction.description, Transaction.category_id)
+                .join(Account, Transaction.account_id == Account.id)
+                .where(
                     Transaction.category_id.is_not(None),
                     Transaction.id != transaction_id,
+                    Transaction.transfer_group.is_(None),
+                    Account.archived.is_(False),
                 )
             )
         ).all(),

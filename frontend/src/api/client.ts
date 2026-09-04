@@ -20,6 +20,10 @@ export function apiDelete(path: string): Promise<void> {
   return apiRequest<void>(path, { method: 'DELETE' })
 }
 
+export function apiUpload<T>(path: string, body: FormData): Promise<T> {
+  return apiRequest<T>(path, { method: 'POST', body })
+}
+
 export function queryString(values: Record<string, string | number | boolean | null | undefined>): string {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(values)) {
@@ -31,7 +35,9 @@ export function queryString(values: Record<string, string | number | boolean | n
 
 async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
-  if (init.body !== undefined) headers.set('Content-Type', 'application/json')
+  if (init.body !== undefined && !(init.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json')
+  }
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers })
   const text = await response.text()
 
