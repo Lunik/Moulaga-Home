@@ -197,6 +197,7 @@ class CategorizationRule(Base):
     name: Mapped[str] = mapped_column(String(120))
     match_type: Mapped[str] = mapped_column(String(16), default="keyword")  # keyword|beneficiary
     pattern: Mapped[str] = mapped_column(String(200))
+    patterns_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     category_id: Mapped[int] = mapped_column(
         ForeignKey("categories.id", ondelete="CASCADE"), index=True
     )

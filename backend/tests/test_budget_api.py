@@ -62,6 +62,24 @@ def test_transactions_persist_between_application_restarts(tmp_path, monkeypatch
         assert restarted_overview["budget_current_month"] == "500.00"
 
 
+def test_deleted_default_category_stays_deleted_after_restart(tmp_path, monkeypatch):
+    main, _migration = _load_application(tmp_path, monkeypatch)
+
+    with TestClient(main.create_app()) as client:
+        categories = client.get("/api/categories").json()
+        source = next(category for category in categories if category["name"] == "Courses")
+        destination = next(category for category in categories if category["name"] == "Loisirs")
+        response = client.delete(
+            f"/api/categories/{source['id']}",
+            params={"replacement_category_id": destination["id"]},
+        )
+        assert response.status_code == 204
+
+    with TestClient(main.create_app()) as restarted_client:
+        names = {category["name"] for category in restarted_client.get("/api/categories").json()}
+        assert "Courses" not in names
+
+
 def test_banque_v3_is_a_one_shot_migration_not_an_api_feature(tmp_path, monkeypatch):
     main, migration = _load_application(tmp_path, monkeypatch)
     csv_path = tmp_path / "migration.csv"

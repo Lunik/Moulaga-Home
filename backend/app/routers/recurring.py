@@ -22,6 +22,8 @@ from ..common import add_month, money
 from ..db import get_session
 from ..models import Account, Category, RecurringChange, RecurringSeries, Transaction
 from ..schemas import (
+    DetectionProposal,
+    DetectionSelection,
     DetectResult,
     ForecastPoint,
     RecurringChangeRead,
@@ -159,7 +161,10 @@ async def create_series(
     await _require_account(session, payload.account_id)
     if payload.category_id is not None:
         await _require_category(session, payload.category_id)
-    series = RecurringSeries(**payload.model_dump())
+    series = RecurringSeries(
+        **payload.model_dump(),
+        match_key=_normalize_key(payload.label, payload.account_id),
+    )
     session.add(series)
     await session.commit()
     await session.refresh(series)
@@ -175,6 +180,14 @@ async def update_series(
         raise HTTPException(status_code=404, detail="Serie introuvable")
     await require_account(session, series.account_id, writable=True)
     data = payload.model_dump(exclude_unset=True)
+    if series.match_key is None:
+        series.match_key = _normalize_key(series.label, series.account_id)
+    if "account_id" in data:
+        if data["account_id"] is None:
+            raise HTTPException(status_code=422, detail="Compte requis")
+        await _require_account(session, data["account_id"])
+        if data["account_id"] != series.account_id:
+            series.match_key = _normalize_key(data.get("label", series.label), data["account_id"])
     if data.get("category_id") is not None:
         await _require_category(session, data["category_id"])
     for field, value in data.items():
@@ -239,8 +252,7 @@ async def forecast(
 # --------------------------------------------------------------------------- #
 # Detection
 # --------------------------------------------------------------------------- #
-@router.post("/recurring/detect", response_model=DetectResult)
-async def detect(session: AsyncSession = Depends(get_session)) -> DetectResult:
+async def _detection_proposals(session: AsyncSession) -> list[DetectionProposal]:
     transactions = (
         await session.execute(
             select(Transaction)
@@ -256,16 +268,21 @@ async def detect(session: AsyncSession = Depends(get_session)) -> DetectResult:
         key = _normalize_key(transaction.description, transaction.account_id)
         groups.setdefault(key, []).append(transaction)
 
+    existing_rows = (await session.execute(select(RecurringSeries))).scalars().all()
     existing = {
-        series.match_key: series
-        for series in (
-            await session.execute(select(RecurringSeries))
-        ).scalars().all()
-        if series.match_key is not None
+        series.match_key or _normalize_key(series.label, series.account_id): series
+        for series in existing_rows
+    }
+    accounts = {
+        account.id: account.name
+        for account in (await session.execute(select(Account))).scalars().all()
+    }
+    categories = {
+        category.id: category.name
+        for category in (await session.execute(select(Category))).scalars().all()
     }
 
-    created_series = 0
-    created_changes = 0
+    proposals: list[DetectionProposal] = []
     for key, items in groups.items():
         if len(items) < _MIN_OCCURRENCES:
             continue
@@ -287,47 +304,124 @@ async def detect(session: AsyncSession = Depends(get_session)) -> DetectResult:
 
         series = existing.get(key)
         if series is None:
-            series = RecurringSeries(
-                label=items[-1].description[:200],
-                account_id=items[-1].account_id,
-                category_id=items[-1].category_id,
-                frequency=frequency,
-                next_due=next_due,
-                amount=detected_amount,
-                amount_type="fixed" if is_fixed else "variable",
-                status="active",
-                confidence=confidence,
-                match_key=key,
+            proposals.append(
+                DetectionProposal(
+                    proposal_key=key,
+                    kind="series",
+                    label=items[-1].description[:200],
+                    account_id=items[-1].account_id,
+                    account_name=accounts.get(items[-1].account_id, ""),
+                    category_id=items[-1].category_id,
+                    category_name=categories.get(items[-1].category_id)
+                    if items[-1].category_id
+                    else None,
+                    frequency=frequency,
+                    next_due=next_due,
+                    amount=detected_amount,
+                    amount_type="fixed" if is_fixed else "variable",
+                    confidence=confidence,
+                )
             )
-            session.add(series)
-            existing[key] = series
-            created_series += 1
             continue
 
-        # Existing series: only raise a pending change, never overwrite silently.
+        # Existing series: only propose a pending change, never overwrite silently.
         if (
             series.amount is not None
             and abs(Decimal(series.amount) - detected_amount) > _AMOUNT_TOLERANCE
-            and not await _has_pending_change(session, series.id, detected_amount, next_due)
+            and not await _has_pending_change(session, series.id, detected_amount)
         ):
-            session.add(
-                RecurringChange(
+            proposals.append(
+                DetectionProposal(
+                    proposal_key=key,
+                    kind="change",
                     series_id=series.id,
-                    change_type="amount",
-                    detected_amount=detected_amount,
-                    detected_next_due=next_due,
-                    status="pending",
-                    note="Montant detecte different du montant enregistre",
+                    label=series.label,
+                    account_id=series.account_id,
+                    account_name=accounts.get(series.account_id, ""),
+                    category_id=series.category_id,
+                    category_name=categories.get(series.category_id) if series.category_id else None,
+                    frequency=frequency,
+                    next_due=next_due,
+                    amount=detected_amount,
+                    amount_type="fixed" if is_fixed else "variable",
+                    confidence=confidence,
                 )
             )
-            created_changes += 1
+
+    return sorted(proposals, key=lambda proposal: (proposal.next_due, proposal.label.casefold()))
+
+
+@router.get("/recurring/detect", response_model=list[DetectionProposal])
+async def preview_detection(
+    session: AsyncSession = Depends(get_session),
+) -> list[DetectionProposal]:
+    return await _detection_proposals(session)
+
+
+@router.post("/recurring/detect", response_model=DetectResult)
+async def detect(
+    payload: DetectionSelection | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> DetectResult:
+    proposals = await _detection_proposals(session)
+    proposals_by_key = {proposal.proposal_key: proposal for proposal in proposals}
+    selected_keys = (
+        set(proposals_by_key)
+        if payload is None
+        else set(payload.proposal_keys)
+    )
+    if selected_keys - proposals_by_key.keys():
+        raise HTTPException(
+            status_code=409,
+            detail="Certaines propositions ne sont plus disponibles. Relancez la detection.",
+        )
+
+    created_series = 0
+    created_changes = 0
+    for proposal in proposals:
+        if proposal.proposal_key not in selected_keys:
+            continue
+        await _require_account(session, proposal.account_id)
+        if proposal.kind == "series":
+            series = RecurringSeries(
+                label=proposal.label,
+                account_id=proposal.account_id,
+                category_id=proposal.category_id,
+                frequency=proposal.frequency,
+                next_due=proposal.next_due,
+                amount=proposal.amount,
+                amount_type=proposal.amount_type,
+                status="active",
+                confidence=proposal.confidence,
+                match_key=proposal.proposal_key,
+            )
+            session.add(series)
+            created_series += 1
+            continue
+
+        if proposal.series_id is None:
+            raise HTTPException(status_code=409, detail="Serie detectee introuvable")
+        series = await session.get(RecurringSeries, proposal.series_id)
+        if series is None:
+            raise HTTPException(status_code=409, detail="Serie detectee introuvable")
+        session.add(
+            RecurringChange(
+                series_id=series.id,
+                change_type="amount",
+                detected_amount=proposal.amount,
+                detected_next_due=proposal.next_due,
+                status="pending",
+                note="Montant detecte different du montant enregistre",
+            )
+        )
+        created_changes += 1
 
     await session.commit()
     return DetectResult(created_series=created_series, created_changes=created_changes)
 
 
 async def _has_pending_change(
-    session: AsyncSession, series_id: int, amount: Decimal, next_due: date
+    session: AsyncSession, series_id: int, amount: Decimal
 ) -> bool:
     existing = (
         await session.execute(

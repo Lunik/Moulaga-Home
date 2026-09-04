@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 HEX_COLOR = r"^#[0-9a-fA-F]{6}$"
 _MONEY = {"max_digits": 12, "decimal_places": 2}
@@ -227,6 +227,11 @@ class CategoryBudgetUpdate(BaseModel):
     monthly_budget: Decimal | None = Field(default=None, ge=0, **_MONEY)
 
 
+class CategoryRemovalResult(BaseModel):
+    action: str = Field(pattern="^(archived|deleted)$")
+    transaction_count: int
+
+
 # --------------------------------------------------------------------------- #
 # Transactions
 # --------------------------------------------------------------------------- #
@@ -370,9 +375,9 @@ class EnvelopeRead(BaseModel):
     category_id: int
     category_name: str
     color: str
-    budget: Decimal
+    budget: Decimal | None
     spent: Decimal
-    remaining: Decimal
+    remaining: Decimal | None
 
 
 class CashflowFlow(BaseModel):
@@ -394,36 +399,76 @@ class HierarchicalSpendingNode(BaseModel):
 # --------------------------------------------------------------------------- #
 # Categorization rules / inbox / suggestions
 # --------------------------------------------------------------------------- #
+def _clean_rule_patterns(values: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        pattern = _strip_required(value)
+        if len(pattern) > 200:
+            raise ValueError("Un motif ne peut pas depasser 200 caracteres")
+        normalized = pattern.casefold()
+        if normalized not in seen:
+            cleaned.append(pattern)
+            seen.add(normalized)
+    if not cleaned:
+        raise ValueError("Au moins un motif est requis")
+    return cleaned
+
+
 class RuleCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     match_type: str = Field(default="keyword", pattern="^(keyword|beneficiary)$")
-    pattern: str = Field(min_length=1, max_length=200)
+    pattern: str | None = Field(default=None, min_length=1, max_length=200)
+    patterns: list[str] = Field(default_factory=list, max_length=20)
     category_id: int
     priority: int = Field(default=100, ge=0, le=10000)
     enabled: bool = True
 
-    @field_validator("name", "pattern")
+    @field_validator("name")
     @classmethod
     def strip_text(cls, value: str) -> str:
         return _strip_required(value)
+
+    @model_validator(mode="after")
+    def normalize_patterns(self) -> RuleCreate:
+        self.patterns = _clean_rule_patterns(
+            self.patterns or ([self.pattern] if self.pattern is not None else [])
+        )
+        self.pattern = self.patterns[0]
+        return self
 
 
 class RuleUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     match_type: str | None = Field(default=None, pattern="^(keyword|beneficiary)$")
     pattern: str | None = Field(default=None, min_length=1, max_length=200)
+    patterns: list[str] | None = Field(default=None, min_length=1, max_length=20)
     category_id: int | None = None
     priority: int | None = Field(default=None, ge=0, le=10000)
     enabled: bool | None = None
 
+    @field_validator("name")
+    @classmethod
+    def strip_optional_name(cls, value: str | None) -> str | None:
+        return _strip_required(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def normalize_patterns(self) -> RuleUpdate:
+        if self.patterns is not None:
+            self.patterns = _clean_rule_patterns(self.patterns)
+            self.pattern = self.patterns[0]
+        elif self.pattern is not None:
+            self.patterns = _clean_rule_patterns([self.pattern])
+            self.pattern = self.patterns[0]
+        return self
+
 
 class RuleRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     name: str
     match_type: str
     pattern: str
+    patterns: list[str]
     category_id: int
     priority: int
     enabled: bool
@@ -477,6 +522,7 @@ class RecurringCreate(BaseModel):
 
 class RecurringUpdate(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=200)
+    account_id: int | None = None
     category_id: int | None = None
     frequency: str | None = Field(default=None, pattern=_FREQ)
     next_due: date | None = None
@@ -484,6 +530,11 @@ class RecurringUpdate(BaseModel):
     amount_type: str | None = Field(default=None, pattern="^(fixed|variable)$")
     status: str | None = Field(default=None, pattern="^(active|paused|ended)$")
     confidence: Decimal | None = Field(default=None, ge=0, le=1)
+
+    @field_validator("label")
+    @classmethod
+    def strip_optional_label(cls, value: str | None) -> str | None:
+        return _strip_required(value) if value is not None else None
 
 
 class RecurringRead(BaseModel):
@@ -501,6 +552,26 @@ class RecurringRead(BaseModel):
     confidence: Decimal
     account_name: str = ""
     category_name: str | None = None
+
+
+class DetectionProposal(BaseModel):
+    proposal_key: str
+    kind: str = Field(pattern="^(series|change)$")
+    series_id: int | None = None
+    label: str
+    account_id: int
+    account_name: str
+    category_id: int | None
+    category_name: str | None
+    frequency: str
+    next_due: date
+    amount: Decimal
+    amount_type: str
+    confidence: Decimal
+
+
+class DetectionSelection(BaseModel):
+    proposal_keys: list[str] = Field(default_factory=list, max_length=500)
 
 
 class ForecastPoint(BaseModel):

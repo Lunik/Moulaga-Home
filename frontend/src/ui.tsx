@@ -322,6 +322,27 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   )
 }
 
+export function CategorizationSummary({
+  detail,
+  onCategorize,
+}: {
+  detail: string
+  onCategorize: () => void
+}) {
+  return (
+    <div className="categorization-summary">
+      <span className="categorization-summary-icon"><Icon name="sparkle" /></span>
+      <span>
+        <strong>Transactions à catégoriser</strong>
+        <small>{detail}</small>
+      </span>
+      <button className="secondary-button small-button" type="button" onClick={onCategorize}>
+        Catégoriser <Icon name="arrow" />
+      </button>
+    </div>
+  )
+}
+
 export function EmptyState({
   icon = 'database',
   title,

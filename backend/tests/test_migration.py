@@ -142,7 +142,7 @@ def test_schema_version_is_stamped_and_idempotent(tmp_path, monkeypatch):
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     finally:
         connection.close()
-    assert version >= 8
+    assert version >= 9
 
     # Re-opening a current database performs no backup (nothing pending).
     with TestClient(main.create_app()):
@@ -178,7 +178,51 @@ def test_missing_table_is_recreated_after_safety_backup(tmp_path, monkeypatch):
         connection.close()
 
     assert table is not None
-    assert version >= 8
+    assert version >= 9
+    assert list(tmp_path.glob("moulaga.backup-*.db"))
+
+
+def test_legacy_rule_is_exposed_as_a_single_pattern_after_upgrade(tmp_path, monkeypatch):
+    db_path = tmp_path / "moulaga.db"
+    _seed_legacy_db(db_path)
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE categorization_rules (
+                id INTEGER PRIMARY KEY,
+                name VARCHAR(120) NOT NULL,
+                match_type VARCHAR(16) NOT NULL,
+                pattern VARCHAR(200) NOT NULL,
+                category_id INTEGER NOT NULL REFERENCES categories(id),
+                priority INTEGER NOT NULL DEFAULT 100,
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                created_at DATETIME
+            );
+            INSERT INTO categorization_rules (
+                id, name, match_type, pattern, category_id, priority, enabled
+            ) VALUES (1, 'Regle historique', 'keyword', 'HISTORIQUE', 1, 100, 1);
+            PRAGMA user_version = 8;
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        rule = client.get("/api/rules").json()[0]
+        assert rule["pattern"] == "HISTORIQUE"
+        assert rule["patterns"] == ["HISTORIQUE"]
+
+    connection = sqlite3.connect(db_path)
+    try:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(categorization_rules)")
+        }
+    finally:
+        connection.close()
+    assert "patterns_json" in columns
     assert list(tmp_path.glob("moulaga.backup-*.db"))
 
 
@@ -196,6 +240,10 @@ def test_transaction_ledger_patch_and_delete(tmp_path, monkeypatch):
     main, _ = load_app(tmp_path, monkeypatch)
     with TestClient(main.create_app()) as client:
         account = client.get("/api/accounts").json()[0]
+        destination = client.post(
+            "/api/accounts",
+            json={"name": "Compte de destination", "type": "checking", "initial_balance": "0.00"},
+        ).json()
         created = client.post(
             "/api/transactions",
             json={
@@ -208,10 +256,19 @@ def test_transaction_ledger_patch_and_delete(tmp_path, monkeypatch):
 
         patched = client.patch(
             f"/api/transactions/{created['id']}",
-            json={"amount": "-12.50", "description": "Operation corrigee"},
+            json={
+                "amount": "-12.50",
+                "description": "Operation corrigee",
+                "account_id": destination["id"],
+            },
         )
         assert patched.status_code == 200
         assert patched.json()["amount"] == "-12.50"
+        assert patched.json()["account_id"] == destination["id"]
+        assert patched.json()["account_name"] == "Compte de destination"
+        balances = {item["id"]: item["balance"] for item in client.get("/api/accounts").json()}
+        assert balances[account["id"]] == "0.00"
+        assert balances[destination["id"]] == "-12.50"
 
         # Foreign-key safety: unknown account is rejected.
         bad = client.patch(f"/api/transactions/{created['id']}", json={"account_id": 9999})

@@ -7,6 +7,7 @@ of already-categorized transactions stored locally.
 
 from __future__ import annotations
 
+import json
 import unicodedata
 from collections import defaultdict
 from decimal import Decimal
@@ -52,7 +53,39 @@ def _tokens(text: str) -> set[str]:
 
 
 def _rule_matches(rule: CategorizationRule, description: str) -> bool:
-    return _normalize(rule.pattern) in _normalize(description)
+    normalized_description = _normalize(description)
+    return any(_normalize(pattern) in normalized_description for pattern in _rule_patterns(rule))
+
+
+def _rule_patterns(rule: CategorizationRule) -> list[str]:
+    if rule.patterns_json is None:
+        return [rule.pattern]
+    values = json.loads(rule.patterns_json)
+    if (
+        not isinstance(values, list)
+        or not values
+        or any(not isinstance(value, str) or not value.strip() for value in values)
+    ):
+        raise ValueError("Motifs de regle invalides dans la base locale")
+    return values
+
+
+def _patterns_json(patterns: list[str]) -> str:
+    return json.dumps(patterns, ensure_ascii=False)
+
+
+def _rule_read(rule: CategorizationRule) -> RuleRead:
+    patterns = _rule_patterns(rule)
+    return RuleRead(
+        id=rule.id,
+        name=rule.name,
+        match_type=rule.match_type,
+        pattern=patterns[0],
+        patterns=patterns,
+        category_id=rule.category_id,
+        priority=rule.priority,
+        enabled=rule.enabled,
+    )
 
 
 async def _require_category(session: AsyncSession, category_id: int) -> None:
@@ -72,7 +105,7 @@ async def list_rules(session: AsyncSession = Depends(get_session)) -> list[RuleR
             )
         )
     ).scalars().all()
-    return [RuleRead.model_validate(row) for row in rows]
+    return [_rule_read(row) for row in rows]
 
 
 @router.post("/rules", response_model=RuleRead, status_code=201)
@@ -80,11 +113,19 @@ async def create_rule(
     payload: RuleCreate, session: AsyncSession = Depends(get_session)
 ) -> RuleRead:
     await _require_category(session, payload.category_id)
-    rule = CategorizationRule(**payload.model_dump())
+    rule = CategorizationRule(
+        name=payload.name,
+        match_type=payload.match_type,
+        pattern=payload.patterns[0],
+        patterns_json=_patterns_json(payload.patterns),
+        category_id=payload.category_id,
+        priority=payload.priority,
+        enabled=payload.enabled,
+    )
     session.add(rule)
     await session.commit()
     await session.refresh(rule)
-    return RuleRead.model_validate(rule)
+    return _rule_read(rule)
 
 
 @router.patch("/rules/{rule_id}", response_model=RuleRead)
@@ -94,14 +135,17 @@ async def update_rule(
     rule = await session.get(CategorizationRule, rule_id)
     if rule is None:
         raise HTTPException(status_code=404, detail="Regle introuvable")
-    data = payload.model_dump(exclude_unset=True)
+    data = payload.model_dump(exclude_unset=True, exclude={"pattern", "patterns"})
     if data.get("category_id") is not None:
         await _require_category(session, data["category_id"])
+    if payload.patterns is not None:
+        rule.pattern = payload.patterns[0]
+        rule.patterns_json = _patterns_json(payload.patterns)
     for field, value in data.items():
         setattr(rule, field, value)
     await session.commit()
     await session.refresh(rule)
-    return RuleRead.model_validate(rule)
+    return _rule_read(rule)
 
 
 @router.delete("/rules/{rule_id}", status_code=204)

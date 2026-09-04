@@ -8,11 +8,15 @@ une base SQLite locale et persistante.
 - tableau de bord du patrimoine net, actifs, biens immobiliers, dettes et evolution mensuelle ;
 - comptes groupes par etablissement, numero ou identifiant facultatif, historique,
   releves avec pieces jointes locales, configurations de livrets et positions ;
-- registre pagine des transactions avec pieces jointes locales, creation, edition, suppression et filtres ;
-- cycle budgetaire configurable, enveloppes, cashflow Sankey et ventilation hierarchique ;
-- categories, sous-categories, archivage et regles deterministes ;
+- registre pagine des transactions avec pieces jointes locales ajoutables des la creation,
+  creation et edition en modale, deplacement entre comptes, suppression et filtres ;
+- cycle budgetaire configurable, enveloppes plafonnees ou non avec report lors de leur suppression,
+  cashflow Sankey colore par categorie avec selection rapide du mois ou de l'annee,
+  et ventilation hierarchique ;
+- categories deplacables dans la hierarchie, archivage protecteur de l'historique,
+  restauration et regles deterministes a plusieurs motifs ;
 - boite de categorisation et suggestions entierement locales ;
-- series recurrentes, detection de changements et echeancier previsionnel ;
+- series recurrentes modifiables, detection avec validation des propositions et echeancier previsionnel ;
 - dettes, biens immobiliers avec quote-part et emprunt associe, positions, valorisations,
   contributions et performance du portefeuille ;
 - foyers locaux, roles, comptes partages et objectifs communs ;
