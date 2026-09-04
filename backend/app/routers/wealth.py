@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_access import require_account
 from ..common import money
 from ..db import get_session
 from ..models import (
@@ -74,8 +75,8 @@ async def list_debts(session: AsyncSession = Depends(get_session)) -> list[DebtR
 
 @router.post("/debts", response_model=DebtRead, status_code=201)
 async def create_debt(payload: DebtCreate, session: AsyncSession = Depends(get_session)) -> DebtRead:
-    if payload.account_id is not None and await session.get(Account, payload.account_id) is None:
-        raise HTTPException(status_code=404, detail="Compte introuvable")
+    if payload.account_id is not None:
+        await require_account(session, payload.account_id, writable=True)
     if payload.balance > payload.principal:
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
     debt = Debt(**payload.model_dump())
@@ -92,9 +93,11 @@ async def update_debt(
     debt = await session.get(Debt, debt_id)
     if debt is None:
         raise HTTPException(status_code=404, detail="Dette introuvable")
+    if debt.account_id is not None:
+        await require_account(session, debt.account_id, writable=True)
     data = payload.model_dump(exclude_unset=True)
-    if data.get("account_id") is not None and await session.get(Account, data["account_id"]) is None:
-        raise HTTPException(status_code=404, detail="Compte introuvable")
+    if data.get("account_id") is not None:
+        await require_account(session, data["account_id"], writable=True)
     for field, value in data.items():
         setattr(debt, field, value)
     if Decimal(debt.balance) > Decimal(debt.principal):
@@ -109,6 +112,8 @@ async def delete_debt(debt_id: int, session: AsyncSession = Depends(get_session)
     debt = await session.get(Debt, debt_id)
     if debt is None:
         raise HTTPException(status_code=404, detail="Dette introuvable")
+    if debt.account_id is not None:
+        await require_account(session, debt.account_id, writable=True)
     await session.delete(debt)
     await session.commit()
 
@@ -136,8 +141,16 @@ def _holding_read(holding: Holding) -> HoldingRead:
 
 
 @router.get("/holdings", response_model=list[HoldingRead])
-async def list_holdings(session: AsyncSession = Depends(get_session)) -> list[HoldingRead]:
-    rows = (await session.execute(select(Holding).order_by(Holding.name))).scalars().all()
+async def list_holdings(
+    account_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[HoldingRead]:
+    statement = select(Holding).order_by(Holding.name)
+    if account_id is not None:
+        if await session.get(Account, account_id) is None:
+            raise HTTPException(status_code=404, detail="Compte introuvable")
+        statement = statement.where(Holding.account_id == account_id)
+    rows = (await session.execute(statement)).scalars().all()
     return [_holding_read(row) for row in rows]
 
 
@@ -145,8 +158,7 @@ async def list_holdings(session: AsyncSession = Depends(get_session)) -> list[Ho
 async def create_holding(
     payload: HoldingCreate, session: AsyncSession = Depends(get_session)
 ) -> HoldingRead:
-    if await session.get(Account, payload.account_id) is None:
-        raise HTTPException(status_code=404, detail="Compte introuvable")
+    await require_account(session, payload.account_id, writable=True)
     holding = Holding(**payload.model_dump())
     session.add(holding)
     await session.commit()
@@ -161,6 +173,7 @@ async def update_holding(
     holding = await session.get(Holding, holding_id)
     if holding is None:
         raise HTTPException(status_code=404, detail="Actif introuvable")
+    await require_account(session, holding.account_id, writable=True)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(holding, field, value)
     await session.commit()
@@ -173,6 +186,7 @@ async def delete_holding(holding_id: int, session: AsyncSession = Depends(get_se
     holding = await session.get(Holding, holding_id)
     if holding is None:
         raise HTTPException(status_code=404, detail="Actif introuvable")
+    await require_account(session, holding.account_id, writable=True)
     await session.delete(holding)
     await session.commit()
 
@@ -204,8 +218,10 @@ async def create_contribution(
     payload: ContributionCreate,
     session: AsyncSession = Depends(get_session),
 ) -> ContributionRead:
-    if await session.get(Holding, holding_id) is None:
+    holding = await session.get(Holding, holding_id)
+    if holding is None:
         raise HTTPException(status_code=404, detail="Actif introuvable")
+    await require_account(session, holding.account_id, writable=True)
     contribution = Contribution(holding_id=holding_id, **payload.model_dump())
     session.add(contribution)
     await session.commit()
@@ -222,6 +238,10 @@ async def delete_contribution(
     contribution = await session.get(Contribution, contribution_id)
     if contribution is None or contribution.holding_id != holding_id:
         raise HTTPException(status_code=404, detail="Versement introuvable")
+    holding = await session.get(Holding, holding_id)
+    if holding is None:
+        raise HTTPException(status_code=404, detail="Actif introuvable")
+    await require_account(session, holding.account_id, writable=True)
     await session.delete(contribution)
     await session.commit()
 
@@ -243,8 +263,10 @@ async def create_aggregate_contribution(
     payload: ContributionCreateAggregate,
     session: AsyncSession = Depends(get_session),
 ) -> ContributionRead:
-    if await session.get(Holding, payload.holding_id) is None:
+    holding = await session.get(Holding, payload.holding_id)
+    if holding is None:
         raise HTTPException(status_code=404, detail="Actif introuvable")
+    await require_account(session, holding.account_id, writable=True)
     contribution = Contribution(**payload.model_dump())
     session.add(contribution)
     await session.commit()

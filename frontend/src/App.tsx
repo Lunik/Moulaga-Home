@@ -111,7 +111,6 @@ export default function App() {
           {route.name === 'accounts' && (
             <AccountsView
               accounts={accounts.data ?? []}
-              transactions={transactions.data ?? []}
               navigate={navigate}
               onRefresh={refreshCore}
             />
@@ -119,6 +118,7 @@ export default function App() {
           {route.name === 'account' && (
             <AccountDetailView
               accountId={route.accountId}
+              accounts={accounts.data ?? []}
               categories={categories.data ?? []}
               navigate={navigate}
               onRefresh={refreshCore}

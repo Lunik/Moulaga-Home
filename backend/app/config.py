@@ -21,6 +21,10 @@ class Settings(BaseSettings):
         return self.data_dir / "moulaga.db"
 
     @property
+    def attachments_dir(self) -> Path:
+        return self.data_dir / "attached"
+
+    @property
     def sqlalchemy_url(self) -> str:
         if self.database_url:
             return self.database_url
@@ -32,6 +36,7 @@ class Settings(BaseSettings):
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.attachments_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache(maxsize=1)

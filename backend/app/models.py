@@ -46,13 +46,14 @@ class Account(Base):
     institution: Mapped[str | None] = mapped_column(String(120), nullable=True)
     color: Mapped[str] = mapped_column(String(16), default="#4f46e5")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    savings_product: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    annual_interest_rate: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 3), nullable=True
+    )
+    legal_cap: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     transactions: Mapped[list[Transaction]] = relationship(
-        back_populates="account",
-        cascade="all, delete-orphan",
-    )
-    pockets: Mapped[list[AccountPocket]] = relationship(
         back_populates="account",
         cascade="all, delete-orphan",
     )
@@ -60,25 +61,6 @@ class Account(Base):
         back_populates="account",
         cascade="all, delete-orphan",
     )
-
-
-class AccountPocket(Base):
-    """A named sub-allocation (enveloppe/pot) inside an account."""
-
-    __tablename__ = "account_pockets"
-    __table_args__ = (UniqueConstraint("account_id", "name", name="uq_pocket_account_name"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(
-        ForeignKey("accounts.id", ondelete="CASCADE"), index=True
-    )
-    name: Mapped[str] = mapped_column(String(120))
-    allocated: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
-    target: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    color: Mapped[str] = mapped_column(String(16), default="#0ea5e9")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-    account: Mapped[Account] = relationship(back_populates="pockets")
 
 
 class BalanceSnapshot(Base):
@@ -136,10 +118,31 @@ class Transaction(Base):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    transfer_group: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     account: Mapped[Account] = relationship(back_populates="transactions")
     category: Mapped[Category | None] = relationship(back_populates="transactions")
+    attachments: Mapped[list[TransactionAttachment]] = relationship(
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+    )
+
+
+class TransactionAttachment(Base):
+    __tablename__ = "transaction_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(
+        ForeignKey("transactions.id", ondelete="CASCADE"), index=True
+    )
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(512), unique=True)
+    content_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    transaction: Mapped[Transaction] = relationship(back_populates="attachments")
 
 
 class Preferences(Base):

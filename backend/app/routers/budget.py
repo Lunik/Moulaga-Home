@@ -9,6 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ..account_access import require_account
+from ..common import money
 from ..db import get_session
 from ..models import Account, Category, Transaction
 from ..schemas import (
@@ -29,12 +31,22 @@ router = APIRouter(tags=["budget"])
 
 
 @router.get("/accounts", response_model=list[AccountRead])
-async def list_accounts(session: AsyncSession = Depends(get_session)) -> list[AccountRead]:
-    rows = (await session.execute(select(Account).order_by(Account.name))).scalars().all()
+async def list_accounts(
+    include_archived: bool = False,
+    session: AsyncSession = Depends(get_session),
+) -> list[AccountRead]:
+    statement = select(Account).order_by(Account.name)
+    if not include_archived:
+        statement = statement.where(Account.archived.is_(False))
+    rows = (await session.execute(statement)).scalars().all()
     balances = await _account_balances(session)
+    transaction_counts = await _account_transaction_counts(session)
     return [
         AccountRead.model_validate(account).model_copy(
-            update={"balance": balances.get(account.id, account.initial_balance)}
+            update={
+                "balance": balances.get(account.id, account.initial_balance),
+                "transaction_count": transaction_counts.get(account.id, 0),
+            }
         )
         for account in rows
     ]
@@ -146,7 +158,7 @@ async def count_transactions(
 async def create_transaction(
     payload: TransactionCreate, session: AsyncSession = Depends(get_session)
 ) -> TransactionRead:
-    await _require_account(session, payload.account_id)
+    await require_account(session, payload.account_id, writable=True)
     if payload.category_id is not None:
         await _require_category(session, payload.category_id)
     transaction = Transaction(**payload.model_dump())
@@ -164,29 +176,39 @@ async def overview(session: AsyncSession = Depends(get_session)) -> Overview:
     transaction_total = await session.scalar(select(func.coalesce(func.sum(Transaction.amount), 0)))
     income = await session.scalar(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.booked_at >= month_start, Transaction.amount > 0
+            Transaction.booked_at >= month_start,
+            Transaction.amount > 0,
+            Transaction.transfer_group.is_(None),
         )
     )
     expenses = await session.scalar(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.booked_at >= month_start, Transaction.amount < 0
+            Transaction.booked_at >= month_start,
+            Transaction.amount < 0,
+            Transaction.transfer_group.is_(None),
         )
     )
     budget = await session.scalar(
         select(func.coalesce(func.sum(Category.monthly_budget), 0)).where(Category.kind == "expense")
     )
     uncategorized = await session.scalar(
-        select(func.count()).select_from(Transaction).where(Transaction.category_id.is_(None))
+        select(func.count()).select_from(Transaction).where(
+            Transaction.category_id.is_(None),
+            Transaction.transfer_group.is_(None),
+            Transaction.account_id.in_(
+                select(Account.id).where(Account.archived.is_(False))
+            ),
+        )
     )
     expenses_abs = abs(Decimal(expenses or 0))
     budget_total = Decimal(budget or 0)
     return Overview(
-        balance=Decimal(account_total or 0) + Decimal(transaction_total or 0),
-        income_current_month=Decimal(income or 0),
-        expenses_current_month=expenses_abs,
-        net_current_month=Decimal(income or 0) + Decimal(expenses or 0),
-        budget_current_month=budget_total,
-        budget_remaining=budget_total - expenses_abs,
+        balance=money(Decimal(account_total or 0) + Decimal(transaction_total or 0)),
+        income_current_month=money(income),
+        expenses_current_month=money(expenses_abs),
+        net_current_month=money(Decimal(income or 0) + Decimal(expenses or 0)),
+        budget_current_month=money(budget_total),
+        budget_remaining=money(budget_total - expenses_abs),
         uncategorized_count=int(uncategorized or 0),
     )
 
@@ -199,6 +221,7 @@ async def monthly_stats(session: AsyncSession = Depends(get_session)) -> list[Mo
     rows = (
         await session.execute(
             select(month_expr, income_expr, expense_expr)
+            .where(Transaction.transfer_group.is_(None))
             .group_by(month_expr)
             .order_by(month_expr.desc())
             .limit(12)
@@ -233,6 +256,7 @@ async def category_stats(session: AsyncSession = Depends(get_session)) -> list[C
             Transaction.booked_at >= month_start,
             Transaction.amount < 0,
             Transaction.category_id.is_(None),
+            Transaction.transfer_group.is_(None),
         )
     )
     breakdown = [
@@ -271,7 +295,13 @@ def _apply_transaction_filters(
     if account_id:
         statement = statement.where(Transaction.account_id == account_id)
     if uncategorized:
-        statement = statement.where(Transaction.category_id.is_(None))
+        statement = statement.where(
+            Transaction.category_id.is_(None),
+            Transaction.transfer_group.is_(None),
+            Transaction.account_id.in_(
+                select(Account.id).where(Account.archived.is_(False))
+            ),
+        )
     elif category_id:
         statement = statement.where(Transaction.category_id == category_id)
     if search:
@@ -281,7 +311,11 @@ def _apply_transaction_filters(
 
 
 def _transaction_query() -> Select[tuple[Transaction]]:
-    return select(Transaction).options(selectinload(Transaction.account), selectinload(Transaction.category))
+    return select(Transaction).options(
+        selectinload(Transaction.account),
+        selectinload(Transaction.category),
+        selectinload(Transaction.attachments),
+    )
 
 
 def _transaction_read(transaction: Transaction) -> TransactionRead:
@@ -290,13 +324,9 @@ def _transaction_read(transaction: Transaction) -> TransactionRead:
             "account_name": transaction.account.name,
             "category_name": transaction.category.name if transaction.category else None,
             "category_kind": transaction.category.kind if transaction.category else None,
+            "attachment_count": len(transaction.attachments),
         }
     )
-
-
-async def _require_account(session: AsyncSession, account_id: int) -> None:
-    if await session.get(Account, account_id) is None:
-        raise HTTPException(status_code=404, detail="Compte introuvable")
 
 
 async def _require_category(session: AsyncSession, category_id: int) -> None:
@@ -312,14 +342,29 @@ async def _account_balances(session: AsyncSession) -> dict[int, Decimal]:
             .group_by(Account.id)
         )
     ).all()
-    return {row[0]: Decimal(row[1] or 0) for row in rows}
+    return {row[0]: money(row[1]) for row in rows}
+
+
+async def _account_transaction_counts(session: AsyncSession) -> dict[int, int]:
+    rows = (
+        await session.execute(
+            select(Transaction.account_id, func.count(Transaction.id)).group_by(
+                Transaction.account_id
+            )
+        )
+    ).all()
+    return {row[0]: int(row[1]) for row in rows}
 
 
 async def _current_month_category_spend(session: AsyncSession) -> dict[int, Decimal]:
     rows = (
         await session.execute(
             select(Transaction.category_id, func.sum(Transaction.amount))
-            .where(Transaction.booked_at >= _month_start(date.today()), Transaction.amount < 0)
+            .where(
+                Transaction.booked_at >= _month_start(date.today()),
+                Transaction.amount < 0,
+                Transaction.transfer_group.is_(None),
+            )
             .group_by(Transaction.category_id)
         )
     ).all()

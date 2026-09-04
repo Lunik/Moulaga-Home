@@ -25,13 +25,13 @@ import type { Route } from '../routing'
 import {
   EmptyState,
   Icon,
+  InstitutionLogo,
   MerchantAvatar,
   Panel,
   ProgressBar,
   chartTooltipStyle,
   compactMoney,
   formatDate,
-  initials,
   money,
   signedMoney,
 } from '../ui'
@@ -171,9 +171,9 @@ export function DashboardView({
         <Panel title="Comptes" subtitle="Soldes disponibles">
           {accounts.length > 0 ? (
             <div className="data-list">
-              {accounts.filter((account) => !account.archived).slice(0, 6).map((account, index) => (
+              {accounts.filter((account) => !account.archived).slice(0, 6).map((account) => (
                 <button type="button" key={account.id} onClick={() => navigate({ name: 'account', accountId: account.id })}>
-                  <span className="account-avatar" style={{ background: account.color ?? colors[index % colors.length] }}>{initials(account.name)}</span>
+                  <InstitutionLogo institution={account.institution} />
                   <span><strong>{account.name}</strong><small>{account.institution || account.type}</small></span>
                   <strong>{money(account.balance)}</strong>
                 </button>

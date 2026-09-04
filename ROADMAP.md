@@ -77,6 +77,26 @@ Mode operatoire :
    - atomicite et idempotence ;
    - confidentialite.
 
+### Journal d'audit
+
+#### Palier 2 - Comptes (2026-09-04)
+
+Constats :
+
+- **OK** : creation, edition des metadonnees, archivage reversible, filtres par statut et type,
+  regroupement par etablissement, detail contextualise, positions, projections de livrets et
+  releves mensuels persistants ;
+- **ecarts corriges** : filtre API des archives, compteurs exacts sans plafond global, historique
+  pagine, mutations des transactions et releves, pieces jointes locales, transferts internes
+  neutres, validation des montants et periodes et suppression des snapshots devenus obsoletes lors
+  d'une regeneration ;
+- **arbitrages produit** :
+  - [ ] [#2 - strategie multi-devise](https://github.com/Lunik/Moulaga/issues/2) ;
+  - [ ] [#3 - semantique financiere des comptes archives](https://github.com/Lunik/Moulaga/issues/3).
+
+La gestion des comptes est suffisamment saine pour poursuivre l'audit du palier, sous reserve des
+deux arbitrages explicites ci-dessus.
+
 ## Phase 0 - Fondations
 
 - [x] 12. Preferences : theme, langue/locale, date et style de navigation.
@@ -89,9 +109,9 @@ Mode operatoire :
 - [x] 4. Enveloppes budgetaires par cycle.
 - [x] 7. Jour de paie, cycle budgetaire et identites marchandes locales.
 - [x] 9. Categories, couleurs, archivage et sous-categories.
-- [x] 17. Creation, edition, archivage et filtres des comptes.
-- [x] 19. Vue multi-comptes et poches virtuelles sans double comptage.
-- [x] 20. Detail compte, historique et transactions contextualisees.
+- [x] 17. Creation, edition, archivage, filtres et regroupement des comptes par etablissement.
+- [x] 19. Vue multi-comptes sans double comptage.
+- [x] 20. Detail compte, historique, positions, projection des livrets et transactions contextualisees.
 - [x] 21. Releves mensuels idempotents.
 - [x] 22. Releves mensuels disponibles uniformement sur chaque compte.
 - [x] 23. Apercu complet du cycle budgetaire.

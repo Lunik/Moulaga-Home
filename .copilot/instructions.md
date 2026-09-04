@@ -44,7 +44,11 @@ cd frontend && npm run build && npm run lint
 - La migration CSV doit etre atomique, idempotente et distincte de l'application interactive.
 - SQLite est la source de verite persistante pour toutes les operations suivantes.
 - Les chiffres affichés doivent rester cohérents entre overview, comptes et catégories.
-- Les calculs de patrimoine, poches et partages ne doivent jamais compter deux fois un montant.
+- Les calculs de patrimoine et partages ne doivent jamais compter deux fois un montant.
+- Les transferts internes ne sont ni des revenus, ni des depenses, ni des operations a categoriser.
+- Un compte archive est en lecture seule jusqu'a sa restauration explicite.
+- Les pieces jointes restent sous `MOULAGA_DATA_DIR/attached`, hors Git, dans des chemins haches.
+- Les projections de livrets reposent sur le taux du compte et n'anticipent aucun versement.
 - Aucune suggestion ou identite marchande ne doit appeler un service externe.
 
 ## Workflow

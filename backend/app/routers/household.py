@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_access import require_account
 from ..common import money, require_actor
 from ..db import get_session
 from ..models import (
@@ -239,8 +240,7 @@ async def share_account(
 ) -> SharedLinkRead:
     await _require_household(session, household_id)
     await require_actor(session, household_id, "admin", actor_id)
-    if await session.get(Account, payload.account_id) is None:
-        raise HTTPException(status_code=404, detail="Compte introuvable")
+    await require_account(session, payload.account_id, writable=True)
     link = SharedAccountLink(household_id=household_id, **payload.model_dump())
     session.add(link)
     try:
@@ -266,6 +266,7 @@ async def unshare_account(
     link = await session.get(SharedAccountLink, link_id)
     if link is None or link.household_id != household_id:
         raise HTTPException(status_code=404, detail="Partage introuvable")
+    await require_account(session, link.account_id, writable=True)
     await session.delete(link)
     await session.commit()
 
@@ -293,8 +294,8 @@ async def create_goal(
 ) -> GoalRead:
     await _require_household(session, household_id)
     await require_actor(session, household_id, "member", actor_id)
-    if payload.account_id is not None and await session.get(Account, payload.account_id) is None:
-        raise HTTPException(status_code=404, detail="Compte introuvable")
+    if payload.account_id is not None:
+        await require_account(session, payload.account_id, writable=True)
     goal = Goal(household_id=household_id, **payload.model_dump())
     session.add(goal)
     await session.commit()
@@ -315,7 +316,12 @@ async def update_goal(
     goal = await session.get(Goal, goal_id)
     if goal is None or goal.household_id != household_id:
         raise HTTPException(status_code=404, detail="Objectif introuvable")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    if goal.account_id is not None:
+        await require_account(session, goal.account_id, writable=True)
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("account_id") is not None:
+        await require_account(session, data["account_id"], writable=True)
+    for field, value in data.items():
         setattr(goal, field, value)
     await session.commit()
     await session.refresh(goal)
@@ -334,6 +340,8 @@ async def delete_goal(
     goal = await session.get(Goal, goal_id)
     if goal is None or goal.household_id != household_id:
         raise HTTPException(status_code=404, detail="Objectif introuvable")
+    if goal.account_id is not None:
+        await require_account(session, goal.account_id, writable=True)
     await session.delete(goal)
     await session.commit()
 
@@ -396,6 +404,8 @@ async def add_goal_contribution(
     goal = await session.get(Goal, goal_id)
     if goal is None or goal.household_id != household_id:
         raise HTTPException(status_code=404, detail="Objectif introuvable")
+    if goal.account_id is not None:
+        await require_account(session, goal.account_id, writable=True)
     if payload.member_id is not None:
         member = await session.get(HouseholdMember, payload.member_id)
         if member is None or member.household_id != household_id:

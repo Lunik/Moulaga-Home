@@ -14,13 +14,15 @@ Le stack principal est :
 
 ## Données sensibles
 
-Le fichier `Banque_v3.numbers` et tout export bancaire CSV/DB sont sensibles et confidentiels. Ils doivent rester hors du dépôt Git.
+Le fichier `Banque_v3.numbers`, tout export bancaire CSV/DB et les pieces jointes de transactions
+sont sensibles et confidentiels. Ils doivent rester hors du dépôt Git.
 
 Règles :
 
 - ne jamais committer de `.numbers`, `.csv`, `.db` ;
 - ignorer `./data` et `MOULAGA_DATA_DIR` ;
 - éviter les logs qui exposent des détails bancaires ;
+- stocker les pieces jointes uniquement sous `MOULAGA_DATA_DIR/attached` avec des chemins haches ;
 - utiliser des exemples synthétiques dans les tests.
 
 ## Architecture
@@ -57,7 +59,10 @@ Le dashboard doit montrer :
 - Après cette migration, SQLite est la source de vérité et les mouvements sont saisis dans l'application.
 - Les catégories peuvent être de type `income` ou `expense`.
 - Le budget mensuel d'une catégorie est facultatif.
-- Les poches, liens partages et positions ne doivent jamais provoquer de double comptage.
+- Les liens partages et positions ne doivent jamais provoquer de double comptage.
+- Les transferts entre comptes sont lies, neutres pour le budget et exclus de la categorisation.
+- Un compte archive est consultable et restaurable, mais toutes ses autres mutations sont refusees.
+- Les projections de livrets utilisent le taux configurable du compte et excluent les versements futurs.
 - Les suggestions, logos et identites marchandes ne doivent effectuer aucun appel reseau.
 - Les mutations d'un foyer exigent un acteur et un role suffisant.
 

@@ -28,7 +28,11 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
     assert result.merchants > 0
 
     with TestClient(main.create_app()) as client:
-        assert len(client.get("/api/accounts").json()) == 3
+        accounts = client.get("/api/accounts").json()
+        assert len(accounts) == 3
+        savings = next(account for account in accounts if account["type"] == "savings")
+        assert savings["savings_product"] == "Livret A"
+        assert savings["legal_cap"] == "22950.00"
         assert client.get("/api/debts").json()
         assert client.get("/api/holdings").json()
         assert client.get("/api/rules").json()

@@ -6,8 +6,8 @@ une base SQLite locale et persistante.
 ## Fonctionnalites
 
 - tableau de bord du patrimoine net, actifs, dettes et evolution mensuelle ;
-- comptes, metadonnees, poches virtuelles, historique et releves mensuels ;
-- registre pagine des transactions avec creation, edition, suppression et filtres ;
+- comptes groupes par etablissement, historique, releves, configurations de livrets et positions ;
+- registre pagine des transactions avec pieces jointes locales, creation, edition, suppression et filtres ;
 - cycle budgetaire configurable, enveloppes, cashflow Sankey et ventilation hierarchique ;
 - categories, sous-categories, archivage et regles deterministes ;
 - boite de categorisation et suggestions entierement locales ;
@@ -30,6 +30,8 @@ confidentielles. Ils ne doivent jamais etre copies dans le depot ou les logs.
 - aucune donnee bancaire n'est envoyee a un modele ou un service tiers ;
 - les identites marchandes sont saisies et stockees localement, sans telechargement de logo ;
 - les donnees de test et de demonstration sont entierement synthetiques.
+- les pieces jointes sont conservees sous `MOULAGA_DATA_DIR/attached` dans des chemins haches ;
+  elles restent sensibles et hors du depot Git.
 
 ## Demarrage Docker
 

@@ -32,7 +32,6 @@ from ..config import settings
 from ..db import SessionLocal, engine, init_db
 from ..models import (
     Account,
-    AccountPocket,
     BalanceSnapshot,
     Base,
     CategorizationRule,
@@ -149,7 +148,7 @@ async def _seed(session: AsyncSession) -> SeedResult:
     loisirs = categories[("Loisirs", "expense")]
     transport = categories[("Transport", "expense")]
 
-    # --- Accounts + pockets ----------------------------------------------- #
+    # --- Accounts --------------------------------------------------------- #
     checking = await session.scalar(select(Account).where(Account.name == "Compte courant"))
     if checking is None:
         raise SeedError("Le compte local initial est introuvable.")
@@ -157,27 +156,20 @@ async def _seed(session: AsyncSession) -> SeedResult:
     checking.type = "checking"
     checking.currency = "EUR"
     checking.initial_balance = money("1200.00")
-    checking.institution = "Banque QA"
+    checking.institution = "BNP Paribas"
     checking.color = "#4f46e5"
     savings = Account(
         name="Livret epargne demo", type="savings", currency="EUR",
-        initial_balance=money("5000.00"), institution="Banque QA", color="#16a34a",
+        initial_balance=money("5000.00"), institution="BNP Paribas", color="#16a34a",
+        savings_product="Livret A", annual_interest_rate=Decimal("1.700"),
+        legal_cap=money("22950.00"),
     )
     invest = Account(
         name="PEA demo", type="investment", currency="EUR",
-        initial_balance=money("0.00"), institution="Courtier QA", color="#7c3aed",
+        initial_balance=money("0.00"), institution="Trade Republic", color="#7c3aed",
     )
     session.add_all([savings, invest])
     await session.flush()
-
-    session.add_all(
-        [
-            AccountPocket(account_id=savings.id, name="Vacances", allocated=money("800.00"),
-                          target=money("2000.00"), color="#f97316"),
-            AccountPocket(account_id=savings.id, name="Urgence", allocated=money("1500.00"),
-                          target=money("3000.00"), color="#ef4444"),
-        ]
-    )
 
     # --- Transactions across the last four cycles ------------------------- #
     anchor = date.today().replace(day=1)
