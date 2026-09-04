@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -187,12 +188,19 @@ async def _seed(
         name="Internet", kind="expense", color="#38bdf8", parent_id=logement.id,
         monthly_budget=money("40.00"),
     )
-    session.add_all([electricite, internet])
+    archived_category = Category(
+        name="Ancienne categorie demo",
+        kind="expense",
+        color="#94a3b8",
+        archived=True,
+    )
+    session.add_all([electricite, internet, archived_category])
     await session.flush()
 
     salaire = categories[("Salaire", "income")]
     loisirs = categories[("Loisirs", "expense")]
     transport = categories[("Transport", "expense")]
+    transport.monthly_budget = None
 
     # --- Accounts --------------------------------------------------------- #
     checking = await session.scalar(select(Account).where(Account.name == "Compte courant"))
@@ -262,6 +270,16 @@ async def _seed(
     checking_monthly_deltas = {month: Decimal("0.00") for month in months}
     savings_monthly_deltas = {month: Decimal("0.00") for month in months}
     receipt_transaction: Transaction | None = None
+    session.add(
+        Transaction(
+            booked_at=add_month(anchor, -18).replace(day=12),
+            description="Historique categorie archivee",
+            amount=money("-7.00"),
+            account_id=checking.id,
+            category_id=archived_category.id,
+        )
+    )
+    transaction_count += 1
     for month in months:
         rows = [
             (month.replace(day=1), "Salaire mensuel", money("2500.00"), salaire.id, None),
@@ -413,6 +431,9 @@ async def _seed(
     session.add_all(
         [
             CategorizationRule(name="Supermarche", match_type="keyword", pattern="SUPERMARCHE",
+                               patterns_json=json.dumps(
+                                   ["SUPERMARCHE", "HYPERMARCHE", "EPICERIE"]
+                               ),
                                category_id=courses.id, priority=200, enabled=True),
             CategorizationRule(name="Station", match_type="keyword", pattern="STATION",
                                category_id=transport.id, priority=150, enabled=True),
@@ -423,13 +444,13 @@ async def _seed(
     rent_series = RecurringSeries(
         label="Loyer", account_id=checking.id, category_id=logement.id, frequency="monthly",
         next_due=add_month(months[-1], 1).replace(day=3), amount=money("-750.00"),
-        amount_type="fixed", status="active", confidence=money("0.95"), match_key="demo-loyer",
+        amount_type="fixed", status="active", confidence=money("0.95"),
     )
     session.add(rent_series)
     await session.flush()
     session.add(
         RecurringSeries(
-            label="Abonnement demo",
+            label="Abonnement internet",
             account_id=checking.id,
             category_id=loisirs.id,
             frequency="monthly",
@@ -438,7 +459,19 @@ async def _seed(
             amount_type="fixed",
             status="active",
             confidence=money("1.00"),
-            match_key="demo-abonnement",
+        )
+    )
+    session.add(
+        RecurringSeries(
+            label="Fournisseur electricite",
+            account_id=checking.id,
+            category_id=electricite.id,
+            frequency="monthly",
+            next_due=anchor.replace(day=20),
+            amount=money("-95.00"),
+            amount_type="variable",
+            status="active",
+            confidence=money("0.85"),
         )
     )
     session.add(
@@ -628,7 +661,7 @@ async def _seed(
         snapshots=snapshot_count,
         categories=int(total_categories or 0),
         rules=2,
-        recurring=2,
+        recurring=3,
         changes=1,
         debts=4,
         real_estate_assets=1,

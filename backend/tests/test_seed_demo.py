@@ -51,8 +51,27 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         assert len(real_estate) == 1
         assert real_estate[0]["debt_name"] == "Pret immobilier demo"
         assert client.get("/api/holdings").json()
-        assert client.get("/api/rules").json()
-        assert client.get("/api/recurring").json()
+        rules = client.get("/api/rules").json()
+        assert any(len(rule["patterns"]) >= 3 for rule in rules)
+        recurring = client.get("/api/recurring").json()
+        assert len(recurring) == 3
+        assert any(series["amount_type"] == "variable" for series in recurring)
+        assert client.get("/api/recurring/detect").json()
+        envelopes = client.get("/api/budget/envelopes").json()
+        unlimited = next(envelope for envelope in envelopes if envelope["category_name"] == "Transport")
+        assert unlimited["budget"] is None
+        assert unlimited["remaining"] is None
+        assert unlimited["spent"] == "58.40"
+        categories = client.get("/api/categories").json()
+        archived_category = next(
+            category for category in categories if category["name"] == "Ancienne categorie demo"
+        )
+        assert archived_category["archived"] is True
+        archived_history = client.get(
+            "/api/transactions",
+            params={"category_id": archived_category["id"], "limit": 1000},
+        ).json()
+        assert len(archived_history) == 1
         assert client.get("/api/recurring/changes", params={"status": "pending"}).json()
         assert client.get("/api/portfolio/performance").json()
         assert client.get("/api/merchants").json()
@@ -138,6 +157,9 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
             if transaction["attachment_count"] == 1
         )
         assert receipt_transaction["notes"] == "Ticket de caisse synthetique joint."
+        complete_ledger = client.get("/api/transactions", params={"limit": 1000}).json()
+        assert any(transaction["attachment_count"] > 0 for transaction in complete_ledger)
+        assert len({transaction["account_id"] for transaction in complete_ledger}) > 1
         receipt_attachments = client.get(
             f"/api/transactions/{receipt_transaction['id']}/attachments"
         ).json()

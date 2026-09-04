@@ -62,6 +62,11 @@ export interface Category {
   is_default: boolean
 }
 
+export interface CategoryRemovalResult {
+  action: 'archived' | 'deleted'
+  transaction_count: number
+}
+
 export interface Transaction {
   id: number
   booked_at: string
@@ -148,9 +153,9 @@ export interface Envelope {
   category_id: number
   category_name: string
   color: string
-  budget: Money
+  budget: Money | null
   spent: Money
-  remaining: Money
+  remaining: Money | null
 }
 
 export interface CashflowFlow {
@@ -174,6 +179,7 @@ export interface CategorizationRule {
   name: string
   match_type: 'beneficiary' | 'keyword'
   pattern: string
+  patterns: string[]
   category_id: number
   priority: number
   enabled: boolean
@@ -210,6 +216,27 @@ export interface RecurringSeries {
   amount_type: 'fixed' | 'variable'
   status: 'active' | 'paused' | 'ended'
   confidence: number
+}
+
+export interface RecurringDetectionProposal {
+  proposal_key: string
+  kind: 'series' | 'change'
+  series_id: number | null
+  label: string
+  account_id: number
+  account_name: string
+  category_id: number | null
+  category_name: string | null
+  amount: Money
+  frequency: RecurringSeries['frequency']
+  next_due: string
+  amount_type: RecurringSeries['amount_type']
+  confidence: number
+}
+
+export interface RecurringDetectionResult {
+  created_series: number
+  created_changes: number
 }
 
 export interface RecurringForecastItem {

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +15,12 @@ from ..account_access import ensure_account_writable, require_account
 from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..db import get_session
 from ..models import Category, Transaction, TransactionAttachment
-from ..schemas import TransactionAttachmentRead, TransactionRead, TransactionUpdate
+from ..schemas import (
+    TransactionAttachmentRead,
+    TransactionCreate,
+    TransactionRead,
+    TransactionUpdate,
+)
 
 router = APIRouter(tags=["transactions"])
 
@@ -38,6 +45,7 @@ async def _load(session: AsyncSession, transaction_id: int) -> Transaction:
             selectinload(Transaction.attachments),
         )
         .where(Transaction.id == transaction_id)
+        .execution_options(populate_existing=True)
     )
     transaction = (await session.execute(statement)).scalar_one_or_none()
     if transaction is None:
@@ -50,6 +58,46 @@ async def get_transaction(
     transaction_id: int, session: AsyncSession = Depends(get_session)
 ) -> TransactionRead:
     return _read(await _load(session, transaction_id))
+
+
+@router.post("/transactions/with-attachment", response_model=TransactionRead, status_code=201)
+async def create_transaction_with_attachment(
+    payload_json: str = Form(...),
+    file: UploadFile | None = File(default=None),
+    session: AsyncSession = Depends(get_session),
+) -> TransactionRead:
+    try:
+        payload = TransactionCreate.model_validate_json(payload_json)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors(), body=payload_json) from exc
+
+    await require_account(session, payload.account_id, writable=True)
+    if payload.category_id is not None and await session.get(Category, payload.category_id) is None:
+        raise HTTPException(status_code=404, detail="Categorie introuvable")
+
+    transaction = Transaction(**payload.model_dump())
+    session.add(transaction)
+    stored_path: str | None = None
+    try:
+        await session.flush()
+        if file is not None:
+            original_name, stored_path, size = await store_attachment(file)
+            session.add(
+                TransactionAttachment(
+                    transaction_id=transaction.id,
+                    original_name=original_name,
+                    stored_path=stored_path,
+                    content_type=file.content_type,
+                    size=size,
+                )
+            )
+        await session.commit()
+    except (HTTPException, OSError, SQLAlchemyError):
+        await session.rollback()
+        if stored_path is not None:
+            remove_attachment(stored_path)
+        raise
+    return _read(await _load(session, transaction.id))
 
 
 @router.patch("/transactions/{transaction_id}", response_model=TransactionRead)
@@ -72,6 +120,8 @@ async def update_transaction(
             detail="Les montants et comptes d'un transfert lie ne sont pas modifiables",
         )
     if "account_id" in data:
+        if data["account_id"] is None:
+            raise HTTPException(status_code=422, detail="Compte requis")
         await require_account(session, data["account_id"], writable=True)
     if data.get("category_id") is not None and await session.get(Category, data["category_id"]) is None:
         raise HTTPException(status_code=404, detail="Categorie introuvable")

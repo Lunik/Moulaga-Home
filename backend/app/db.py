@@ -53,15 +53,11 @@ async def init_db() -> None:
             ("Sante", "expense", "#ef4444"),
             ("Epargne", "expense", "#64748b"),
         ]
-        existing_categories = {
-            (name, kind)
-            for name, kind in (await session.execute(select(Category.name, Category.kind))).all()
-        }
-        session.add_all(
-            Category(name=name, kind=kind, color=color, is_default=True)
-            for name, kind, color in default_categories
-            if (name, kind) not in existing_categories
-        )
+        if await session.scalar(select(Category.id).limit(1)) is None:
+            session.add_all(
+                Category(name=name, kind=kind, color=color, is_default=True)
+                for name, kind, color in default_categories
+            )
 
         if await session.scalar(select(Preferences.id).limit(1)) is None:
             session.add(Preferences(id=1))

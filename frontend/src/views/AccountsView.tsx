@@ -12,7 +12,7 @@ import {
   YAxis,
 } from 'recharts'
 
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiUpload, queryString } from '../api/client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, queryString } from '../api/client'
 import type {
   Account,
   AccountDetail,
@@ -20,14 +20,15 @@ import type {
   AccountSnapshot,
   Category,
   Holding,
-  StoredAttachment,
   Transaction,
   TransactionCount,
 } from '../api/types'
+import { AttachmentManager } from '../AttachmentManager'
 import type { Route } from '../routing'
 import { calculateSavingsProjection } from '../savingsProjection'
 import {
   AmountDirectionToggle,
+  CategorizationSummary,
   EmptyState,
   Field,
   Icon,
@@ -847,23 +848,10 @@ export function AccountDetailView({
         ) : undefined}
       >
         {!readOnly && (uncategorizedCount.data?.count ?? 0) > 0 && (
-          <div className="categorization-summary">
-            <span className="categorization-summary-icon"><Icon name="sparkle" /></span>
-            <span>
-              <strong>Transactions à catégoriser</strong>
-              <small>
-                {uncategorizedCount.data?.count ?? 0} mouvement
-                {(uncategorizedCount.data?.count ?? 0) === 1 ? '' : 's'} sans catégorie sur ce compte
-              </small>
-            </span>
-            <button
-              className="secondary-button small-button"
-              type="button"
-              onClick={() => navigate({ name: 'budget', tab: 'categorize' })}
-            >
-              Catégoriser <Icon name="arrow" />
-            </button>
-          </div>
+          <CategorizationSummary
+            detail={`${uncategorizedCount.data?.count ?? 0} mouvement${(uncategorizedCount.data?.count ?? 0) === 1 ? '' : 's'} sans catégorie sur ce compte`}
+            onCategorize={() => navigate({ name: 'budget', tab: 'categorize' })}
+          />
         )}
         <div className="data-table-wrap">
           <table className="transaction-table">
@@ -1126,114 +1114,6 @@ function AccountTransactionRow({
         </tr>
       )}
     </>
-  )
-}
-
-type AttachmentOwner =
-  | { kind: 'transaction'; transactionId: number }
-  | { kind: 'snapshot'; accountId: number; snapshotId: number }
-
-function AttachmentManager({ owner, readOnly }: { owner: AttachmentOwner; readOnly: boolean }) {
-  const queryClient = useQueryClient()
-  const [file, setFile] = useState<File | null>(null)
-  const [inputKey, setInputKey] = useState(0)
-  const resourcePath = owner.kind === 'transaction'
-    ? `/transactions/${owner.transactionId}`
-    : `/accounts/${owner.accountId}/snapshots/${owner.snapshotId}`
-  const attachmentQueryKey = owner.kind === 'transaction'
-    ? ['transaction-attachments', owner.transactionId]
-    : ['snapshot-attachments', owner.accountId, owner.snapshotId]
-  const parentQueryKey = owner.kind === 'transaction'
-    ? ['transactions']
-    : ['account-snapshots', owner.accountId]
-  const attachments = useQuery({
-    queryKey: attachmentQueryKey,
-    queryFn: () => apiGet<StoredAttachment[]>(`${resourcePath}/attachments`),
-  })
-  const refresh = () => Promise.all([
-    queryClient.invalidateQueries({ queryKey: attachmentQueryKey }),
-    queryClient.invalidateQueries({ queryKey: parentQueryKey }),
-  ])
-  const upload = useMutation({
-    mutationFn: () => {
-      if (!file) throw new Error('Choisissez un fichier à joindre.')
-      const data = new FormData()
-      data.append('file', file)
-      return apiUpload<StoredAttachment>(`${resourcePath}/attachments`, data)
-    },
-    onSuccess: async () => {
-      setFile(null)
-      setInputKey((current) => current + 1)
-      await refresh()
-    },
-  })
-  const remove = useMutation({
-    mutationFn: (attachmentId: number) => apiDelete(
-      `${resourcePath}/attachments/${attachmentId}`,
-    ),
-    onSuccess: refresh,
-  })
-  return (
-    <div className="attachment-manager">
-      <div className="attachment-heading">
-        <span>
-          <strong>Pièces jointes</strong>
-          <small>Stockage local, 25 Mio maximum par fichier.</small>
-        </span>
-        {!readOnly && (
-          <form
-            className="attachment-upload"
-            onSubmit={(event: FormEvent) => {
-              event.preventDefault()
-              upload.mutate()
-            }}
-          >
-            <input
-              key={inputKey}
-              aria-label="Choisir une pièce jointe"
-              type="file"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-            />
-            <button className="secondary-button small-button" type="submit" disabled={!file || upload.isPending}>
-              <Icon name="attachment" /> Joindre
-            </button>
-          </form>
-        )}
-      </div>
-      {attachments.isLoading ? (
-        <p className="attachment-empty">Chargement…</p>
-      ) : (attachments.data ?? []).length > 0 ? (
-        <div className="attachment-list">
-          {attachments.data?.map((attachment) => (
-            <div key={attachment.id}>
-              <Icon name="attachment" />
-              <span>
-                <a href={`/api${resourcePath}/attachments/${attachment.id}/download`}>
-                  {attachment.original_name}
-                </a>
-                <small>{formatFileSize(attachment.size)}</small>
-              </span>
-              {!readOnly && (
-                <button
-                  className="icon-action"
-                  type="button"
-                  aria-label={`Supprimer ${attachment.original_name}`}
-                  disabled={remove.isPending}
-                  onClick={() => remove.mutate(attachment.id)}
-                >
-                  <Icon name="trash" />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="attachment-empty">Aucune pièce jointe.</p>
-      )}
-      {(attachments.error || upload.error || remove.error) && (
-        <p className="form-error">{errorMessage(attachments.error ?? upload.error ?? remove.error)}</p>
-      )}
-    </div>
   )
 }
 
@@ -1831,10 +1711,4 @@ function signedPercent(value: number): string {
   })
   if (value === 0) return `${formatted} %`
   return `${value > 0 ? '+' : '−'}${formatted} %`
-}
-
-function formatFileSize(size: number): string {
-  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mio`
-  if (size >= 1024) return `${(size / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Kio`
-  return `${size} octet${size === 1 ? '' : 's'}`
 }

@@ -29,7 +29,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Columns that may be missing on databases created before this schema version.
 # Values are the SQLite column definitions used by ``ALTER TABLE ADD COLUMN``.
@@ -50,6 +50,9 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "parent_id": "INTEGER REFERENCES categories(id)",
         "archived": "BOOLEAN DEFAULT 0 NOT NULL",
         "is_default": "BOOLEAN DEFAULT 0 NOT NULL",
+    },
+    "categorization_rules": {
+        "patterns_json": "TEXT",
     },
     "debts": {
         "due_date": "DATE",

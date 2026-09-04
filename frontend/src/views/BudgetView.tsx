@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ResponsiveContainer,
@@ -6,7 +6,8 @@ import {
   Tooltip,
 } from 'recharts'
 
-import { apiDelete, apiGet, apiPatch, apiPost, queryString } from '../api/client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiUpload, queryString } from '../api/client'
+import { AttachmentManager } from '../AttachmentManager'
 import type {
   Account,
   AppSettings,
@@ -16,9 +17,12 @@ import type {
   CategorizationRule,
   CategorizationSuggestion,
   Category,
+  CategoryRemovalResult,
   Envelope,
   MerchantIdentity,
   RecurringChange,
+  RecurringDetectionProposal,
+  RecurringDetectionResult,
   RecurringForecastItem,
   RecurringSeries,
   SpendingNode,
@@ -30,14 +34,15 @@ import type { BudgetTab, Route } from '../routing'
 import {
   AmountDirectionToggle,
   BetaBadge,
+  CategorizationSummary,
   EmptyState,
   Field,
   Icon,
   MerchantAvatar,
+  Modal,
   Panel,
   ProgressBar,
   StatusBadge,
-  chartTooltipStyle,
   directedAmount,
   errorMessage,
   formatDate,
@@ -45,6 +50,7 @@ import {
   initials,
   localDateInputValue,
   money,
+  shortMonth,
   signedMoney,
   type TransactionDirection,
 } from '../ui'
@@ -56,7 +62,7 @@ const budgetTabs: Array<{ id: BudgetTab; label: string; icon: Parameters<typeof 
   { id: 'envelopes', label: 'Enveloppes', icon: 'budget' },
   { id: 'categorize', label: 'À catégoriser', icon: 'sparkle' },
   { id: 'transactions', label: 'Transactions', icon: 'receipt' },
-  { id: 'manage', label: 'Gérer', icon: 'rules' },
+  { id: 'manage', label: 'Configuration', icon: 'rules' },
 ]
 
 export function BudgetView({
@@ -137,20 +143,21 @@ function BudgetOverviewPanel({
     queryFn: () => apiGet<Envelope[]>(`/budget/envelopes${queryString({ on: anchorDate })}`),
   })
   const topEnvelopes = [...(envelopes.data ?? [])]
+    .filter((envelope) => envelope.budget !== null)
     .sort((left, right) => envelopeReadRatio(right) - envelopeReadRatio(left))
     .slice(0, 5)
 
   return (
     <>
       <section className="period-toolbar">
-        <p>Vue synthétique de votre cycle budgétaire.</p>
+        <p>Vue synthétique de votre mois budgétaire.</p>
         <PeriodPicker value={anchorDate} onChange={setAnchorDate} />
       </section>
       {(overview.error || forecast.error || envelopes.error) && (
         <div className="error-banner">{errorMessage(overview.error ?? forecast.error ?? envelopes.error)}</div>
       )}
       <section className="metric-grid">
-        <BudgetMetric label="Solde net du cycle" value={signedMoney(overview.data?.net ?? 0)} detail={`${money(overview.data?.income)} entrées · ${money(overview.data?.expenses)} sorties`} tone={Number(overview.data?.net ?? 0) >= 0 ? 'positive' : 'negative'} icon="trend" />
+        <BudgetMetric label="Solde net du mois" value={signedMoney(overview.data?.net ?? 0)} detail={`${money(overview.data?.income)} entrées · ${money(overview.data?.expenses)} sorties`} tone={Number(overview.data?.net ?? 0) >= 0 ? 'positive' : 'negative'} icon="trend" />
         <BudgetMetric
           label="Enveloppes"
           value={money(overview.data?.envelope_spent ?? Number(overview.data?.budget_total ?? 0) - Number(overview.data?.budget_remaining ?? 0))}
@@ -163,18 +170,18 @@ function BudgetOverviewPanel({
           detail={`${overview.data?.upcoming_recurring_count ?? 0} échéance${overview.data?.upcoming_recurring_count === 1 ? '' : 's'}`}
           icon="calendar"
         />
-        <BudgetMetric label="Épargne du cycle" value={money(overview.data?.savings_contributions)} detail="Contributions enregistrées" icon="wealth" />
+        <BudgetMetric label="Épargne du mois" value={money(overview.data?.savings_contributions)} detail="Contributions enregistrées" icon="wealth" />
       </section>
 
       {(overview.data?.uncategorized_count ?? 0) > 0 && (
-        <button className="attention-card" type="button" onClick={() => navigate({ name: 'budget', tab: 'categorize' })}>
-          <span><Icon name="sparkle" />{overview.data?.uncategorized_count} transaction{overview.data?.uncategorized_count === 1 ? '' : 's'} à catégoriser</span>
-          <Icon name="arrow" />
-        </button>
+        <CategorizationSummary
+          detail={`${overview.data?.uncategorized_count ?? 0} mouvement${overview.data?.uncategorized_count === 1 ? '' : 's'} sans catégorie ce mois-ci`}
+          onCategorize={() => navigate({ name: 'budget', tab: 'categorize' })}
+        />
       )}
 
       <section className="dashboard-grid">
-        <Panel title="Enveloppes les plus sollicitées" subtitle="Consommation sur le cycle">
+        <Panel title="Enveloppes les plus sollicitées" subtitle="Consommation du mois">
           {topEnvelopes.length > 0 ? (
             <div className="envelope-summary-list">
               {topEnvelopes.map((category) => {
@@ -188,7 +195,7 @@ function BudgetOverviewPanel({
               })}
             </div>
           ) : (
-            <EmptyState icon="budget" text="Configurez une enveloppe pour suivre sa consommation." />
+            <EmptyState icon="budget" text="Ajoutez un plafond à une enveloppe pour comparer dépenses et budget." />
           )}
         </Panel>
         <Panel title="Prochaines échéances" subtitle="Mouvements récurrents attendus">
@@ -215,8 +222,8 @@ function CashflowPanel({ categories }: { categories: Category[] }) {
     queryFn: () => apiGet<SpendingNode[]>(`/budget/spending${queryString({ on: anchorDate, period })}`),
   })
   const sankeyData = useMemo(
-    () => buildSankey(sourceFlows.data ?? [], categoryFlows.data ?? []),
-    [categoryFlows.data, sourceFlows.data],
+    () => buildSankey(sourceFlows.data ?? [], categoryFlows.data ?? [], categories),
+    [categories, categoryFlows.data, sourceFlows.data],
   )
   const income = (sourceFlows.data ?? []).reduce((total, flow) => total + Number(flow.inflow), 0)
   const expenses = (categoryFlows.data ?? []).reduce((total, flow) => total + Number(flow.outflow), 0)
@@ -226,9 +233,9 @@ function CashflowPanel({ categories }: { categories: Category[] }) {
       <section className="period-toolbar">
         <p>Visualisez comment circule votre argent.</p>
         <div className="period-actions">
-          <PeriodPicker value={anchorDate} onChange={setAnchorDate} />
+          <PeriodPicker mode={period} value={anchorDate} onChange={setAnchorDate} />
           <div className="segmented-control compact-segments">
-            <button className={period === 'cycle' ? 'active' : ''} type="button" onClick={() => setPeriod('cycle')}>Cycle</button>
+            <button className={period === 'cycle' ? 'active' : ''} type="button" onClick={() => setPeriod('cycle')}>Mois</button>
             <button className={period === 'year' ? 'active' : ''} type="button" onClick={() => setPeriod('year')}>Année</button>
           </div>
         </div>
@@ -247,7 +254,7 @@ function CashflowPanel({ categories }: { categories: Category[] }) {
             <ResponsiveContainer width="100%" height="100%">
               <Sankey
                 data={sankeyData}
-                link={{ stroke: '#615fff', strokeOpacity: 0.32 }}
+                link={CashflowSankeyLink}
                 nodePadding={28}
                 nodeWidth={12}
                 node={CashflowSankeyNode}
@@ -255,7 +262,7 @@ function CashflowPanel({ categories }: { categories: Category[] }) {
                 iterations={32}
                 margin={{ top: 20, right: 120, bottom: 20, left: 90 }}
               >
-                <Tooltip contentStyle={chartTooltipStyle} formatter={(value) => money(Number(value))} />
+                <Tooltip content={<CashflowTooltip />} />
               </Sankey>
             </ResponsiveContainer>
           ) : (
@@ -272,7 +279,11 @@ function CashflowPanel({ categories }: { categories: Category[] }) {
 
 function RecurringPanel({ accounts, categories }: { accounts: Account[]; categories: Category[] }) {
   const queryClient = useQueryClient()
-  const [showForm, setShowForm] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [seriesToEdit, setSeriesToEdit] = useState<RecurringSeries | null>(null)
+  const [showDetectionModal, setShowDetectionModal] = useState(false)
+  const [detectionProposals, setDetectionProposals] = useState<RecurringDetectionProposal[]>([])
+  const [selectedProposalKeys, setSelectedProposalKeys] = useState<string[]>([])
   const series = useQuery({
     queryKey: ['recurring-series'],
     queryFn: () => apiGet<RecurringSeries[]>('/recurring'),
@@ -285,14 +296,28 @@ function RecurringPanel({ accounts, categories }: { accounts: Account[]; categor
     queryKey: ['recurring-changes'],
     queryFn: () => apiGet<RecurringChange[]>('/recurring/changes'),
   })
-  const detect = useMutation({
-    mutationFn: () => apiPost<{ created_series: number; created_changes: number }>('/recurring/detect'),
+  const refreshRecurring = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
+      queryClient.invalidateQueries({ queryKey: ['recurring-changes'] }),
+      queryClient.invalidateQueries({ queryKey: ['recurring-forecast'] }),
+      queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
+    ])
+  }
+  const previewDetection = useMutation({
+    mutationFn: () => apiGet<RecurringDetectionProposal[]>('/recurring/detect'),
+    onSuccess: (proposals) => {
+      setDetectionProposals(proposals)
+      setSelectedProposalKeys(proposals.map((proposal) => proposal.proposal_key))
+      setShowDetectionModal(true)
+    },
+  })
+  const confirmDetection = useMutation({
+    mutationFn: (proposalKeys: string[]) =>
+      apiPost<RecurringDetectionResult>('/recurring/detect', { proposal_keys: proposalKeys }),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
-        queryClient.invalidateQueries({ queryKey: ['recurring-changes'] }),
-        queryClient.invalidateQueries({ queryKey: ['recurring-forecast'] }),
-      ])
+      await refreshRecurring()
+      setShowDetectionModal(false)
     },
   })
   const errors = [series.error, forecast.error, changes.error].filter(Boolean)
@@ -302,36 +327,83 @@ function RecurringPanel({ accounts, categories }: { accounts: Account[]; categor
       <section className="section-intro">
         <p>Abonnements, revenus et prélèvements récurrents.</p>
         <div className="header-actions">
-          <button className="secondary-button" type="button" onClick={() => detect.mutate()} disabled={detect.isPending}>
-            <Icon name="refresh" />{detect.isPending ? 'Détection…' : 'Détecter'}
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              confirmDetection.reset()
+              previewDetection.mutate()
+            }}
+            disabled={previewDetection.isPending}
+          >
+            <Icon name="refresh" />{previewDetection.isPending ? 'Détection…' : 'Détecter'}
           </button>
-          <button className="primary-button" type="button" onClick={() => setShowForm((current) => !current)}>
-            <Icon name="plus" />Ajouter
+          <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
+            <Icon name="plus" />Ajouter une série
           </button>
         </div>
       </section>
-      {showForm && (
-        <RecurringForm
+      {showCreateModal && (
+        <RecurringSeriesModal
           accounts={accounts}
           categories={categories}
-          onCancel={() => setShowForm(false)}
+          onClose={() => setShowCreateModal(false)}
           onSaved={async () => {
-            await queryClient.invalidateQueries({ queryKey: ['recurring-series'] })
-            await queryClient.invalidateQueries({ queryKey: ['recurring-forecast'] })
-            setShowForm(false)
+            await refreshRecurring()
+            setShowCreateModal(false)
+          }}
+        />
+      )}
+      {seriesToEdit && (
+        <RecurringSeriesModal
+          accounts={accounts}
+          categories={categories}
+          item={seriesToEdit}
+          key={seriesToEdit.id}
+          onClose={() => setSeriesToEdit(null)}
+          onSaved={async () => {
+            await refreshRecurring()
+            setSeriesToEdit(null)
+          }}
+        />
+      )}
+      {showDetectionModal && (
+        <RecurringDetectionModal
+          error={confirmDetection.error}
+          isPending={confirmDetection.isPending}
+          proposals={detectionProposals}
+          selectedKeys={selectedProposalKeys}
+          onClose={() => {
+            confirmDetection.reset()
+            setShowDetectionModal(false)
+          }}
+          onConfirm={() => confirmDetection.mutate(selectedProposalKeys)}
+          onToggle={(proposalKey) => {
+            setSelectedProposalKeys((current) => (
+              current.includes(proposalKey)
+                ? current.filter((key) => key !== proposalKey)
+                : [...current, proposalKey]
+            ))
           }}
         />
       )}
       {errors.length > 0 && <div className="error-banner">{errorMessage(errors[0])}</div>}
-      {detect.error && <div className="error-banner">{errorMessage(detect.error)}</div>}
-      <RecurringChanges changes={changes.data ?? []} series={series.data ?? []} />
+      {previewDetection.error && <div className="error-banner">{errorMessage(previewDetection.error)}</div>}
+      <RecurringChanges changes={changes.data ?? []} series={series.data ?? []} onSaved={refreshRecurring} />
       <Panel title="Prochaines échéances" subtitle="Projection sur trois mois">
         <ForecastByMonth items={forecast.data ?? []} />
       </Panel>
       <Panel title="Séries récurrentes" subtitle={`${series.data?.length ?? 0} série${series.data?.length === 1 ? '' : 's'} configurée${series.data?.length === 1 ? '' : 's'}`}>
         {(series.data ?? []).length > 0 ? (
           <div className="recurring-list">
-            {series.data?.map((item) => <RecurringRow item={item} key={item.id} />)}
+            {series.data?.map((item) => (
+              <RecurringRow
+                item={item}
+                key={item.id}
+                onEdit={() => setSeriesToEdit(item)}
+                onSaved={refreshRecurring}
+              />
+            ))}
           </div>
         ) : (
           <EmptyState icon="recurring" text="Ajoutez une série ou lancez la détection sur l'historique." />
@@ -341,16 +413,20 @@ function RecurringPanel({ accounts, categories }: { accounts: Account[]; categor
   )
 }
 
-function RecurringChanges({ changes, series }: { changes: RecurringChange[]; series: RecurringSeries[] }) {
-  const queryClient = useQueryClient()
+function RecurringChanges({
+  changes,
+  series,
+  onSaved,
+}: {
+  changes: RecurringChange[]
+  series: RecurringSeries[]
+  onSaved: () => Promise<void>
+}) {
   const pending = changes.filter((change) => change.status === 'pending')
   const action = useMutation({
     mutationFn: ({ id, status }: { id: number; status: 'accepted' | 'rejected' }) =>
       apiPost<RecurringChange>(`/recurring/changes/${id}/action${queryString({ action: status === 'accepted' ? 'accept' : 'reject' })}`),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['recurring-changes'] })
-      await queryClient.invalidateQueries({ queryKey: ['recurring-series'] })
-    },
+    onSuccess: onSaved,
   })
   if (pending.length === 0) return null
   return (
@@ -380,20 +456,23 @@ function RecurringChanges({ changes, series }: { changes: RecurringChange[]; ser
   )
 }
 
-function RecurringRow({ item }: { item: RecurringSeries }) {
-  const queryClient = useQueryClient()
-  const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ['recurring-series'] })
-    await queryClient.invalidateQueries({ queryKey: ['recurring-forecast'] })
-  }
+function RecurringRow({
+  item,
+  onEdit,
+  onSaved,
+}: {
+  item: RecurringSeries
+  onEdit: () => void
+  onSaved: () => Promise<void>
+}) {
   const update = useMutation({
     mutationFn: (status: RecurringSeries['status']) =>
       apiPatch<RecurringSeries>(`/recurring/${item.id}`, { status }),
-    onSuccess: refresh,
+    onSuccess: onSaved,
   })
   const remove = useMutation({
     mutationFn: () => apiDelete(`/recurring/${item.id}`),
-    onSuccess: refresh,
+    onSuccess: onSaved,
   })
   return (
     <article>
@@ -409,6 +488,9 @@ function RecurringRow({ item }: { item: RecurringSeries }) {
       </span>
       <strong className={Number(item.amount ?? 0) >= 0 ? 'positive' : ''}>{signedMoney(item.amount ?? 0)}</strong>
       <div className="row-actions">
+        <button className="icon-action" type="button" aria-label="Modifier" onClick={onEdit}>
+          <Icon name="edit" />
+        </button>
         {item.status === 'paused' && (
           <button className="icon-action positive" type="button" aria-label="Réactiver" onClick={() => update.mutate('active')}><Icon name="check" /></button>
         )}
@@ -432,48 +514,73 @@ function RecurringRow({ item }: { item: RecurringSeries }) {
   )
 }
 
-function RecurringForm({
+function RecurringSeriesModal({
   accounts,
   categories,
-  onCancel,
+  item,
+  onClose,
   onSaved,
 }: {
   accounts: Account[]
   categories: Category[]
-  onCancel: () => void
+  item?: RecurringSeries
+  onClose: () => void
   onSaved: () => Promise<void>
 }) {
-  const [name, setName] = useState('')
-  const [accountId, setAccountId] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const [amount, setAmount] = useState('')
-  const [frequency, setFrequency] = useState<RecurringSeries['frequency']>('monthly')
-  const [nextDueDate, setNextDueDate] = useState(localDateInputValue)
-  const [variable, setVariable] = useState(false)
+  const selectableAccounts = accounts.filter((account) => !account.archived || account.id === item?.account_id)
+  const [name, setName] = useState(item?.label ?? '')
+  const [accountId, setAccountId] = useState(String(item?.account_id ?? selectableAccounts[0]?.id ?? ''))
+  const [categoryId, setCategoryId] = useState(String(item?.category_id ?? ''))
+  const [amount, setAmount] = useState(item?.amount ?? '')
+  const [frequency, setFrequency] = useState<RecurringSeries['frequency']>(item?.frequency ?? 'monthly')
+  const [nextDueDate, setNextDueDate] = useState(item?.next_due ?? localDateInputValue())
+  const [variable, setVariable] = useState(item?.amount_type === 'variable')
+  const [status, setStatus] = useState<RecurringSeries['status']>(item?.status ?? 'active')
+  const selectedAccountId = accountId || String(selectableAccounts[0]?.id ?? '')
   const mutation = useMutation({
-    mutationFn: () => apiPost<RecurringSeries>('/recurring', {
-      label: name,
-      account_id: Number(accountId || accounts[0]?.id),
-      category_id: categoryId ? Number(categoryId) : null,
-      amount,
-      frequency,
-      next_due: nextDueDate,
-      amount_type: variable ? 'variable' : 'fixed',
-      status: 'active',
-      confidence: 1,
-    }),
+    mutationFn: () => {
+      const payload = {
+        label: name,
+        account_id: Number(selectedAccountId),
+        category_id: categoryId ? Number(categoryId) : null,
+        amount,
+        frequency,
+        next_due: nextDueDate,
+        amount_type: variable ? 'variable' : 'fixed',
+        status,
+      }
+      return item
+        ? apiPatch<RecurringSeries>(`/recurring/${item.id}`, payload)
+        : apiPost<RecurringSeries>('/recurring', {
+          ...payload,
+          confidence: 1,
+        })
+    },
     onSuccess: onSaved,
   })
+  const formId = item ? `recurring-series-edit-${item.id}` : 'recurring-series-create'
   return (
-    <Panel title="Nouvelle série récurrente">
-      <form className="feature-form" onSubmit={(event: FormEvent) => {
+    <Modal
+      title={item ? 'Modifier la série récurrente' : 'Nouvelle série récurrente'}
+      description={item ? 'Mettez à jour les paramètres de cette série.' : 'Ajoutez une échéance répétée à votre prévision.'}
+      onClose={onClose}
+      actions={(
+        <>
+          <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending || !selectedAccountId}>
+            {mutation.isPending ? 'Enregistrement…' : item ? 'Enregistrer' : 'Créer la série'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <form className="modal-form" id={formId} onSubmit={(event: FormEvent) => {
         event.preventDefault()
         mutation.mutate()
       }}>
         <Field label="Nom"><input value={name} onChange={(event) => setName(event.target.value)} required /></Field>
         <Field label="Compte">
-          <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
-            {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+          <select value={selectedAccountId} onChange={(event) => setAccountId(event.target.value)} required>
+            {selectableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
           </select>
         </Field>
         <Field label="Catégorie">
@@ -482,7 +589,9 @@ function RecurringForm({
             {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
           </select>
         </Field>
-        <Field label="Montant"><input type="number" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
+        <Field label={variable ? 'Montant estimé' : 'Montant'}>
+          <input type="number" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
+        </Field>
         <Field label="Fréquence">
           <select value={frequency} onChange={(event) => setFrequency(event.target.value as RecurringSeries['frequency'])}>
             <option value="weekly">Hebdomadaire</option>
@@ -492,18 +601,107 @@ function RecurringForm({
           </select>
         </Field>
         <Field label="Prochaine échéance"><input type="date" value={nextDueDate} onChange={(event) => setNextDueDate(event.target.value)} required /></Field>
-        <label className="checkbox-field"><input type="checkbox" checked={variable} onChange={(event) => setVariable(event.target.checked)} />Montant variable</label>
-        <div className="form-buttons">
-          <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
-          <button className="primary-button" type="submit" disabled={mutation.isPending || accounts.length === 0}>Créer</button>
-        </div>
+        {item && (
+          <Field label="Statut">
+            <select value={status} onChange={(event) => setStatus(event.target.value as RecurringSeries['status'])}>
+              <option value="active">Active</option>
+              <option value="paused">En pause</option>
+              <option value="ended">Terminée</option>
+            </select>
+          </Field>
+        )}
+        <label className="toggle-row recurring-variable-toggle">
+          <span>
+            <strong>Montant variable</strong>
+            <small>Utiliser ce montant comme estimation lorsque les prélèvements fluctuent.</small>
+          </span>
+          <input type="checkbox" checked={variable} onChange={(event) => setVariable(event.target.checked)} />
+          <span className="toggle-visual" aria-hidden="true"><Icon name="check" /></span>
+        </label>
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
-      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </Panel>
+    </Modal>
+  )
+}
+
+function RecurringDetectionModal({
+  proposals,
+  selectedKeys,
+  isPending,
+  error,
+  onClose,
+  onConfirm,
+  onToggle,
+}: {
+  proposals: RecurringDetectionProposal[]
+  selectedKeys: string[]
+  isPending: boolean
+  error: Error | null
+  onClose: () => void
+  onConfirm: () => void
+  onToggle: (proposalKey: string) => void
+}) {
+  return (
+    <Modal
+      title="Séries détectées"
+      description="Sélectionnez les propositions à ajouter. Rien n'est enregistré avant votre validation."
+      onClose={onClose}
+      actions={(
+        <>
+          {proposals.length > 0 && (
+            <button className="primary-button" type="button" disabled={isPending || selectedKeys.length === 0} onClick={onConfirm}>
+              {isPending ? 'Validation…' : `Valider la sélection (${selectedKeys.length})`}
+            </button>
+          )}
+          <button className="text-button" type="button" onClick={onClose}>
+            {proposals.length > 0 ? 'Annuler' : 'Fermer'}
+          </button>
+        </>
+      )}
+    >
+      {proposals.length > 0 ? (
+        <div className="detection-proposal-list">
+          {proposals.map((proposal) => {
+            const selected = selectedKeys.includes(proposal.proposal_key)
+            return (
+              <label className={`detection-proposal${selected ? ' selected' : ''}`} key={proposal.proposal_key}>
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  disabled={isPending}
+                  aria-label={`Sélectionner ${proposal.label}`}
+                  onChange={() => onToggle(proposal.proposal_key)}
+                />
+                <span className="detection-check" aria-hidden="true"><Icon name="check" /></span>
+                <span className="transaction-avatar">{initials(proposal.label)}</span>
+                <span className="recurring-copy">
+                  <span>
+                    <strong>{proposal.label}</strong>
+                    <StatusBadge tone={proposal.kind === 'series' ? 'positive' : 'warning'}>
+                      {proposal.kind === 'series' ? 'Nouvelle série' : 'Changement détecté'}
+                    </StatusBadge>
+                    {proposal.amount_type === 'variable' && <StatusBadge>Variable</StatusBadge>}
+                  </span>
+                  <small>{proposal.account_name} · {proposal.category_name ?? 'Sans catégorie'}</small>
+                  <small>{frequencyLabel(proposal.frequency)} · prochaine le {formatDate(proposal.next_due)} · {Math.round(proposal.confidence * 100)}% de confiance</small>
+                </span>
+                <strong className={Number(proposal.amount) >= 0 ? 'positive' : ''}>{signedMoney(proposal.amount)}</strong>
+              </label>
+            )
+          })}
+        </div>
+      ) : (
+        <EmptyState icon="check" title="Aucune nouvelle série" text="L'historique ne contient pas de nouvelle récurrence à proposer." />
+      )}
+      {error && <p className="form-error">{errorMessage(error)}</p>}
+    </Modal>
   )
 }
 
 function EnvelopePanel({ categories, onRefresh }: { categories: Category[]; onRefresh: () => Promise<void> }) {
+  const queryClient = useQueryClient()
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null)
   const envelopes = useQuery({
     queryKey: ['budget-envelopes', 'current'],
     queryFn: () => apiGet<Envelope[]>('/budget/envelopes'),
@@ -511,82 +709,311 @@ function EnvelopePanel({ categories, onRefresh }: { categories: Category[]; onRe
   const expenses = categories.filter((category) => category.kind === 'expense' && !category.archived)
   const totalBudget = expenses.reduce((sum, category) => sum + Number(category.monthly_budget ?? 0), 0)
   const totalSpent = (envelopes.data ?? []).reduce((sum, envelope) => sum + Number(envelope.spent), 0)
+  const budgetedSpent = (envelopes.data ?? []).reduce(
+    (sum, envelope) => sum + (envelope.budget === null ? 0 : Number(envelope.spent)),
+    0,
+  )
+  const refreshEnvelopes = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['budget-envelopes'] }),
+      queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
+      queryClient.invalidateQueries({ queryKey: ['categorization-rules'] }),
+      onRefresh(),
+    ])
+  }
   return (
     <>
-      <section className="section-intro"><p>Un plafond mensuel par catégorie de dépense.</p></section>
+      <section className="section-intro">
+        <p>Suivez chaque catégorie de dépense avec un plafond mensuel ou sans limite.</p>
+        <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
+          <Icon name="plus" />Ajouter une enveloppe
+        </button>
+      </section>
+      {showCreateModal && (
+        <EnvelopeCreateModal
+          onClose={() => setShowCreateModal(false)}
+          onSaved={async () => {
+            await refreshEnvelopes()
+            setShowCreateModal(false)
+          }}
+        />
+      )}
+      {categoryToDelete && (
+        <EnvelopeDeleteModal
+          category={categoryToDelete}
+          destinations={expenses.filter((category) => category.id !== categoryToDelete.id)}
+          key={categoryToDelete.id}
+          onClose={() => setCategoryToDelete(null)}
+          onSaved={async () => {
+            await refreshEnvelopes()
+            setCategoryToDelete(null)
+          }}
+        />
+      )}
       {envelopes.error && <div className="error-banner">{errorMessage(envelopes.error)}</div>}
       <section className="metric-grid budget-summary">
         <BudgetMetric label="Budget mensuel" value={money(totalBudget)} icon="budget" />
         <BudgetMetric label="Dépensé" value={money(totalSpent)} icon="receipt" tone="negative" />
-        <BudgetMetric label="Disponible" value={money(totalBudget - totalSpent)} icon="trend" tone={totalBudget >= totalSpent ? 'positive' : 'negative'} />
+        <BudgetMetric label="Disponible" value={money(totalBudget - budgetedSpent)} icon="trend" tone={totalBudget >= budgetedSpent ? 'positive' : 'negative'} />
       </section>
-      <section className="budget-list">
-        {expenses.map((category) => (
-          <EnvelopeCard
-            category={category}
-            key={category.id}
-            onSaved={async () => {
-              await envelopes.refetch()
-              await onRefresh()
-            }}
-            spent={(envelopes.data ?? []).find((envelope) => envelope.category_id === category.id)?.spent}
-          />
-        ))}
-      </section>
+      {expenses.length > 0 ? (
+        <section className="budget-list">
+          {expenses.map((category) => (
+            <EnvelopeCard
+              category={category}
+              key={category.id}
+              onDelete={() => setCategoryToDelete(category)}
+              onSaved={refreshEnvelopes}
+              spent={(envelopes.data ?? []).find((envelope) => envelope.category_id === category.id)?.spent}
+            />
+          ))}
+        </section>
+      ) : (
+        <EmptyState
+          icon="budget"
+          title="Aucune enveloppe"
+          text="Ajoutez une enveloppe pour commencer à suivre vos dépenses."
+          action={<button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}><Icon name="plus" />Ajouter une enveloppe</button>}
+        />
+      )}
     </>
   )
 }
 
 function EnvelopeCard({
   category,
+  onDelete,
   onSaved,
   spent: spentValue,
 }: {
   category: Category
+  onDelete: () => void
   onSaved: () => Promise<void>
   spent?: string
 }) {
   const [editing, setEditing] = useState(false)
   const [budget, setBudget] = useState(category.monthly_budget ?? '')
+  const [unlimited, setUnlimited] = useState(category.monthly_budget === null)
   const spent = Number(spentValue ?? 0)
   const limit = Number(category.monthly_budget ?? 0)
   const ratio = limit > 0 ? (spent / limit) * 100 : 0
   const update = useMutation({
-    mutationFn: () => apiPatch<Category>(`/categories/${category.id}/budget`, { monthly_budget: budget || null }),
+    mutationFn: () => apiPatch<Category>(`/categories/${category.id}/budget`, {
+      monthly_budget: unlimited ? null : budget,
+    }),
     onSuccess: async () => {
       setEditing(false)
       await onSaved()
     },
   })
+  const openEditor = () => {
+    setBudget(category.monthly_budget ?? '')
+    setUnlimited(category.monthly_budget === null)
+    setEditing(true)
+  }
   return (
     <article className="budget-card">
       <div className="budget-card-top">
         <div>
           <h2><i style={{ background: category.color }} />{category.name}</h2>
-          <p>{category.monthly_budget === null ? 'Aucun plafond' : `${money(spent)} / ${money(limit)}`}</p>
+          <p>{category.monthly_budget === null ? `${money(spent)} dépensés ce mois-ci` : `${money(spent)} / ${money(limit)}`}</p>
         </div>
         {editing ? (
           <form className="budget-editor" onSubmit={(event) => {
             event.preventDefault()
             update.mutate()
           }}>
-            <input type="number" min="0" step="0.01" value={budget} onChange={(event) => setBudget(event.target.value)} autoFocus />
-            <button className="primary-button small-button" type="submit">Enregistrer</button>
-            <button className="text-button" type="button" onClick={() => setEditing(false)}>Annuler</button>
+            <EnvelopeLimitChoice unlimited={unlimited} onChange={setUnlimited} compact />
+            {!unlimited && (
+              <input
+                aria-label={`Plafond de ${category.name}`}
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={budget}
+                onChange={(event) => setBudget(event.target.value)}
+                required
+                autoFocus
+              />
+            )}
+            <div className="budget-editor-actions">
+              <button className="primary-button small-button" type="submit" disabled={update.isPending}>Enregistrer</button>
+              <button className="text-button" type="button" onClick={() => setEditing(false)}>Annuler</button>
+            </div>
           </form>
         ) : (
-          <button className="secondary-button small-button" type="button" onClick={() => setEditing(true)}>
-            <Icon name="edit" />{category.monthly_budget === null ? 'Configurer' : 'Modifier'}
-          </button>
+          <div className="budget-card-actions">
+            <button className="secondary-button small-button" type="button" onClick={openEditor}>
+              <Icon name="edit" />Modifier
+            </button>
+            <button className="icon-action destructive-button" type="button" aria-label={`Supprimer ${category.name}`} onClick={onDelete}>
+              <Icon name="trash" />
+            </button>
+          </div>
         )}
       </div>
-      <ProgressBar value={ratio} color={category.color} danger={ratio > 100} />
-      <div className="budget-card-bottom">
-        <span>{Math.round(ratio)}% consommé</span>
-        {category.monthly_budget !== null && <strong className={limit - spent < 0 ? 'negative' : ''}>{limit - spent >= 0 ? `${money(limit - spent)} disponibles` : `${money(spent - limit)} dépassés`}</strong>}
-      </div>
+      {category.monthly_budget === null ? (
+        <div className="budget-unlimited-state">
+          <StatusBadge tone="primary">Sans plafond</StatusBadge>
+          <span>Suivi informatif, sans impact sur le budget disponible.</span>
+        </div>
+      ) : (
+        <>
+          <ProgressBar value={ratio} color={category.color} danger={ratio > 100} />
+          <div className="budget-card-bottom">
+            <span>{Math.round(ratio)}% consommé</span>
+            <strong className={limit - spent < 0 ? 'negative' : ''}>{limit - spent >= 0 ? `${money(limit - spent)} disponibles` : `${money(spent - limit)} dépassés`}</strong>
+          </div>
+        </>
+      )}
       {update.error && <p className="form-error">{errorMessage(update.error)}</p>}
     </article>
+  )
+}
+
+function EnvelopeCreateModal({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [name, setName] = useState('')
+  const [color, setColor] = useState('#615fff')
+  const [budget, setBudget] = useState('')
+  const [unlimited, setUnlimited] = useState(false)
+  const mutation = useMutation({
+    mutationFn: () => apiPost<Category>('/categories', {
+      name,
+      kind: 'expense',
+      color,
+      monthly_budget: unlimited ? null : budget,
+      parent_id: null,
+    }),
+    onSuccess: onSaved,
+  })
+  const formId = 'envelope-create'
+  return (
+    <Modal
+      title="Nouvelle enveloppe"
+      description="Créez une catégorie de dépense avec un plafond mensuel facultatif."
+      onClose={onClose}
+      actions={(
+        <>
+          <button
+            className="primary-button"
+            type="submit"
+            form={formId}
+            disabled={mutation.isPending || (!unlimited && !budget)}
+          >
+            {mutation.isPending ? 'Création…' : 'Créer l’enveloppe'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <form className="modal-form" id={formId} onSubmit={(event: FormEvent) => {
+        event.preventDefault()
+        mutation.mutate()
+      }}>
+        <Field label="Nom">
+          <input value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
+        </Field>
+        <Field label="Couleur">
+          <input className="color-input envelope-color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} />
+        </Field>
+        <div className="field">
+          <span>Type d’enveloppe</span>
+          <EnvelopeLimitChoice unlimited={unlimited} onChange={setUnlimited} />
+        </div>
+        {!unlimited && (
+          <Field label="Plafond mensuel">
+            <input type="number" min="0.01" step="0.01" value={budget} onChange={(event) => setBudget(event.target.value)} required />
+          </Field>
+        )}
+        {unlimited && <p className="modal-hint">Les dépenses seront suivies sans réduire le budget disponible des enveloppes plafonnées.</p>}
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
+      </form>
+    </Modal>
+  )
+}
+
+function EnvelopeDeleteModal({
+  category,
+  destinations,
+  onClose,
+  onSaved,
+}: {
+  category: Category
+  destinations: Category[]
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [replacementCategoryId, setReplacementCategoryId] = useState(String(destinations[0]?.id ?? ''))
+  const mutation = useMutation({
+    mutationFn: () => apiDelete(`/categories/${category.id}${queryString({
+      replacement_category_id: Number(replacementCategoryId),
+    })}`),
+    onSuccess: onSaved,
+  })
+  return (
+    <Modal
+      title={`Supprimer « ${category.name} » ?`}
+      description="L’enveloppe et sa catégorie seront supprimées définitivement."
+      onClose={onClose}
+      actions={(
+        <>
+          <button
+            className="secondary-button destructive-button"
+            type="button"
+            disabled={!replacementCategoryId || mutation.isPending}
+            onClick={() => mutation.mutate()}
+          >
+            {mutation.isPending ? 'Suppression…' : 'Reporter puis supprimer'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <div className="modal-warning warning">
+        <Icon name="alert" />
+        <p>
+          Toutes les transactions de cette enveloppe seront réaffectées à la catégorie choisie.
+          Ses règles de catégorisation et séries récurrentes seront également conservées et transférées.
+        </p>
+      </div>
+      {destinations.length > 0 ? (
+        <div className="envelope-delete-target">
+          <Field label="Reporter les dépenses vers">
+            <select value={replacementCategoryId} onChange={(event) => setReplacementCategoryId(event.target.value)}>
+              {destinations.map((destination) => (
+                <option key={destination.id} value={destination.id}>{destination.name}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      ) : (
+        <p className="modal-hint">Ajoutez une autre enveloppe avant de supprimer celle-ci.</p>
+      )}
+      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
+    </Modal>
+  )
+}
+
+function EnvelopeLimitChoice({
+  unlimited,
+  onChange,
+  compact = false,
+}: {
+  unlimited: boolean
+  onChange: (unlimited: boolean) => void
+  compact?: boolean
+}) {
+  return (
+    <div className={`segmented-control envelope-limit-choice${compact ? ' compact-segments' : ''}`} role="group" aria-label="Type d’enveloppe">
+      <button className={unlimited ? '' : 'active'} type="button" aria-pressed={!unlimited} onClick={() => onChange(false)}>Avec plafond</button>
+      <button className={unlimited ? 'active' : ''} type="button" aria-pressed={unlimited} onClick={() => onChange(true)}>Sans plafond</button>
+    </div>
   )
 }
 
@@ -639,11 +1066,11 @@ function CategorizationPanel({
         <div className="header-actions">
           {settings?.private_categorization_enabled && (
             <button className="primary-button" type="button" onClick={() => suggestions.mutate()} disabled={suggestions.isPending}>
-              <Icon name="sparkle" />Suggestions locales
+              <Icon name="sparkle" />{suggestions.isPending ? 'Analyse…' : 'Suggestions locales'}
             </button>
           )}
           <button className="secondary-button" type="button" onClick={() => applyRules.mutate()} disabled={applyRules.isPending}>
-            <Icon name="rules" />Appliquer les règles
+            <Icon name="rules" />{applyRules.isPending ? 'Application…' : 'Appliquer les règles'}
           </button>
         </div>
       </section>
@@ -660,7 +1087,10 @@ function CategorizationPanel({
               merchants={merchants}
               suggestion={suggestionByTransaction[item.transaction_id]}
               onSaved={async () => {
-                await queryClient.invalidateQueries({ queryKey: ['categorization-inbox'] })
+                await Promise.all([
+                  queryClient.invalidateQueries({ queryKey: ['categorization-inbox'] }),
+                  queryClient.invalidateQueries({ queryKey: ['categorization-rules'] }),
+                ])
                 await onRefresh()
               }}
             />
@@ -697,9 +1127,9 @@ function CategorizationCard({
       const transaction = await apiPatch<Transaction>(`/transactions/${item.transaction_id}`, { category_id: Number(categoryId) })
       if (createRule) {
         await apiPost<CategorizationRule>('/rules', {
-          name: 'Règle de bénéficiaire',
+          name: item.description.slice(0, 120),
           match_type: 'beneficiary',
-          pattern: item.description,
+          patterns: [item.description],
           category_id: Number(categoryId),
           priority: 100,
           enabled: true,
@@ -723,12 +1153,29 @@ function CategorizationCard({
         <strong className={Number(item.amount) >= 0 ? 'positive' : ''}>{signedMoney(item.amount)}</strong>
       </div>
       <div className="categorization-actions">
-        <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
-          <option value="">Choisir une catégorie</option>
-          {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-        </select>
-        <label><input type="checkbox" checked={createRule} onChange={(event) => setCreateRule(event.target.checked)} />Créer une règle pour ce libellé</label>
-        <button className="primary-button" type="button" disabled={!categoryId || assign.isPending} onClick={() => assign.mutate()}>Affecter</button>
+        <Field label="Catégorie">
+          <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+            <option value="">Choisir une catégorie</option>
+            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+          </select>
+        </Field>
+        <label className={`categorization-rule-toggle${createRule ? ' active' : ''}`}>
+          <span className="categorization-toggle-icon"><Icon name="rules" /></span>
+          <span>
+            <strong>Créer une règle</strong>
+            <small>Pour ce libellé</small>
+          </span>
+          <input type="checkbox" checked={createRule} onChange={(event) => setCreateRule(event.target.checked)} />
+          <span className="toggle-visual" aria-hidden="true" />
+        </label>
+        <button
+          className="primary-button categorization-submit"
+          type="button"
+          disabled={!categoryId || assign.isPending}
+          onClick={() => assign.mutate()}
+        >
+          <Icon name="check" />{assign.isPending ? 'Affectation…' : 'Affecter'}
+        </button>
       </div>
       {assign.error && <p className="form-error">{errorMessage(assign.error)}</p>}
     </article>
@@ -737,20 +1184,34 @@ function CategorizationCard({
 
 function RulesPanel({ categories, rules }: { categories: Category[]; rules: CategorizationRule[] }) {
   const queryClient = useQueryClient()
-  const [showForm, setShowForm] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [ruleToEdit, setRuleToEdit] = useState<CategorizationRule | null>(null)
+  const refreshRules = () => queryClient.invalidateQueries({ queryKey: ['categorization-rules'] })
   return (
     <Panel
       title="Règles de catégorisation"
       subtitle="Les règles déterministes sont toujours appliquées avant les suggestions locales."
-      action={<button className="secondary-button small-button" type="button" onClick={() => setShowForm((current) => !current)}><Icon name="plus" />Nouvelle règle</button>}
+      action={<button className="secondary-button small-button" type="button" onClick={() => setShowCreateModal(true)}><Icon name="plus" />Nouvelle règle</button>}
     >
-      {showForm && (
-        <RuleForm
+      {showCreateModal && (
+        <RuleModal
           categories={categories}
-          onCancel={() => setShowForm(false)}
+          onClose={() => setShowCreateModal(false)}
           onSaved={async () => {
-            await queryClient.invalidateQueries({ queryKey: ['categorization-rules'] })
-            setShowForm(false)
+            await refreshRules()
+            setShowCreateModal(false)
+          }}
+        />
+      )}
+      {ruleToEdit && (
+        <RuleModal
+          categories={categories}
+          key={ruleToEdit.id}
+          rule={ruleToEdit}
+          onClose={() => setRuleToEdit(null)}
+          onSaved={async () => {
+            await refreshRules()
+            setRuleToEdit(null)
           }}
         />
       )}
@@ -760,6 +1221,8 @@ function RulesPanel({ categories, rules }: { categories: Category[]; rules: Cate
             <RuleRow
               categoryName={categories.find((category) => category.id === rule.category_id)?.name ?? 'Catégorie supprimée'}
               key={rule.id}
+              onEdit={() => setRuleToEdit(rule)}
+              onSaved={refreshRules}
               rule={rule}
             />
           ))}
@@ -771,57 +1234,188 @@ function RulesPanel({ categories, rules }: { categories: Category[]; rules: Cate
   )
 }
 
-function RuleForm({ categories, onCancel, onSaved }: { categories: Category[]; onCancel: () => void; onSaved: () => Promise<void> }) {
-  const [matchType, setMatchType] = useState<CategorizationRule['match_type']>('beneficiary')
-  const [pattern, setPattern] = useState('')
-  const [categoryId, setCategoryId] = useState('')
+function RuleModal({
+  categories,
+  rule,
+  onClose,
+  onSaved,
+}: {
+  categories: Category[]
+  rule?: CategorizationRule
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const availableCategories = categories.filter((category) => !category.archived || category.id === rule?.category_id)
+  const [name, setName] = useState(rule?.name ?? '')
+  const [matchType, setMatchType] = useState<CategorizationRule['match_type']>(rule?.match_type ?? 'beneficiary')
+  const [patterns, setPatterns] = useState(
+    rule?.patterns.length ? [...rule.patterns] : [rule?.pattern ?? ''],
+  )
+  const [categoryId, setCategoryId] = useState(String(rule?.category_id ?? ''))
+  const [priority, setPriority] = useState(String(rule?.priority ?? 100))
+  const [enabled, setEnabled] = useState(rule?.enabled ?? true)
+  const submittedPatterns = patterns.map((pattern) => pattern.trim()).filter(Boolean)
   const mutation = useMutation({
-    mutationFn: () => apiPost<CategorizationRule>('/rules', {
-      name: pattern,
+    mutationFn: () => {
+      const payload = {
+      name,
       match_type: matchType,
-      pattern,
+      patterns: submittedPatterns,
       category_id: Number(categoryId),
-      priority: 100,
-      enabled: true,
-    }),
+      priority: Number(priority),
+      enabled,
+      }
+      return rule
+      ? apiPatch<CategorizationRule>(`/rules/${rule.id}`, payload)
+      : apiPost<CategorizationRule>('/rules', payload)
+    },
     onSuccess: onSaved,
   })
+  const formId = rule ? `rule-edit-${rule.id}` : 'rule-create'
   return (
-    <form className="compact-feature-form rule-form" onSubmit={(event) => {
+    <Modal
+      title={rule ? 'Modifier la règle' : 'Nouvelle règle de catégorisation'}
+      description="La règle s’applique dès qu’au moins un des motifs correspond au libellé."
+      onClose={onClose}
+      actions={(
+      <>
+        <button
+          className="primary-button"
+          type="submit"
+          form={formId}
+          disabled={mutation.isPending || !name.trim() || !categoryId || submittedPatterns.length === 0}
+        >
+          {mutation.isPending ? 'Enregistrement…' : rule ? 'Enregistrer' : 'Créer la règle'}
+        </button>
+        <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+      </>
+      )}
+    >
+      <form className="modal-form rule-modal-form" id={formId} onSubmit={(event: FormEvent) => {
       event.preventDefault()
       mutation.mutate()
-    }}>
-      <select value={matchType} onChange={(event) => setMatchType(event.target.value as CategorizationRule['match_type'])}>
-        <option value="beneficiary">Bénéficiaire exact</option>
-        <option value="keyword">Mot-clé</option>
-      </select>
-      <input value={pattern} onChange={(event) => setPattern(event.target.value)} placeholder="Valeur à reconnaître" required />
-      <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} required>
-        <option value="">Catégorie cible</option>
-        {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-      </select>
-      <button className="primary-button small-button" type="submit">Créer</button>
-      <button className="text-button" type="button" onClick={onCancel}>Annuler</button>
+      }}>
+      <Field label="Nom de la règle">
+        <input value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
+      </Field>
+      <div className="rule-modal-grid">
+        <Field label="Type de correspondance">
+          <select value={matchType} onChange={(event) => setMatchType(event.target.value as CategorizationRule['match_type'])}>
+            <option value="beneficiary">Bénéficiaire / libellé</option>
+            <option value="keyword">Mot-clé</option>
+          </select>
+        </Field>
+        <Field label="Catégorie cible">
+          <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} required>
+            <option value="">Choisir une catégorie</option>
+            {availableCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Priorité">
+          <input type="number" min="0" max="10000" value={priority} onChange={(event) => setPriority(event.target.value)} required />
+        </Field>
+      </div>
+      <div className="rule-patterns-editor">
+        <div className="rule-patterns-header">
+          <span>
+            <strong>Motifs à reconnaître</strong>
+            <small>Un seul motif correspondant suffit pour appliquer la règle.</small>
+          </span>
+          <button
+            className="secondary-button small-button"
+            type="button"
+            disabled={patterns.length >= 20}
+            onClick={() => setPatterns((current) => [...current, ''])}
+          >
+            <Icon name="plus" />Ajouter un motif
+          </button>
+        </div>
+        <div className="rule-pattern-inputs">
+          {patterns.map((pattern, index) => (
+            <div className="rule-pattern-input" key={index}>
+              <Field label={`Motif ${index + 1}`}>
+                <input
+                  value={pattern}
+                  maxLength={200}
+                  placeholder={matchType === 'keyword' ? 'Ex. SUPERMARCHÉ' : 'Ex. Nom du bénéficiaire'}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setPatterns((current) => current.map((item, itemIndex) => (
+                      itemIndex === index ? value : item
+                    )))
+                  }}
+                  required
+                />
+              </Field>
+              <button
+                className="icon-action destructive-button"
+                type="button"
+                aria-label={`Supprimer le motif ${index + 1}`}
+                disabled={patterns.length === 1}
+                onClick={() => setPatterns((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+              >
+                <Icon name="trash" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <label className="toggle-row rule-enabled-toggle">
+        <span>
+          <strong>Règle active</strong>
+          <small>Les règles désactivées restent enregistrées sans être appliquées.</small>
+        </span>
+        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+        <span className="toggle-visual" aria-hidden="true" />
+      </label>
       {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </form>
+      </form>
+    </Modal>
   )
 }
 
-function RuleRow({ categoryName, rule }: { categoryName: string; rule: CategorizationRule }) {
-  const queryClient = useQueryClient()
+function RuleRow({
+  categoryName,
+  rule,
+  onEdit,
+  onSaved,
+}: {
+  categoryName: string
+  rule: CategorizationRule
+  onEdit: () => void
+  onSaved: () => Promise<unknown>
+}) {
   const remove = useMutation({
     mutationFn: () => apiDelete(`/rules/${rule.id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['categorization-rules'] }),
+    onSuccess: onSaved,
   })
   return (
-    <div>
-      <StatusBadge>{rule.match_type === 'beneficiary' ? 'Bénéficiaire' : 'Mot-clé'}</StatusBadge>
-      <strong>{rule.pattern}</strong>
+    <div className={rule.enabled ? '' : 'disabled'}>
+      <StatusBadge tone={rule.enabled ? 'primary' : 'neutral'}>
+      {rule.match_type === 'beneficiary' ? 'Bénéficiaire' : 'Mot-clé'}
+      </StatusBadge>
+      <span className="rule-copy">
+      <strong>{rule.name}</strong>
+      <span className="rule-pattern-list">
+        {rule.patterns.map((pattern) => <small key={pattern}>{pattern}</small>)}
+      </span>
+      </span>
       <Icon name="arrow" />
-      <span>{categoryName}</span>
+      <span className="rule-target"><small>Catégorie</small><strong>{categoryName}</strong></span>
       <span className="row-actions">
-        <button className="icon-action" type="button" aria-label="Supprimer" onClick={() => remove.mutate()}><Icon name="trash" /></button>
-        {remove.error && <span className="form-error">{errorMessage(remove.error)}</span>}
+      <button className="icon-action" type="button" aria-label={`Modifier ${rule.name}`} onClick={onEdit}><Icon name="edit" /></button>
+      <button
+        className="icon-action destructive-button"
+        type="button"
+        aria-label={`Supprimer ${rule.name}`}
+        disabled={remove.isPending}
+        onClick={() => {
+          if (window.confirm(`Supprimer la règle « ${rule.name} » ?`)) remove.mutate()
+        }}
+      >
+        <Icon name="trash" />
+      </button>
+      {remove.error && <span className="form-error">{errorMessage(remove.error)}</span>}
       </span>
     </div>
   )
@@ -838,7 +1432,8 @@ function TransactionLedger({
 }) {
   const queryClient = useQueryClient()
   const pageSize = 100
-  const [showForm, setShowForm] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [transactionToEdit, setTransactionToEdit] = useState<Transaction | null>(null)
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [page, setPage] = useState(0)
@@ -873,24 +1468,64 @@ function TransactionLedger({
     <>
       <section className="section-intro">
         <p>Registre complet de tous les mouvements persistants.</p>
-        <button className="primary-button" type="button" onClick={() => setShowForm((current) => !current)}><Icon name="plus" />Ajouter une transaction</button>
+        <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}><Icon name="plus" />Ajouter une transaction</button>
       </section>
-      {showForm && <TransactionForm accounts={accounts} categories={categories} onCancel={() => setShowForm(false)} onSaved={async () => { await refreshLedger(); setShowForm(false) }} />}
+      {showCreateModal && (
+        <LedgerTransactionModal
+          accounts={accounts}
+          categories={categories}
+          onClose={() => setShowCreateModal(false)}
+          onSaved={async () => {
+            await refreshLedger()
+            setShowCreateModal(false)
+          }}
+        />
+      )}
+      {transactionToEdit && (
+        <LedgerTransactionModal
+          accounts={accounts}
+          categories={categories}
+          key={transactionToEdit.id}
+          transaction={transactionToEdit}
+          onAttachmentChanged={refreshLedger}
+          onClose={() => setTransactionToEdit(null)}
+          onSaved={async () => {
+            await refreshLedger()
+            setTransactionToEdit(null)
+          }}
+        />
+      )}
       {(pageQuery.error || countQuery.error) && <div className="error-banner">{errorMessage(pageQuery.error ?? countQuery.error)}</div>}
       <Panel title="Transactions" subtitle={`${total} résultat${total === 1 ? '' : 's'}`}>
         <div className="transaction-toolbar">
-          <label className="search-field"><Icon name="search" /><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un libellé ou une note" /></label>
-          <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
-            <option value="all">Toutes les catégories</option>
-            <option value="none">Sans catégorie</option>
-            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-          </select>
+          <label className="transaction-search-control">
+            <span>Rechercher</span>
+            <span className="search-field">
+              <Icon name="search" />
+              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Libellé ou note" />
+            </span>
+          </label>
+          <Field label="Catégorie">
+            <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+              <option value="all">Toutes les catégories</option>
+              <option value="none">Sans catégorie</option>
+              {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            </select>
+          </Field>
         </div>
         <div className="data-table-wrap">
           <table className="transaction-table">
             <thead><tr><th>Date</th><th>Libellé</th><th>Compte</th><th>Catégorie</th><th className="amount-column">Montant</th><th /></tr></thead>
             <tbody>
-              {filtered.map((transaction) => <TransactionRow categories={categories} key={transaction.id} transaction={transaction} onSaved={refreshLedger} />)}
+              {filtered.map((transaction) => (
+                <TransactionRow
+                  accounts={accounts}
+                  key={transaction.id}
+                  transaction={transaction}
+                  onEdit={() => setTransactionToEdit(transaction)}
+                  onSaved={refreshLedger}
+                />
+              ))}
             </tbody>
           </table>
           {filtered.length === 0 && <EmptyState icon="receipt" text="Aucune transaction pour ces filtres." />}
@@ -911,99 +1546,297 @@ function TransactionLedger({
   )
 }
 
-function TransactionRow({ categories, transaction, onSaved }: { categories: Category[]; transaction: Transaction; onSaved: () => Promise<void> }) {
-  const [editing, setEditing] = useState(false)
-  const [description, setDescription] = useState(transaction.description)
-  const [categoryId, setCategoryId] = useState(String(transaction.category_id ?? ''))
-  const update = useMutation({
-    mutationFn: () => apiPatch<Transaction>(`/transactions/${transaction.id}`, { description, category_id: categoryId ? Number(categoryId) : null }),
-    onSuccess: async () => { setEditing(false); await onSaved() },
-  })
+function TransactionRow({
+  accounts,
+  transaction,
+  onEdit,
+  onSaved,
+}: {
+  accounts: Account[]
+  transaction: Transaction
+  onEdit: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [showAttachments, setShowAttachments] = useState(false)
+  const linkedTransfer = transaction.transfer_group !== null
+  const readOnly = accounts.find((account) => account.id === transaction.account_id)?.archived ?? true
   const remove = useMutation({
     mutationFn: () => apiDelete(`/transactions/${transaction.id}`),
     onSuccess: onSaved,
   })
-  if (editing) {
-    return (
+  return (
+    <>
       <tr>
         <td data-label="Date">{formatDate(transaction.booked_at)}</td>
-        <td data-label="Libellé"><input value={description} onChange={(event) => setDescription(event.target.value)} /></td>
+        <td data-label="Libellé"><strong>{transaction.description}</strong>{transaction.notes && <small>{transaction.notes}</small>}</td>
         <td data-label="Compte">{transaction.account_name}</td>
-        <td data-label="Catégorie"><select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">Sans catégorie</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></td>
-        <td data-label="Montant" className="amount-column">{signedMoney(transaction.amount)}</td>
-        <td data-label="Actions">
-          <button className="icon-action positive" type="button" onClick={() => update.mutate()}><Icon name="check" /></button>
-          <button className="icon-action" type="button" onClick={() => setEditing(false)}><Icon name="close" /></button>
-          {update.error && <span className="form-error">{errorMessage(update.error)}</span>}
+        <td data-label="Catégorie">
+          {linkedTransfer ? <StatusBadge>Transfert interne</StatusBadge> : transaction.category_name ?? 'Sans catégorie'}
+        </td>
+        <td data-label="Montant" className={`amount-column ${Number(transaction.amount) >= 0 ? 'positive' : 'negative'}`}>{signedMoney(transaction.amount)}</td>
+        <td data-label="Actions" className="row-actions">
+          {(!readOnly || transaction.attachment_count > 0) && (
+            <button
+              className="icon-action attachment-button"
+              type="button"
+              aria-label={`Pièces jointes de ${transaction.description}${transaction.attachment_count > 0 ? ` (${transaction.attachment_count})` : ''}`}
+              aria-expanded={showAttachments}
+              onClick={() => setShowAttachments((current) => !current)}
+            >
+              <Icon name="attachment" />
+              {transaction.attachment_count > 0 && (
+                <span className="attachment-count-badge">{transaction.attachment_count}</span>
+              )}
+            </button>
+          )}
+          <button
+            className="icon-action"
+            type="button"
+            aria-label={`Modifier ${transaction.description}`}
+            disabled={readOnly || linkedTransfer}
+            title={readOnly ? 'Le compte est archivé' : linkedTransfer ? "Un transfert lié n'est pas modifiable" : undefined}
+            onClick={onEdit}
+          >
+            <Icon name="edit" />
+          </button>
+          <button
+            className="icon-action destructive-button"
+            type="button"
+            aria-label={`Supprimer ${transaction.description}`}
+            disabled={readOnly || linkedTransfer || remove.isPending}
+            title={readOnly ? 'Le compte est archivé' : linkedTransfer ? "Un transfert lié n'est pas supprimable individuellement" : undefined}
+            onClick={() => {
+              if (window.confirm('Supprimer définitivement cette transaction ?')) remove.mutate()
+            }}
+          >
+            <Icon name="trash" />
+          </button>
+          {remove.error && <span className="form-error">{errorMessage(remove.error)}</span>}
         </td>
       </tr>
-    )
-  }
-  return (
-    <tr>
-      <td data-label="Date">{formatDate(transaction.booked_at)}</td>
-      <td data-label="Libellé"><strong>{transaction.description}</strong>{transaction.notes && <small>{transaction.notes}</small>}</td>
-      <td data-label="Compte">{transaction.account_name}</td>
-      <td data-label="Catégorie">{transaction.category_name ?? 'Sans catégorie'}</td>
-      <td data-label="Montant" className={`amount-column ${Number(transaction.amount) >= 0 ? 'positive' : 'negative'}`}>{signedMoney(transaction.amount)}</td>
-      <td data-label="Actions" className="row-actions">
-        <button className="icon-action" type="button" aria-label="Modifier" onClick={() => setEditing(true)}><Icon name="edit" /></button>
-        <button
-          className="icon-action"
-          type="button"
-          aria-label="Supprimer"
-          onClick={() => {
-            if (window.confirm('Supprimer définitivement cette transaction ?')) remove.mutate()
-          }}
-        >
-          <Icon name="trash" />
-        </button>
-        {remove.error && <span className="form-error">{errorMessage(remove.error)}</span>}
-      </td>
-    </tr>
+      {showAttachments && (
+        <tr className="attachment-table-row">
+          <td colSpan={6}>
+            <AttachmentManager
+              owner={{ kind: 'transaction', transactionId: transaction.id }}
+              readOnly={readOnly}
+              onChanged={onSaved}
+            />
+          </td>
+        </tr>
+      )}
+    </>
   )
 }
 
-function TransactionForm({ accounts, categories, onCancel, onSaved }: { accounts: Account[]; categories: Category[]; onCancel: () => void; onSaved: () => Promise<void> }) {
-  const [date, setDate] = useState(localDateInputValue)
-  const [description, setDescription] = useState('')
-  const [direction, setDirection] = useState<TransactionDirection>('withdrawal')
-  const [amount, setAmount] = useState('')
-  const [accountId, setAccountId] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const [notes, setNotes] = useState('')
+function LedgerTransactionModal({
+  accounts,
+  categories,
+  transaction,
+  onAttachmentChanged,
+  onClose,
+  onSaved,
+}: {
+  accounts: Account[]
+  categories: Category[]
+  transaction?: Transaction
+  onAttachmentChanged?: () => Promise<void>
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const selectableAccounts = accounts.filter((account) => !account.archived)
+  const selectableCategories = categories.filter((category) => (
+    !category.archived || category.id === transaction?.category_id
+  ))
+  const [date, setDate] = useState(transaction?.booked_at ?? localDateInputValue())
+  const [description, setDescription] = useState(transaction?.description ?? '')
+  const [direction, setDirection] = useState<TransactionDirection>(
+    transaction && Number(transaction.amount) >= 0 ? 'deposit' : 'withdrawal',
+  )
+  const [amount, setAmount] = useState(
+    transaction ? String(Math.abs(Number(transaction.amount))) : '',
+  )
+  const [accountId, setAccountId] = useState(String(transaction?.account_id ?? selectableAccounts[0]?.id ?? ''))
+  const [categoryId, setCategoryId] = useState(String(transaction?.category_id ?? ''))
+  const [notes, setNotes] = useState(transaction?.notes ?? '')
+  const [attachment, setAttachment] = useState<File | null>(null)
   const mutation = useMutation({
-    mutationFn: () => apiPost<Transaction>('/transactions', { booked_at: date, description, amount: directedAmount(amount, direction), account_id: Number(accountId || accounts[0]?.id), category_id: categoryId ? Number(categoryId) : null, notes: notes || null }),
+    mutationFn: () => {
+      const payload = {
+        booked_at: date,
+        description,
+        amount: directedAmount(amount, direction),
+        account_id: Number(accountId),
+        category_id: categoryId ? Number(categoryId) : null,
+        notes: notes || null,
+      }
+      if (transaction) return apiPatch<Transaction>(`/transactions/${transaction.id}`, payload)
+      const data = new FormData()
+      data.append('payload_json', JSON.stringify(payload))
+      if (attachment) data.append('file', attachment)
+      return apiUpload<Transaction>('/transactions/with-attachment', data)
+    },
     onSuccess: onSaved,
   })
+  const formId = transaction ? `transaction-edit-${transaction.id}` : 'transaction-create'
   return (
-    <Panel title="Nouvelle transaction" subtitle="Choisissez un dépôt ou un retrait, puis saisissez un montant positif.">
-      <AmountDirectionToggle value={direction} onChange={setDirection} />
-      <form className="feature-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate() }}>
-        <Field label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></Field>
-        <Field label="Libellé"><input value={description} onChange={(event) => setDescription(event.target.value)} required /></Field>
-        <Field label="Montant"><input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
-        <Field label="Compte"><select value={accountId} onChange={(event) => setAccountId(event.target.value)}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
-        <Field label="Catégorie"><select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">Sans catégorie</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
-        <Field label="Note"><input value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
-        <div className="form-buttons"><button className="secondary-button" type="button" onClick={onCancel}>Annuler</button><button className="primary-button" type="submit" disabled={accounts.length === 0}>Enregistrer</button></div>
+    <Modal
+      title={transaction ? 'Modifier la transaction' : 'Nouvelle transaction'}
+      description={transaction ? 'Modifiez le mouvement, son compte ou sa catégorie.' : 'Ajoutez un dépôt ou un retrait à l’un de vos comptes.'}
+      onClose={onClose}
+      actions={(
+        <>
+          <button
+            className="primary-button"
+            type="submit"
+            form={formId}
+            disabled={mutation.isPending || !accountId || !description.trim() || Number(amount) <= 0}
+          >
+            {mutation.isPending ? 'Enregistrement…' : transaction ? 'Enregistrer' : 'Créer la transaction'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <form className="modal-form transaction-modal-form" id={formId} onSubmit={(event: FormEvent) => {
+        event.preventDefault()
+        mutation.mutate()
+      }}>
+        <AmountDirectionToggle value={direction} onChange={setDirection} />
+        <div className="transaction-modal-grid">
+          <Field label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></Field>
+          <Field label="Compte">
+            <select value={accountId} onChange={(event) => setAccountId(event.target.value)} required>
+              {selectableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          </Field>
+          <div className="transaction-modal-wide">
+            <Field label="Libellé"><input value={description} onChange={(event) => setDescription(event.target.value)} required autoFocus /></Field>
+          </div>
+          <Field label="Montant"><input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
+          <Field label="Catégorie">
+            <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+              <option value="">Sans catégorie</option>
+              {selectableCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            </select>
+          </Field>
+          <div className="transaction-modal-wide">
+            <Field label="Note"><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} /></Field>
+          </div>
+        </div>
+        {!transaction && (
+          <div className="transaction-create-attachment">
+            <span className="transaction-create-attachment-icon"><Icon name="attachment" /></span>
+            <span>
+              <strong>Pièce jointe</strong>
+              <small>Facultative · stockage local · 25 Mio maximum</small>
+            </span>
+            <label className="secondary-button small-button">
+              <input
+                aria-label="Choisir une pièce jointe"
+                type="file"
+                onChange={(event) => setAttachment(event.target.files?.[0] ?? null)}
+              />
+              {attachment ? 'Changer' : 'Choisir un fichier'}
+            </label>
+            {attachment && (
+              <span className="transaction-create-attachment-file">
+                <strong>{attachment.name}</strong>
+                <button className="icon-action" type="button" aria-label="Retirer la pièce jointe" onClick={() => setAttachment(null)}>
+                  <Icon name="close" />
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
-      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </Panel>
+      {transaction && (
+        <div className="transaction-modal-attachments">
+          <AttachmentManager
+            owner={{ kind: 'transaction', transactionId: transaction.id }}
+            readOnly={false}
+            onChanged={onAttachmentChanged}
+          />
+        </div>
+      )}
+    </Modal>
   )
 }
 
 function ManageBudget({ categories, onRefresh }: { categories: Category[]; onRefresh: () => Promise<void> }) {
-  const [showForm, setShowForm] = useState(false)
-  const parents = categories.filter((category) => category.parent_id === null || category.parent_id === undefined)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [categoryToEdit, setCategoryToEdit] = useState<Category | null>(null)
+  const [categoryToRemove, setCategoryToRemove] = useState<Category | null>(null)
+  const [categoryToRestore, setCategoryToRestore] = useState<Category | null>(null)
+  const categoryIds = new Set(categories.map((category) => category.id))
+  const roots = categories.filter(
+    (category) => category.parent_id === null || !categoryIds.has(category.parent_id),
+  )
   return (
     <>
-      <section className="section-intro"><p>Catégories, sous-catégories et règles métier.</p><button className="primary-button" type="button" onClick={() => setShowForm((current) => !current)}><Icon name="plus" />Ajouter une catégorie</button></section>
-      {showForm && <CategoryForm parents={parents} onCancel={() => setShowForm(false)} onSaved={async () => { await onRefresh(); setShowForm(false) }} />}
-      <Panel title="Catégories" subtitle="Renommez, recolorez ou archivez vos catégories.">
+      <section className="section-intro">
+        <p>Catégories, sous-catégories et règles métier.</p>
+        <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
+          <Icon name="plus" />Ajouter une catégorie
+        </button>
+      </section>
+      {showCreateModal && (
+        <CategoryEditorModal
+          categories={categories}
+          onClose={() => setShowCreateModal(false)}
+          onSaved={async () => {
+            await onRefresh()
+            setShowCreateModal(false)
+          }}
+        />
+      )}
+      {categoryToEdit && (
+        <CategoryEditorModal
+          categories={categories}
+          category={categoryToEdit}
+          key={categoryToEdit.id}
+          onClose={() => setCategoryToEdit(null)}
+          onSaved={async () => {
+            await onRefresh()
+            setCategoryToEdit(null)
+          }}
+        />
+      )}
+      {categoryToRemove && (
+        <CategoryRemovalModal
+          category={categoryToRemove}
+          key={categoryToRemove.id}
+          onClose={() => setCategoryToRemove(null)}
+          onSaved={async () => {
+            await onRefresh()
+            setCategoryToRemove(null)
+          }}
+        />
+      )}
+      {categoryToRestore && (
+        <CategoryRestoreModal
+          category={categoryToRestore}
+          key={categoryToRestore.id}
+          onClose={() => setCategoryToRestore(null)}
+          onSaved={async () => {
+            await onRefresh()
+            setCategoryToRestore(null)
+          }}
+        />
+      )}
+      <Panel title="Catégories" subtitle="Déplacez, renommez, archivez ou restaurez vos catégories.">
         <div className="category-tree-list">
-          {parents.map((category) => (
-            <CategoryTreeRow category={category} children={categories.filter((child) => child.parent_id === category.id)} key={category.id} onSaved={onRefresh} />
+          {roots.map((category) => (
+            <CategoryTreeRow
+              categories={categories}
+              category={category}
+              depth={0}
+              key={category.id}
+              onEdit={setCategoryToEdit}
+              onRemove={setCategoryToRemove}
+              onRestore={setCategoryToRestore}
+            />
           ))}
         </div>
       </Panel>
@@ -1011,87 +1844,284 @@ function ManageBudget({ categories, onRefresh }: { categories: Category[]; onRef
   )
 }
 
-function CategoryTreeRow({ category, children, onSaved }: { category: Category; children: Category[]; onSaved: () => Promise<void> }) {
+function CategoryTreeRow({
+  categories,
+  category,
+  depth,
+  onEdit,
+  onRemove,
+  onRestore,
+}: {
+  categories: Category[]
+  category: Category
+  depth: number
+  onEdit: (category: Category) => void
+  onRemove: (category: Category) => void
+  onRestore: (category: Category) => void
+}) {
+  const children = categories.filter((child) => child.parent_id === category.id)
   return (
-    <div className={`category-tree-group ${category.archived ? 'archived' : ''}`}>
-      <EditableCategoryRow category={category} onSaved={onSaved} />
-      {children.map((child) => <EditableCategoryRow category={child} child key={child.id} onSaved={onSaved} />)}
+    <div className="category-tree-group">
+      <CategoryTreeItem
+        category={category}
+        depth={depth}
+        onEdit={() => onEdit(category)}
+        onRemove={() => onRemove(category)}
+        onRestore={() => onRestore(category)}
+      />
+      {children.length > 0 && (
+        <div className="category-tree-children">
+          {children.map((child) => (
+            <CategoryTreeRow
+              categories={categories}
+              category={child}
+              depth={depth + 1}
+              key={child.id}
+              onEdit={onEdit}
+              onRemove={onRemove}
+              onRestore={onRestore}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
-function EditableCategoryRow({
+function CategoryTreeItem({
   category,
-  child = false,
-  onSaved,
+  depth,
+  onEdit,
+  onRemove,
+  onRestore,
 }: {
   category: Category
-  child?: boolean
-  onSaved: () => Promise<void>
+  depth: number
+  onEdit: () => void
+  onRemove: () => void
+  onRestore: () => void
 }) {
-  const [editing, setEditing] = useState(false)
-  const [name, setName] = useState(category.name)
-  const [color, setColor] = useState(category.color)
-  const update = useMutation({
-    mutationFn: (payload: Partial<Category>) => apiPatch<Category>(`/categories/${category.id}`, payload),
-    onSuccess: async () => {
-      setEditing(false)
-      await onSaved()
-    },
-  })
-  if (editing) {
-    return (
-      <form className={`category-tree-row editing ${child ? 'child' : ''}`} onSubmit={(event) => {
-        event.preventDefault()
-        update.mutate({ name, color })
-      }}>
-        {child && <Icon name="arrow" />}
-        <input className="color-input" type="color" aria-label="Couleur" value={color} onChange={(event) => setColor(event.target.value)} />
-        <input value={name} onChange={(event) => setName(event.target.value)} required />
-        <button className="icon-action positive" type="submit" aria-label="Enregistrer"><Icon name="check" /></button>
-        <button className="icon-action" type="button" aria-label="Annuler" onClick={() => setEditing(false)}><Icon name="close" /></button>
-      </form>
-    )
-  }
   return (
-    <div className={`category-tree-row ${child ? 'child' : ''}`}>
-      {child && <Icon name="arrow" />}
+    <div className={`category-tree-row ${depth > 0 ? 'child' : ''} ${category.archived ? 'archived' : ''}`}>
+      {depth > 0 && <Icon name="arrow" />}
       <i style={{ background: category.color }} />
       <strong>{category.name}</strong>
-      {child
+      {category.archived
+        ? <StatusBadge tone="warning">Archivée</StatusBadge>
+        : depth > 0
         ? <small>Sous-catégorie</small>
         : <StatusBadge tone={category.kind === 'income' ? 'positive' : 'neutral'}>{category.kind === 'income' ? 'Revenu' : 'Dépense'}</StatusBadge>}
-      {!child && category.is_default && <small>Par défaut</small>}
+      {depth === 0 && category.is_default && <small>Par défaut</small>}
       <div className="row-actions">
-        <button className="icon-action" type="button" aria-label="Modifier" onClick={() => setEditing(true)}><Icon name="edit" /></button>
-        <button className="icon-action" type="button" aria-label={category.archived ? 'Restaurer' : 'Archiver'} onClick={() => update.mutate({ archived: !category.archived })}><Icon name={category.archived ? 'refresh' : 'trash'} /></button>
-        {update.error && <span className="form-error">{errorMessage(update.error)}</span>}
+        {category.archived ? (
+          <button className="icon-action positive" type="button" aria-label={`Restaurer ${category.name}`} onClick={onRestore}>
+            <Icon name="refresh" />
+          </button>
+        ) : (
+          <>
+            <button className="icon-action" type="button" aria-label={`Modifier ${category.name}`} onClick={onEdit}>
+              <Icon name="edit" />
+            </button>
+            <button className="icon-action destructive-button" type="button" aria-label={`Supprimer ${category.name}`} onClick={onRemove}>
+              <Icon name="trash" />
+            </button>
+          </>
+        )}
       </div>
     </div>
   )
 }
 
-function CategoryForm({ parents, onCancel, onSaved }: { parents: Category[]; onCancel: () => void; onSaved: () => Promise<void> }) {
-  const [name, setName] = useState('')
-  const [kind, setKind] = useState<'income' | 'expense'>('expense')
-  const [color, setColor] = useState('#615fff')
-  const [parentId, setParentId] = useState('')
+function CategoryEditorModal({
+  categories,
+  category,
+  onClose,
+  onSaved,
+}: {
+  categories: Category[]
+  category?: Category
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [name, setName] = useState(category?.name ?? '')
+  const [kind, setKind] = useState<Category['kind']>(category?.kind ?? 'expense')
+  const [color, setColor] = useState(category?.color ?? '#615fff')
+  const [parentId, setParentId] = useState(String(category?.parent_id ?? ''))
+  const descendants = category ? categoryDescendantIds(category.id, categories) : new Set<number>()
+  const parentOptions = categories.filter((candidate) => (
+    candidate.kind === kind
+    && candidate.id !== category?.id
+    && !descendants.has(candidate.id)
+    && (!candidate.archived || candidate.id === category?.parent_id)
+  ))
+  useEffect(() => {
+    if (parentId && !parentOptions.some((parent) => parent.id === Number(parentId))) {
+      setParentId('')
+    }
+  }, [parentId, parentOptions])
   const mutation = useMutation({
-    mutationFn: () => apiPost<Category>('/categories', { name, kind, color, monthly_budget: null, parent_id: parentId ? Number(parentId) : null }),
+    mutationFn: () => {
+      const payload = {
+        name,
+        color,
+        parent_id: parentId ? Number(parentId) : null,
+      }
+      return category
+        ? apiPatch<Category>(`/categories/${category.id}`, payload)
+        : apiPost<Category>('/categories', {
+          ...payload,
+          kind,
+          monthly_budget: null,
+        })
+    },
+    onSuccess: onSaved,
+  })
+  const formId = category ? `category-edit-${category.id}` : 'category-create'
+  return (
+    <Modal
+      title={category ? 'Modifier la catégorie' : 'Nouvelle catégorie'}
+      description={category ? 'Renommez, recolorez ou déplacez cette catégorie.' : 'Créez une catégorie principale ou placez-la sous un parent.'}
+      onClose={onClose}
+      actions={(
+        <>
+          <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending || !name.trim()}>
+            {mutation.isPending ? 'Enregistrement…' : category ? 'Enregistrer' : 'Créer la catégorie'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <form className="modal-form category-modal-form" id={formId} onSubmit={(event: FormEvent) => {
+        event.preventDefault()
+        mutation.mutate()
+      }}>
+        <Field label="Nom">
+          <input value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
+        </Field>
+        {!category && (
+          <Field label="Type">
+            <select value={kind} onChange={(event) => setKind(event.target.value as Category['kind'])}>
+              <option value="expense">Dépense</option>
+              <option value="income">Revenu</option>
+            </select>
+          </Field>
+        )}
+        <Field label="Catégorie parente">
+          <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
+            <option value="">Sans parent · catégorie principale</option>
+            {parentOptions.map((parent) => (
+              <option key={parent.id} value={parent.id}>{parent.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Couleur">
+          <input className="color-input category-modal-color" type="color" value={color} onChange={(event) => setColor(event.target.value)} />
+        </Field>
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
+      </form>
+    </Modal>
+  )
+}
+
+function CategoryRemovalModal({
+  category,
+  onClose,
+  onSaved,
+}: {
+  category: Category
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const usage = useQuery({
+    queryKey: ['transaction-count', 'category', category.id],
+    queryFn: () => apiGet<TransactionCount>(`/transactions/count${queryString({
+      category_id: category.id,
+    })}`),
+  })
+  const mutation = useMutation({
+    mutationFn: () => apiPost<CategoryRemovalResult>(`/categories/${category.id}/remove`),
+    onSuccess: onSaved,
+  })
+  const transactionCount = usage.data?.count ?? 0
+  return (
+    <Modal
+      title={`Supprimer « ${category.name} » ?`}
+      description="La suppression protège automatiquement votre historique."
+      onClose={onClose}
+      actions={(
+        <>
+          <button
+            className="secondary-button destructive-button"
+            type="button"
+            disabled={usage.isLoading || mutation.isPending}
+            onClick={() => mutation.mutate()}
+          >
+            {mutation.isPending ? 'Traitement…' : transactionCount > 0 ? 'Archiver la catégorie' : 'Supprimer la catégorie'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <div className={`modal-warning${transactionCount > 0 ? ' warning' : ''}`}>
+        <Icon name="alert" />
+        <p>
+          {usage.isLoading
+            ? 'Vérification de l’historique lié…'
+            : transactionCount > 0
+              ? `${transactionCount} transaction${transactionCount === 1 ? '' : 's'} utilise${transactionCount === 1 ? '' : 'nt'} cette catégorie. Elle sera archivée et pourra être restaurée.`
+              : 'Si aucun autre élément ne dépend de cette catégorie, elle sera supprimée définitivement. Sinon, elle sera archivée et restera restaurable.'}
+        </p>
+      </div>
+      {(usage.error || mutation.error) && <p className="form-error">{errorMessage(usage.error ?? mutation.error)}</p>}
+    </Modal>
+  )
+}
+
+function CategoryRestoreModal({
+  category,
+  onClose,
+  onSaved,
+}: {
+  category: Category
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const mutation = useMutation({
+    mutationFn: () => apiPost<Category>(`/categories/${category.id}/archive${queryString({
+      archived: false,
+    })}`),
     onSuccess: onSaved,
   })
   return (
-    <Panel title="Nouvelle catégorie">
-      <form className="inline-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate() }}>
-        <Field label="Nom"><input value={name} onChange={(event) => setName(event.target.value)} required /></Field>
-        <Field label="Type"><select value={kind} onChange={(event) => setKind(event.target.value as 'income' | 'expense')}><option value="expense">Dépense</option><option value="income">Revenu</option></select></Field>
-        <Field label="Parent"><select value={parentId} onChange={(event) => setParentId(event.target.value)}><option value="">Catégorie principale</option>{parents.filter((parent) => parent.kind === kind).map((parent) => <option key={parent.id} value={parent.id}>{parent.name}</option>)}</select></Field>
-        <Field label="Couleur"><input className="color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} /></Field>
-        <div className="form-buttons"><button className="secondary-button" type="button" onClick={onCancel}>Annuler</button><button className="primary-button" type="submit">Créer</button></div>
-      </form>
+    <Modal
+      title={`Restaurer « ${category.name} » ?`}
+      description="La catégorie redeviendra disponible pour les nouvelles transactions et les règles."
+      onClose={onClose}
+      actions={(
+        <>
+          <button className="primary-button" type="button" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+            {mutation.isPending ? 'Restauration…' : 'Restaurer'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
       {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </Panel>
+    </Modal>
   )
+}
+
+function categoryDescendantIds(categoryId: number, categories: Category[]): Set<number> {
+  const descendants = new Set<number>()
+  const visit = (parentId: number) => {
+    for (const child of categories.filter((category) => category.parent_id === parentId)) {
+      if (descendants.has(child.id)) continue
+      descendants.add(child.id)
+      visit(child.id)
+    }
+  }
+  visit(categoryId)
+  return descendants
 }
 
 function SpendingTree({ categories, nodes }: { categories: Category[]; nodes: SpendingNode[] }) {
@@ -1171,46 +2201,278 @@ function BudgetMetric({ label, value, detail, icon, tone }: { label: string; val
   )
 }
 
-function PeriodPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const shiftMonth = (delta: number) => {
-    const current = new Date(`${value}T12:00:00`)
-    current.setMonth(current.getMonth() + delta)
-    const adjusted = new Date(current.getTime() - current.getTimezoneOffset() * 60_000)
-    onChange(adjusted.toISOString().slice(0, 10))
+type PeriodPickerMode = 'cycle' | 'year'
+
+function PeriodPicker({
+  value,
+  onChange,
+  mode = 'cycle',
+}: {
+  value: string
+  onChange: (value: string) => void
+  mode?: PeriodPickerMode
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const selectedYear = Number(value.slice(0, 4))
+  const selectedMonth = Number(value.slice(5, 7)) - 1
+  const [open, setOpen] = useState(false)
+  const [pickerYear, setPickerYear] = useState(selectedYear)
+  const [yearRangeStart, setYearRangeStart] = useState(Math.floor(selectedYear / 10) * 10)
+
+  useEffect(() => {
+    setPickerYear(selectedYear)
+    setYearRangeStart(Math.floor(selectedYear / 10) * 10)
+  }, [selectedYear])
+  useEffect(() => setOpen(false), [mode])
+  useEffect(() => {
+    if (!open) return
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && !containerRef.current?.contains(event.target)) {
+        setOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick)
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  const shift = (delta: number) => onChange(shiftPeriodDate(value, delta, mode))
+  const chooseMonth = (month: number) => {
+    onChange(replaceDatePeriod(value, pickerYear, month))
+    setOpen(false)
   }
+  const chooseYear = (year: number) => {
+    onChange(replaceDatePeriod(value, year, selectedMonth))
+    setOpen(false)
+  }
+
   return (
-    <div className="period-picker">
-      <button type="button" aria-label="Période précédente" onClick={() => shiftMonth(-1)}><Icon name="back" /></button>
-      <strong>{formatMonth(value.slice(0, 7))}</strong>
-      <button type="button" aria-label="Période suivante" onClick={() => shiftMonth(1)}><Icon name="arrow" /></button>
+    <div className="period-picker-shell" ref={containerRef}>
+      <div className="period-picker">
+        <button
+          type="button"
+          aria-label={mode === 'year' ? 'Année précédente' : 'Mois précédent'}
+          onClick={() => shift(-1)}
+        >
+          <Icon name="back" />
+        </button>
+        <button
+          className="period-picker-current"
+          type="button"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          onClick={() => setOpen((current) => !current)}
+        >
+          <Icon name="calendar" />
+          <strong>{mode === 'year' ? selectedYear : formatMonth(value.slice(0, 7))}</strong>
+        </button>
+        <button
+          type="button"
+          aria-label={mode === 'year' ? 'Année suivante' : 'Mois suivant'}
+          onClick={() => shift(1)}
+        >
+          <Icon name="arrow" />
+        </button>
+      </div>
+      {open && (
+        <div
+          className="period-quick-picker"
+          role="dialog"
+          aria-label={mode === 'year' ? 'Sélection rapide de l’année' : 'Sélection rapide du mois'}
+        >
+          <div className="period-quick-header">
+            <button
+              type="button"
+              aria-label={mode === 'year' ? 'Années précédentes' : 'Année précédente'}
+              onClick={() => {
+                if (mode === 'year') setYearRangeStart((current) => current - 10)
+                else setPickerYear((current) => current - 1)
+              }}
+            >
+              <Icon name="back" />
+            </button>
+            <strong>
+              {mode === 'year' ? `${yearRangeStart} – ${yearRangeStart + 9}` : pickerYear}
+            </strong>
+            <button
+              type="button"
+              aria-label={mode === 'year' ? 'Années suivantes' : 'Année suivante'}
+              onClick={() => {
+                if (mode === 'year') setYearRangeStart((current) => current + 10)
+                else setPickerYear((current) => current + 1)
+              }}
+            >
+              <Icon name="arrow" />
+            </button>
+          </div>
+          <div className={`period-option-grid ${mode}`}>
+            {mode === 'cycle'
+              ? Array.from({ length: 12 }, (_, month) => (
+                <button
+                  className={pickerYear === selectedYear && month === selectedMonth ? 'active' : ''}
+                  type="button"
+                  key={month}
+                  aria-pressed={pickerYear === selectedYear && month === selectedMonth}
+                  onClick={() => chooseMonth(month)}
+                >
+                  {shortMonth(`${pickerYear}-${String(month + 1).padStart(2, '0')}`)}
+                </button>
+              ))
+              : Array.from({ length: 10 }, (_, offset) => yearRangeStart + offset).map((year) => (
+                <button
+                  className={year === selectedYear ? 'active' : ''}
+                  type="button"
+                  key={year}
+                  aria-pressed={year === selectedYear}
+                  onClick={() => chooseYear(year)}
+                >
+                  {year}
+                </button>
+              ))}
+          </div>
+          <button
+            className="period-quick-current"
+            type="button"
+            onClick={() => {
+              onChange(localDateInputValue())
+              setOpen(false)
+            }}
+          >
+            {mode === 'year' ? 'Cette année' : 'Ce mois-ci'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
-function buildSankey(sourceFlows: CashflowFlow[], categoryFlows: CashflowFlow[]) {
+function shiftPeriodDate(value: string, delta: number, mode: PeriodPickerMode): string {
+  const year = Number(value.slice(0, 4))
+  const month = Number(value.slice(5, 7)) - 1
+  if (mode === 'year') return replaceDatePeriod(value, year + delta, month)
+  const absoluteMonth = year * 12 + month + delta
+  return replaceDatePeriod(
+    value,
+    Math.floor(absoluteMonth / 12),
+    ((absoluteMonth % 12) + 12) % 12,
+  )
+}
+
+function replaceDatePeriod(value: string, year: number, month: number): string {
+  const requestedDay = Number(value.slice(8, 10))
+  const day = Math.min(requestedDay, new Date(year, month + 1, 0).getDate())
+  return [
+    String(year).padStart(4, '0'),
+    String(month + 1).padStart(2, '0'),
+    String(day).padStart(2, '0'),
+  ].join('-')
+}
+
+function buildSankey(
+  sourceFlows: CashflowFlow[],
+  categoryFlows: CashflowFlow[],
+  categories: Category[],
+) {
   const sources = sourceFlows
     .filter((flow) => Number(flow.inflow) > 0)
-    .map((flow) => ({ name: flow.label, amount: Number(flow.inflow) }))
+    .map((flow) => ({ name: flow.label, amount: Number(flow.inflow), color: '#16c79a' }))
   const destinations = categoryFlows
     .filter((flow) => Number(flow.outflow) > 0)
-    .map((flow) => ({ name: flow.label, amount: Number(flow.outflow) }))
+    .map((flow) => ({
+      name: flow.label,
+      amount: Number(flow.outflow),
+      color: cashflowCategoryColor(flow, categories),
+    }))
   if (sources.length === 0 || destinations.length === 0) return { nodes: [], links: [] }
-  const flowColors = ['#615fff', '#16c79a', '#f7b500', '#ec4899', '#1da9e8', '#f97316', '#8758f6']
   const nodes = [
-    ...sources.map((node) => ({ name: node.name, color: '#16c79a', role: 'source' })),
+    ...sources.map((node) => ({ name: node.name, color: node.color, role: 'source' })),
     { name: 'Disponible', color: '#10a37f', role: 'hub' },
-    ...destinations.map((node, index) => ({
+    ...destinations.map((node) => ({
       name: node.name,
-      color: flowColors[index % flowColors.length],
+      color: node.color,
       role: 'destination',
     })),
   ]
   const hubIndex = sources.length
   const links = [
-    ...sources.map((node, index) => ({ source: index, target: hubIndex, value: node.amount })),
-    ...destinations.map((node, index) => ({ source: hubIndex, target: hubIndex + 1 + index, value: node.amount })),
+    ...sources.map((node, index) => ({
+      source: index,
+      target: hubIndex,
+      value: node.amount,
+      color: node.color,
+    })),
+    ...destinations.map((node, index) => ({
+      source: hubIndex,
+      target: hubIndex + 1 + index,
+      value: node.amount,
+      color: node.color,
+    })),
   ]
   return { nodes, links }
+}
+
+function cashflowCategoryColor(flow: CashflowFlow, categories: Category[]): string {
+  const rawCategoryId = flow.key.startsWith('category:') ? flow.key.slice('category:'.length) : ''
+  const categoryId = Number(rawCategoryId)
+  return Number.isInteger(categoryId)
+    ? categories.find((category) => category.id === categoryId)?.color ?? '#85858c'
+    : '#85858c'
+}
+
+interface CashflowSankeyLinkProps {
+  sourceX: number
+  sourceY: number
+  sourceControlX: number
+  targetX: number
+  targetY: number
+  targetControlX: number
+  linkWidth: number
+  payload: { color?: string }
+}
+
+function CashflowSankeyLink({
+  sourceX,
+  sourceY,
+  sourceControlX,
+  targetX,
+  targetY,
+  targetControlX,
+  linkWidth,
+  payload,
+}: CashflowSankeyLinkProps) {
+  return (
+    <path
+      className="cashflow-sankey-link"
+      d={`M${sourceX},${sourceY} C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
+      fill="none"
+      stroke={payload.color ?? '#85858c'}
+      strokeOpacity={0.5}
+      strokeWidth={Math.max(linkWidth, 1)}
+    />
+  )
+}
+
+function CashflowTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean
+  payload?: Array<{ name?: string; value?: number | string }>
+}) {
+  const item = payload?.[0]
+  if (!active || !item) return null
+  return (
+    <div className="cashflow-tooltip">
+      <span>{item.name ?? 'Flux'}</span>
+      <strong>{money(Number(item.value ?? 0))}</strong>
+    </div>
+  )
 }
 
 interface CashflowSankeyNodeProps {

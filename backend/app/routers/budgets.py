@@ -156,7 +156,6 @@ async def envelopes(
             .where(
                 Category.kind == "expense",
                 Category.archived.is_(False),
-                Category.monthly_budget.is_not(None),
             )
             .group_by(Category.id)
             .order_by(Category.name)
@@ -164,7 +163,7 @@ async def envelopes(
     ).all()
     result = []
     for cat_id, name, color, budget, spent in rows:
-        budget_amount = money(budget)
+        budget_amount = money(budget) if budget is not None else None
         spent_amount = money(spent)
         result.append(
             EnvelopeRead(
@@ -173,7 +172,9 @@ async def envelopes(
                 color=color,
                 budget=budget_amount,
                 spent=spent_amount,
-                remaining=money(budget_amount - spent_amount),
+                remaining=money(budget_amount - spent_amount)
+                if budget_amount is not None
+                else None,
             )
         )
     return result

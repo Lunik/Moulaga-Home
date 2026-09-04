@@ -6,6 +6,7 @@ All data below is synthetic and contains no real banking information.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pytest
@@ -99,9 +100,13 @@ def test_budget_envelopes_and_hierarchical_spending(client):
 
     envelopes = client.get("/api/budget/envelopes").json()
     logement = next(e for e in envelopes if e["category_id"] == parent["id"])
+    electricite = next(e for e in envelopes if e["category_id"] == child["id"])
     assert logement["budget"] == "500.00"
     assert logement["spent"] == "300.00"
     assert logement["remaining"] == "200.00"
+    assert electricite["budget"] is None
+    assert electricite["spent"] == "120.00"
+    assert electricite["remaining"] is None
 
     spending = client.get("/api/budget/spending").json()
     logement_node = next(n for n in spending if n["category_id"] == parent["id"])
@@ -129,6 +134,143 @@ def test_category_cycle_is_rejected(client):
 
     self_parent = client.patch(f"/api/categories/{parent['id']}", json={"parent_id": parent["id"]})
     assert self_parent.status_code == 422
+
+    other_parent = client.post(
+        "/api/categories", json={"name": "Autre parent", "kind": "expense"}
+    ).json()
+    moved = client.patch(
+        f"/api/categories/{child['id']}",
+        json={"parent_id": other_parent["id"]},
+    )
+    assert moved.status_code == 200
+    assert moved.json()["parent_id"] == other_parent["id"]
+    moved_to_root = client.patch(
+        f"/api/categories/{child['id']}",
+        json={"parent_id": None},
+    )
+    assert moved_to_root.status_code == 200
+    assert moved_to_root.json()["parent_id"] is None
+
+
+def test_category_configuration_removal_archives_history_and_deletes_unused(client):
+    account_id = _account_id(client)
+    used = client.post(
+        "/api/categories",
+        json={"name": "Categorie utilisee", "kind": "expense"},
+    ).json()
+    client.post(
+        "/api/transactions",
+        json={
+            "booked_at": "2026-02-10",
+            "description": "Historique conserve",
+            "amount": "-12.00",
+            "account_id": account_id,
+            "category_id": used["id"],
+        },
+    )
+
+    archived = client.post(f"/api/categories/{used['id']}/remove")
+    assert archived.status_code == 200
+    assert archived.json() == {"action": "archived", "transaction_count": 1}
+    assert client.get(f"/api/categories/{used['id']}").json()["archived"] is True
+
+    restored = client.post(
+        f"/api/categories/{used['id']}/archive",
+        params={"archived": False},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["archived"] is False
+
+    unused = client.post(
+        "/api/categories",
+        json={"name": "Categorie temporaire", "kind": "expense"},
+    ).json()
+    deleted = client.post(f"/api/categories/{unused['id']}/remove")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"action": "deleted", "transaction_count": 0}
+    assert client.get(f"/api/categories/{unused['id']}").status_code == 404
+
+
+def test_category_deletion_reassigns_linked_budget_data(client):
+    account_id = _account_id(client)
+    destination = _category(client, "Loisirs")
+    source = client.post(
+        "/api/categories",
+        json={"name": "Streaming", "kind": "expense", "monthly_budget": None},
+    ).json()
+    child = client.post(
+        "/api/categories",
+        json={"name": "Video", "kind": "expense", "parent_id": source["id"]},
+    ).json()
+    transaction = client.post(
+        "/api/transactions",
+        json={
+            "booked_at": "2026-02-10",
+            "description": "Abonnement video",
+            "amount": "-12.00",
+            "account_id": account_id,
+            "category_id": source["id"],
+        },
+    ).json()
+    rule = client.post(
+        "/api/rules",
+        json={
+            "name": "Streaming video",
+            "match_type": "keyword",
+            "pattern": "VIDEO",
+            "category_id": source["id"],
+            "priority": 100,
+            "enabled": True,
+        },
+    ).json()
+    recurring = client.post(
+        "/api/recurring",
+        json={
+            "label": "Abonnement video",
+            "account_id": account_id,
+            "category_id": source["id"],
+            "frequency": "monthly",
+            "next_due": "2026-03-10",
+            "amount": "-12.00",
+        },
+    ).json()
+
+    response = client.delete(
+        f"/api/categories/{source['id']}",
+        params={"replacement_category_id": destination["id"]},
+    )
+
+    assert response.status_code == 204
+    assert client.get(f"/api/categories/{source['id']}").status_code == 404
+    assert client.get(f"/api/transactions/{transaction['id']}").json()["category_id"] == destination["id"]
+    assert next(item for item in client.get("/api/rules").json() if item["id"] == rule["id"])[
+        "category_id"
+    ] == destination["id"]
+    assert next(
+        item for item in client.get("/api/recurring").json() if item["id"] == recurring["id"]
+    )["category_id"] == destination["id"]
+    assert client.get(f"/api/categories/{child['id']}").json()["parent_id"] is None
+
+
+def test_category_deletion_requires_a_compatible_destination(client):
+    source = client.post(
+        "/api/categories",
+        json={"name": "Sorties", "kind": "expense", "monthly_budget": "100.00"},
+    ).json()
+    income = _category(client, "Salaire")
+
+    same = client.delete(
+        f"/api/categories/{source['id']}",
+        params={"replacement_category_id": source["id"]},
+    )
+    incompatible = client.delete(
+        f"/api/categories/{source['id']}",
+        params={"replacement_category_id": income["id"]},
+    )
+
+    assert same.status_code == 422
+    assert incompatible.status_code == 422
+    assert client.get(f"/api/categories/{source['id']}").status_code == 200
 
 
 # --------------------------------------------------------------------------- #
@@ -461,6 +603,16 @@ def test_transaction_attachments_use_hashed_local_paths(client, tmp_path):
         f"/api/transactions/{transaction['id']}"
     ).json()
     assert transaction_after_upload["attachment_count"] == 1
+    destination = client.post(
+        "/api/accounts",
+        json={"name": "Compte justificatif", "type": "checking", "initial_balance": "0.00"},
+    ).json()
+    moved = client.patch(
+        f"/api/transactions/{transaction['id']}",
+        json={"account_id": destination["id"]},
+    ).json()
+    assert moved["account_name"] == "Compte justificatif"
+    assert moved["attachment_count"] == 1
 
     listed = client.get(
         f"/api/transactions/{transaction['id']}/attachments"
@@ -488,6 +640,41 @@ def test_transaction_attachments_use_hashed_local_paths(client, tmp_path):
     second_file = tmp_path / second["storage_path"].lstrip("/")
     assert client.delete(f"/api/transactions/{transaction['id']}").status_code == 204
     assert not second_file.exists()
+
+
+def test_transaction_can_be_created_atomically_with_attachment(client, tmp_path):
+    account_id = _account_id(client)
+    payload = {
+        "booked_at": "2026-01-15",
+        "description": "Transaction creee avec justificatif",
+        "amount": "-18.50",
+        "account_id": account_id,
+        "category_id": None,
+        "notes": "Donnee synthetique",
+    }
+    response = client.post(
+        "/api/transactions/with-attachment",
+        data={"payload_json": json.dumps(payload)},
+        files={"file": ("recu creation.txt", b"justificatif synthetique", "text/plain")},
+    )
+
+    assert response.status_code == 201
+    transaction = response.json()
+    assert transaction["attachment_count"] == 1
+    attachments = client.get(
+        f"/api/transactions/{transaction['id']}/attachments"
+    ).json()
+    assert len(attachments) == 1
+    assert (tmp_path / attachments[0]["storage_path"].lstrip("/")).is_file()
+
+    before = client.get("/api/transactions/count").json()["count"]
+    empty_file = client.post(
+        "/api/transactions/with-attachment",
+        data={"payload_json": json.dumps({**payload, "description": "Echec atomique"})},
+        files={"file": ("vide.txt", b"", "text/plain")},
+    )
+    assert empty_file.status_code == 422
+    assert client.get("/api/transactions/count").json()["count"] == before
 
 
 def test_snapshot_attachments_use_hashed_local_paths(client, tmp_path):
@@ -754,6 +941,62 @@ def test_rules_apply_and_inbox(client):
     assert inbox_after == []
 
 
+def test_rule_supports_multiple_patterns_and_updates(client):
+    account_id = _account_id(client)
+    courses = _category(client, "Courses")
+    transport = _category(client, "Transport")
+    created = client.post(
+        "/api/rules",
+        json={
+            "name": "Commerces alimentaires",
+            "match_type": "keyword",
+            "patterns": ["  SUPERMARCHE  ", "EPICERIE", "supermarche"],
+            "category_id": courses["id"],
+            "priority": 250,
+        },
+    )
+    assert created.status_code == 201
+    rule = created.json()
+    assert rule["patterns"] == ["SUPERMARCHE", "EPICERIE"]
+    assert rule["pattern"] == "SUPERMARCHE"
+
+    supermarket = client.post(
+        "/api/transactions",
+        json={
+            "booked_at": "2026-01-10",
+            "description": "Achat SUPERMARCHE",
+            "amount": "-33.00",
+            "account_id": account_id,
+        },
+    ).json()
+    grocery = client.post(
+        "/api/transactions",
+        json={
+            "booked_at": "2026-01-11",
+            "description": "EPICERIE du quartier",
+            "amount": "-12.00",
+            "account_id": account_id,
+        },
+    ).json()
+    assert client.post("/api/rules/apply").json()["updated"] == 2
+    assert client.get(f"/api/transactions/{supermarket['id']}").json()["category_id"] == courses["id"]
+    assert client.get(f"/api/transactions/{grocery['id']}").json()["category_id"] == courses["id"]
+
+    updated = client.patch(
+        f"/api/rules/{rule['id']}",
+        json={
+            "name": "Mobilite",
+            "patterns": ["AUTOROUTE", "STATION"],
+            "category_id": transport["id"],
+            "enabled": False,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["patterns"] == ["AUTOROUTE", "STATION"]
+    assert updated.json()["category_id"] == transport["id"]
+    assert updated.json()["enabled"] is False
+
+
 def test_local_suggestion_is_gated_and_deterministic(client):
     account_id = _account_id(client)
     loisirs = _category(client, "Loisirs")
@@ -820,10 +1063,24 @@ def test_recurring_detection_forecast_and_change_action(client):
                   "account_id": account_id},
         )
 
-    detected = client.post("/api/recurring/detect").json()
+    proposals = client.get("/api/recurring/detect").json()
+    assert len(proposals) == 1
+    assert proposals[0]["kind"] == "series"
+    assert proposals[0]["label"] == "Loyer mensuel"
+    assert client.get("/api/recurring").json() == []
+
+    skipped = client.post("/api/recurring/detect", json={"proposal_keys": []}).json()
+    assert skipped == {"created_series": 0, "created_changes": 0}
+    assert len(client.get("/api/recurring/detect").json()) == 1
+
+    detected = client.post(
+        "/api/recurring/detect",
+        json={"proposal_keys": [proposals[0]["proposal_key"]]},
+    ).json()
     assert detected["created_series"] == 1
 
     # Idempotent: re-detecting the same data creates nothing new.
+    assert client.get("/api/recurring/detect").json() == []
     again = client.post("/api/recurring/detect").json()
     assert again["created_series"] == 0
 
@@ -840,7 +1097,15 @@ def test_recurring_detection_forecast_and_change_action(client):
         json={"booked_at": "2026-02-05", "description": "Loyer mensuel", "amount": "-850.00",
               "account_id": account_id},
     )
-    drift = client.post("/api/recurring/detect").json()
+    drift_proposals = client.get("/api/recurring/detect").json()
+    assert len(drift_proposals) == 1
+    assert drift_proposals[0]["kind"] == "change"
+    assert client.get("/api/recurring/changes", params={"status": "pending"}).json() == []
+
+    drift = client.post(
+        "/api/recurring/detect",
+        json={"proposal_keys": [drift_proposals[0]["proposal_key"]]},
+    ).json()
     assert drift["created_changes"] == 1
 
     change = client.get("/api/recurring/changes", params={"status": "pending"}).json()[0]
@@ -869,8 +1134,53 @@ def test_recurring_reject_does_not_write_series(client):
                   "account_id": account_id},
         )
     client.post("/api/recurring/detect")
-    assert client.get("/api/recurring").json()  # detection ran without error
+    assert len(client.get("/api/recurring").json()) == 1
     assert series["amount"] == "-30.00"
+
+
+def test_recurring_series_can_be_fully_updated(client):
+    account_id = _account_id(client)
+    second_account = client.post(
+        "/api/accounts",
+        json={"name": "Compte secondaire", "type": "checking", "initial_balance": "0.00"},
+    ).json()
+    category = _category(client, "Loisirs")
+    series = client.post(
+        "/api/recurring",
+        json={
+            "label": "Service mensuel",
+            "account_id": account_id,
+            "frequency": "monthly",
+            "next_due": "2026-03-01",
+            "amount": "-30.00",
+        },
+    ).json()
+
+    response = client.patch(
+        f"/api/recurring/{series['id']}",
+        json={
+            "label": "  Service trimestriel  ",
+            "account_id": second_account["id"],
+            "category_id": category["id"],
+            "frequency": "quarterly",
+            "next_due": "2026-04-15",
+            "amount": "-42.50",
+            "amount_type": "variable",
+            "status": "paused",
+        },
+    )
+
+    assert response.status_code == 200
+    updated = response.json()
+    assert updated["label"] == "Service trimestriel"
+    assert updated["account_id"] == second_account["id"]
+    assert updated["account_name"] == "Compte secondaire"
+    assert updated["category_name"] == "Loisirs"
+    assert updated["frequency"] == "quarterly"
+    assert updated["next_due"] == "2026-04-15"
+    assert updated["amount"] == "-42.50"
+    assert updated["amount_type"] == "variable"
+    assert updated["status"] == "paused"
 
 
 # --------------------------------------------------------------------------- #
