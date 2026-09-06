@@ -106,7 +106,7 @@ async def cycle_overview(
         )
     ).all()
     upcoming_recurring_amount = sum(
-        (abs(Decimal(row[0])) for row in recurring_rows), Decimal("0")
+        (Decimal(row[0]) for row in recurring_rows), Decimal("0")
     )
     upcoming_recurring_count = len(recurring_rows)
     # Savings contributions recorded in-cycle (kept separate from expense flows).

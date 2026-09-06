@@ -1646,7 +1646,7 @@ def test_cycle_overview_enriched_metrics(client):
     overview = client.get("/api/budget/overview", params={"on": "2026-04-15"}).json()
     assert overview["envelope_spent"] == "200.00"
     assert overview["envelope_remaining"] == "300.00"
-    assert overview["upcoming_recurring_amount"] == "30.00"
+    assert overview["upcoming_recurring_amount"] == "-30.00"
     assert overview["upcoming_recurring_count"] == 1
     assert overview["savings_contributions"] == "100.00"
 

@@ -533,7 +533,10 @@ function RecurringSeriesModal({
   const [name, setName] = useState(item?.label ?? '')
   const [accountId, setAccountId] = useState(String(item?.account_id ?? selectableAccounts[0]?.id ?? ''))
   const [categoryId, setCategoryId] = useState(String(item?.category_id ?? ''))
-  const [amount, setAmount] = useState(item?.amount ?? '')
+  const [direction, setDirection] = useState<TransactionDirection>(
+    Number(item?.amount ?? 0) >= 0 ? 'deposit' : 'withdrawal',
+  )
+  const [amount, setAmount] = useState(item?.amount ? String(Math.abs(Number(item.amount))) : '')
   const [frequency, setFrequency] = useState<RecurringSeries['frequency']>(item?.frequency ?? 'monthly')
   const [nextDueDate, setNextDueDate] = useState(item?.next_due ?? localDateInputValue())
   const [variable, setVariable] = useState(item?.amount_type === 'variable')
@@ -545,7 +548,7 @@ function RecurringSeriesModal({
         label: name,
         account_id: Number(selectedAccountId),
         category_id: categoryId ? Number(categoryId) : null,
-        amount,
+        amount: directedAmount(amount, direction),
         frequency,
         next_due: nextDueDate,
         amount_type: variable ? 'variable' : 'fixed',
@@ -579,6 +582,7 @@ function RecurringSeriesModal({
         event.preventDefault()
         mutation.mutate()
       }}>
+        <AmountDirectionToggle value={direction} onChange={setDirection} />
         <Field label="Nom"><input value={name} onChange={(event) => setName(event.target.value)} required /></Field>
         <Field label="Compte">
           <select value={selectedAccountId} onChange={(event) => setAccountId(event.target.value)} required>
@@ -592,7 +596,7 @@ function RecurringSeriesModal({
           </select>
         </Field>
         <Field label={variable ? 'Montant estimé' : 'Montant'}>
-          <input type="number" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
+          <input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
         </Field>
         <Field label="Fréquence">
           <select value={frequency} onChange={(event) => setFrequency(event.target.value as RecurringSeries['frequency'])}>
