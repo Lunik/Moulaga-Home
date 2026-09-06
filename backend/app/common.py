@@ -17,6 +17,10 @@ TWO_PLACES = Decimal("0.01")
 ROLE_RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}
 
 
+def local_today() -> date:
+    return date.today()
+
+
 def money(value: Decimal | int | float | str | None) -> Decimal:
     """Return a 2-decimal Decimal, treating ``None`` as zero."""
     if value is None:

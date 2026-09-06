@@ -98,6 +98,23 @@ Constats :
 La gestion des comptes est suffisamment saine pour poursuivre l'audit du palier, sous reserve des
 deux arbitrages explicites ci-dessus.
 
+#### Palier 3 - Tableau de bord (2026-09-06)
+
+Constats :
+
+- **OK** : solde total, revenus et depenses du mois, budget restant, comparaison mensuelle,
+  patrimoine net, repartition des comptes, dettes, comptes actifs et derniers mouvements ;
+- **ecarts corriges** : indicateurs metier et historique mensuel reconnectes a leurs contrats API,
+  transferts internes et operations futures exclus des statistiques et de l'activite courantes,
+  historique patrimonial reconcilie avec la synthese, etats de chargement, d'erreur et vides rendus
+  explicites, libelles de performance clarifies et parcours vers les modules detailles ajoutes ;
+- **arbitrages produit** :
+  - [ ] [#2 - strategie multi-devise](https://github.com/Lunik/Moulaga/issues/2) ;
+  - [ ] [#3 - semantique financiere des comptes archives](https://github.com/Lunik/Moulaga/issues/3).
+
+Le tableau de bord est suffisamment sain pour retirer son label `Beta`, sous reserve des deux
+arbitrages transverses deja identifies.
+
 #### Palier 4 - Pilotage budgetaire (2026-09-06)
 
 Constats :

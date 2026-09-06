@@ -609,6 +609,28 @@ textarea:focus-visible {
   gap: 0.45rem;
 }
 
+.dashboard-data-list > :is(div, button) > span:nth-child(2) {
+  min-width: 0;
+}
+
+.dashboard-data-list > :is(div, button) > span:nth-child(2) strong,
+.dashboard-data-list > :is(div, button) > span:nth-child(2) small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-data-list > :is(div, button) > strong:last-child {
+  white-space: nowrap;
+}
+
+.dashboard-scope-note {
+  display: block;
+  margin-top: 0.7rem;
+  color: var(--faint);
+  font-size: 0.72rem;
+}
+
 .institution-history-legend {
   flex-wrap: wrap;
   row-gap: 0.55rem;

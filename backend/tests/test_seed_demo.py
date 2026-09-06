@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -69,6 +70,36 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         assert logement["spent"] == "884.99"
         budget_overview = client.get("/api/budget/overview").json()
         assert budget_overview["budget_total"] == "1350.00"
+        dashboard_overview = client.get("/api/overview").json()
+        assert float(dashboard_overview["income_current_month"]) >= 2500
+        assert float(dashboard_overview["expenses_current_month"]) >= 0
+        assert float(dashboard_overview["budget_remaining"]) == pytest.approx(
+            float(dashboard_overview["budget_current_month"])
+            - float(dashboard_overview["expenses_current_month"])
+        )
+        monthly_stats = client.get("/api/stats/monthly").json()
+        assert len(monthly_stats) == 4
+        assert monthly_stats[-1] == {
+            "month": date.today().strftime("%Y-%m"),
+            "income": dashboard_overview["income_current_month"],
+            "expenses": dashboard_overview["expenses_current_month"],
+            "net": dashboard_overview["net_current_month"],
+        }
+        net_worth_overview = client.get("/api/networth/overview").json()
+        assert net_worth_overview["net_worth"] != "0.00"
+        net_worth_history = client.get("/api/networth/history").json()
+        assert len(net_worth_history) >= 4
+        assert net_worth_history[-1]["period"] == date.today().strftime("%Y-%m")
+        assert net_worth_history[-1]["net_worth"] == net_worth_overview["net_worth"]
+        recent_transactions = client.get(
+            "/api/transactions",
+            params={"end": date.today().isoformat(), "limit": 6},
+        ).json()
+        assert len(recent_transactions) == 6
+        assert all(
+            transaction["booked_at"] <= date.today().isoformat()
+            for transaction in recent_transactions
+        )
         categories = client.get("/api/categories").json()
         archived_category = next(
             category for category in categories if category["name"] == "Ancienne categorie demo"

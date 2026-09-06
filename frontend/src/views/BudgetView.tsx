@@ -37,6 +37,7 @@ import {
   Field,
   Icon,
   MerchantAvatar,
+  MetricCard,
   Modal,
   Panel,
   ProgressBar,
@@ -163,20 +164,20 @@ function BudgetOverviewPanel({
         <div className="error-banner">{errorMessage(overview.error ?? forecast.error ?? envelopes.error)}</div>
       )}
       <section className="metric-grid">
-        <BudgetMetric label="Solde net du mois" value={signedMoney(overview.data?.net ?? 0)} detail={`${money(overview.data?.income)} entrées · ${money(overview.data?.expenses)} sorties`} tone={Number(overview.data?.net ?? 0) >= 0 ? 'positive' : 'negative'} icon="trend" />
-        <BudgetMetric
+        <MetricCard label="Solde net du mois" value={signedMoney(overview.data?.net ?? 0)} detail={`${money(overview.data?.income)} entrées · ${money(overview.data?.expenses)} sorties`} tone={Number(overview.data?.net ?? 0) >= 0 ? 'positive' : 'negative'} icon="trend" />
+        <MetricCard
           label="Enveloppes"
           value={money(overview.data?.envelope_spent ?? Number(overview.data?.budget_total ?? 0) - Number(overview.data?.budget_remaining ?? 0))}
           detail={`sur ${money(overview.data?.budget_total)}`}
           icon="budget"
         />
-        <BudgetMetric
+        <MetricCard
           label="À venir"
           value={signedMoney(overview.data?.upcoming_recurring_amount ?? 0)}
           detail={`${overview.data?.upcoming_recurring_count ?? 0} échéance${overview.data?.upcoming_recurring_count === 1 ? '' : 's'}`}
           icon="calendar"
         />
-        <BudgetMetric label="Épargne du mois" value={money(overview.data?.savings_contributions)} detail="Contributions enregistrées" icon="wealth" />
+        <MetricCard label="Épargne du mois" value={money(overview.data?.savings_contributions)} detail="Contributions enregistrées" icon="wealth" />
       </section>
 
       {(overview.data?.uncategorized_count ?? 0) > 0 && (
@@ -2185,12 +2186,6 @@ function ForecastList({ items }: { items: RecurringForecastItem[] }) {
         </div>
       ))}
     </div>
-  )
-}
-
-function BudgetMetric({ label, value, detail, icon, tone }: { label: string; value: string; detail?: string; icon: Parameters<typeof Icon>[0]['name']; tone?: 'positive' | 'negative' }) {
-  return (
-    <article className="metric-card"><span className="metric-icon"><Icon name={icon} /></span><div><p>{label}</p><strong className={tone}>{value}</strong>{detail && <small>{detail}</small>}</div></article>
   )
 }
 

@@ -77,6 +77,101 @@ def test_budget_cycle_respects_configurable_start_day(client):
     assert overview["net"] == "160.00"
 
 
+def test_dashboard_stats_exclude_transfers_and_future_movements(client, monkeypatch):
+    import app.routers.accounts as accounts_router
+    import app.routers.budget as budget_router
+    import app.routers.categories as categories_router
+    import app.routers.wealth as wealth_router
+
+    today = date(2026, 9, 6)
+    for module in (accounts_router, budget_router, categories_router, wealth_router):
+        monkeypatch.setattr(module, "local_today", lambda: today)
+
+    account_id = _account_id(client)
+    category = _category(client, "Courses")
+    client.patch(f"/api/categories/{category['id']}/budget", json={"monthly_budget": "500.00"})
+
+    same_month_future = date(2026, 9, 20)
+    next_month = date(2026, 10, 1)
+    for booked_at, description, amount in [
+        (today, "Revenu du mois", "200.00"),
+        (today, "Depense du mois", "-40.00"),
+        (same_month_future, "Depense plus tard ce mois", "-60.00"),
+        (same_month_future, "Operation future sans categorie", "-15.00"),
+        (next_month, "Revenu futur", "900.00"),
+        (next_month, "Depense future", "-800.00"),
+    ]:
+        response = client.post(
+            "/api/transactions",
+            json={
+                "booked_at": booked_at.isoformat(),
+                "description": description,
+                "amount": amount,
+                "account_id": account_id,
+                "category_id": (
+                    None if description == "Operation future sans categorie" else category["id"]
+                ),
+            },
+        )
+        assert response.status_code == 201
+
+    transfer_source = client.post(
+        "/api/accounts",
+        json={"name": "Source transfert dashboard", "initial_balance": "100.00"},
+    ).json()
+    transfer_target = client.post(
+        "/api/accounts",
+        json={"name": "Destination transfert dashboard"},
+    ).json()
+    assert client.post(
+        f"/api/accounts/{transfer_source['id']}/archive",
+        params={"transfer_to_account_id": transfer_target["id"]},
+    ).status_code == 200
+
+    overview = client.get("/api/overview", params={"as_of": today.isoformat()}).json()
+    assert overview["income_current_month"] == "200.00"
+    assert overview["expenses_current_month"] == "40.00"
+    assert overview["net_current_month"] == "160.00"
+    assert overview["budget_current_month"] == "500.00"
+    assert overview["budget_remaining"] == "460.00"
+    assert overview["uncategorized_count"] == 0
+    assert overview["balance"] == "260.00"
+
+    monthly = {
+        point["month"]: point
+        for point in client.get(
+            "/api/stats/monthly", params={"as_of": today.isoformat()}
+        ).json()
+    }
+    assert next_month.strftime("%Y-%m") not in monthly
+    assert same_month_future.strftime("%Y-%m") in monthly
+    assert monthly[today.strftime("%Y-%m")] == {
+        "month": today.strftime("%Y-%m"),
+        "income": "200.00",
+        "expenses": "40.00",
+        "net": "160.00",
+    }
+
+    categories = client.get("/api/stats/categories").json()
+    assert next(item for item in categories if item["category_id"] == category["id"])[
+        "amount"
+    ] == "40.00"
+    assert _category(client, "Courses")["spent_this_month"] == "40.00"
+    dashboard_accounts = client.get(
+        "/api/accounts",
+        params={"include_archived": True, "as_of": today.isoformat()},
+    ).json()
+    assert sum(float(account["balance"]) for account in dashboard_accounts) == 260.0
+    assert client.get(
+        "/api/networth/overview", params={"as_of": today.isoformat()}
+    ).json()["cash"] == "260.00"
+    recent = client.get(
+        "/api/transactions",
+        params={"end": today.isoformat(), "limit": 6},
+    ).json()
+    assert all(item["booked_at"] <= today.isoformat() for item in recent)
+
+
 def test_budget_envelopes_and_hierarchical_spending(client):
     account_id = _account_id(client)
     parent = _category(client, "Logement")
@@ -1384,6 +1479,7 @@ def test_holdings_portfolio_and_networth_no_double_count(client):
     assert networth["cash"] == "500.00"
     assert networth["investments"] == "1000.00"
     assert networth["net_worth"] == "1500.00"
+    assert client.get("/api/networth/history").json()[-1]["net_worth"] == "1500.00"
 
 
 def test_real_estate_crud_and_networth_integration(client):

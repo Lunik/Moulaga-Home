@@ -225,6 +225,31 @@ export function Panel({
   )
 }
 
+export function MetricCard({
+  label,
+  value,
+  detail,
+  icon,
+  tone,
+}: {
+  label: string
+  value: string
+  detail?: string
+  icon: IconName
+  tone?: 'positive' | 'negative'
+}) {
+  return (
+    <article className="metric-card">
+      <span className="metric-icon"><Icon name={icon} /></span>
+      <div>
+        <p>{label}</p>
+        <strong className={tone}>{value}</strong>
+        {detail && <small>{detail}</small>}
+      </div>
+    </article>
+  )
+}
+
 export function Modal({
   title,
   description,
@@ -540,6 +565,12 @@ export function shortMonth(value: string | null | undefined): string {
   if (!value || !/^\d{4}-\d{2}$/.test(value)) return '—'
   const [year, month] = value.split('-').map(Number)
   return new Intl.DateTimeFormat(activeLocale, { month: 'short' }).format(new Date(year, month - 1, 1))
+}
+
+export function shortMonthYear(value: string | null | undefined): string {
+  if (!value || !/^\d{4}-\d{2}$/.test(value)) return '—'
+  const [year, month] = value.split('-').map(Number)
+  return new Intl.DateTimeFormat(activeLocale, { month: 'short', year: '2-digit' }).format(new Date(year, month - 1, 1))
 }
 
 export function localDateInputValue(): string {

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,7 +15,7 @@ from ..category_budgeting import (
     ensure_ancestor_budgets,
     validate_parent_budget,
 )
-from ..common import money
+from ..common import local_today, money
 from ..db import get_session
 from ..models import CategorizationRule, Category, RecurringSeries, Transaction
 from ..schemas import CategoryRead, CategoryRemovalResult, CategoryUpdate
@@ -25,11 +24,13 @@ router = APIRouter(tags=["categories"])
 
 
 async def _spent_this_month(session: AsyncSession, category_id: int) -> Decimal:
-    month_start = date.today().replace(day=1)
+    today = local_today()
+    month_start = today.replace(day=1)
     total = await session.scalar(
         select(func.sum(Transaction.amount)).where(
             Transaction.category_id == category_id,
             Transaction.booked_at >= month_start,
+            Transaction.booked_at <= today,
             Transaction.amount < 0,
             Transaction.transfer_group.is_(None),
         )

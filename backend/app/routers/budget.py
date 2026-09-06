@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, case, func, or_, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,7 +16,7 @@ from ..category_budgeting import (
     root_budget_total,
     validate_parent_budget,
 )
-from ..common import money
+from ..common import add_month, local_today, money
 from ..db import get_session
 from ..models import Account, Category, Transaction
 from ..schemas import (
@@ -40,13 +40,14 @@ router = APIRouter(tags=["budget"])
 @router.get("/accounts", response_model=list[AccountRead])
 async def list_accounts(
     include_archived: bool = False,
+    as_of: date | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[AccountRead]:
     statement = select(Account).order_by(Account.name)
     if not include_archived:
         statement = statement.where(Account.archived.is_(False))
     rows = (await session.execute(statement)).scalars().all()
-    balances = await _account_balances(session)
+    balances = await _account_balances(session, through=as_of)
     transaction_counts = await _account_transaction_counts(session)
     return [
         AccountRead.model_validate(account).model_copy(
@@ -195,13 +196,22 @@ async def create_transaction(
 
 
 @router.get("/overview", response_model=Overview)
-async def overview(session: AsyncSession = Depends(get_session)) -> Overview:
-    month_start = _month_start(date.today())
+async def overview(
+    as_of: date | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> Overview:
+    today = as_of or local_today()
+    month_start = _month_start(today)
     account_total = await session.scalar(select(func.coalesce(func.sum(Account.initial_balance), 0)))
-    transaction_total = await session.scalar(select(func.coalesce(func.sum(Transaction.amount), 0)))
+    transaction_total = await session.scalar(
+        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+            Transaction.booked_at <= today
+        )
+    )
     income = await session.scalar(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
             Transaction.booked_at >= month_start,
+            Transaction.booked_at <= today,
             Transaction.amount > 0,
             Transaction.transfer_group.is_(None),
         )
@@ -209,6 +219,7 @@ async def overview(session: AsyncSession = Depends(get_session)) -> Overview:
     expenses = await session.scalar(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
             Transaction.booked_at >= month_start,
+            Transaction.booked_at <= today,
             Transaction.amount < 0,
             Transaction.transfer_group.is_(None),
         )
@@ -216,6 +227,8 @@ async def overview(session: AsyncSession = Depends(get_session)) -> Overview:
     categories = (await session.execute(select(Category))).scalars().all()
     uncategorized = await session.scalar(
         select(func.count()).select_from(Transaction).where(
+            Transaction.booked_at >= month_start,
+            Transaction.booked_at <= today,
             Transaction.category_id.is_(None),
             Transaction.transfer_group.is_(None),
             Transaction.account_id.in_(
@@ -237,14 +250,24 @@ async def overview(session: AsyncSession = Depends(get_session)) -> Overview:
 
 
 @router.get("/stats/monthly", response_model=list[MonthlyPoint])
-async def monthly_stats(session: AsyncSession = Depends(get_session)) -> list[MonthlyPoint]:
+async def monthly_stats(
+    as_of: date | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[MonthlyPoint]:
+    today = as_of or local_today()
+    current_month_start = _month_start(today)
+    oldest_month_start = add_month(current_month_start, -11)
     month_expr = func.strftime("%Y-%m", Transaction.booked_at)
     income_expr = func.sum(case((Transaction.amount > 0, Transaction.amount), else_=0))
     expense_expr = func.sum(case((Transaction.amount < 0, Transaction.amount), else_=0))
     rows = (
         await session.execute(
             select(month_expr, income_expr, expense_expr)
-            .where(Transaction.transfer_group.is_(None))
+            .where(
+                Transaction.transfer_group.is_(None),
+                Transaction.booked_at >= oldest_month_start,
+                Transaction.booked_at <= today,
+            )
             .group_by(month_expr)
             .order_by(month_expr.desc())
             .limit(12)
@@ -264,12 +287,18 @@ async def monthly_stats(session: AsyncSession = Depends(get_session)) -> list[Mo
 
 @router.get("/stats/categories", response_model=list[CategoryBreakdown])
 async def category_stats(session: AsyncSession = Depends(get_session)) -> list[CategoryBreakdown]:
-    month_start = _month_start(date.today())
+    today = local_today()
+    month_start = _month_start(today)
     rows = (
         await session.execute(
             select(Category.id, Category.name, func.sum(Transaction.amount), Category.monthly_budget)
             .join(Transaction, Transaction.category_id == Category.id)
-            .where(Transaction.booked_at >= month_start, Transaction.amount < 0)
+            .where(
+                Transaction.booked_at >= month_start,
+                Transaction.booked_at <= today,
+                Transaction.amount < 0,
+                Transaction.transfer_group.is_(None),
+            )
             .group_by(Category.id)
             .order_by(func.sum(Transaction.amount))
         )
@@ -277,6 +306,7 @@ async def category_stats(session: AsyncSession = Depends(get_session)) -> list[C
     uncategorized = await session.scalar(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
             Transaction.booked_at >= month_start,
+            Transaction.booked_at <= today,
             Transaction.amount < 0,
             Transaction.category_id.is_(None),
             Transaction.transfer_group.is_(None),
@@ -357,11 +387,19 @@ async def _require_category(session: AsyncSession, category_id: int) -> None:
         raise HTTPException(status_code=404, detail="Categorie introuvable")
 
 
-async def _account_balances(session: AsyncSession) -> dict[int, Decimal]:
+async def _account_balances(
+    session: AsyncSession, through: date | None = None
+) -> dict[int, Decimal]:
+    transaction_join = Transaction.account_id == Account.id
+    if through is not None:
+        transaction_join = and_(
+            transaction_join,
+            Transaction.booked_at <= through,
+        )
     rows = (
         await session.execute(
             select(Account.id, Account.initial_balance + func.coalesce(func.sum(Transaction.amount), 0))
-            .outerjoin(Transaction, Transaction.account_id == Account.id)
+            .outerjoin(Transaction, transaction_join)
             .group_by(Account.id)
         )
     ).all()
@@ -380,11 +418,14 @@ async def _account_transaction_counts(session: AsyncSession) -> dict[int, int]:
 
 
 async def _current_month_category_spend(session: AsyncSession) -> dict[int, Decimal]:
+    today = local_today()
+    month_start = _month_start(today)
     rows = (
         await session.execute(
             select(Transaction.category_id, func.sum(Transaction.amount))
             .where(
-                Transaction.booked_at >= _month_start(date.today()),
+                Transaction.booked_at >= month_start,
+                Transaction.booked_at <= today,
                 Transaction.amount < 0,
                 Transaction.transfer_group.is_(None),
             )
