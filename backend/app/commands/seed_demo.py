@@ -1,7 +1,9 @@
 """Developer-only command that seeds a temporary database with demo data.
 
 This is a *visual QA* helper. It fills a configured, throwaway database with
-rich but entirely synthetic, non-PII data across every domain of the app.
+rich but entirely synthetic, non-PII data across every domain of the app. The
+same read models feed the PWA cache so every graph and summary can be checked
+offline without retaining the transaction ledger.
 
 Safety rules:
 

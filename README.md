@@ -21,7 +21,8 @@ une base SQLite locale et persistante.
   contributions et performance du portefeuille ;
 - foyers locaux, roles, comptes partages et objectifs communs ;
 - themes clair/sombre/systeme, formats de date et styles de navigation ;
-- identites marchandes locales par monogramme et couleur, sans appel externe.
+- identites marchandes locales par monogramme et couleur, sans appel externe ;
+- PWA installable avec interface, graphiques et tuiles de synthese disponibles hors ligne.
 
 La correspondance avec les 26 maquettes et l'ordre d'audit iteratif des fonctionnalites sont
 decrits dans [ROADMAP.md](ROADMAP.md).
@@ -81,6 +82,18 @@ npm run dev
 ```
 
 Vite proxifie `/api` vers <http://localhost:8000>.
+
+## Installation PWA et mode hors ligne
+
+Moulaga peut etre installee depuis un navigateur compatible lorsqu'elle est servie en HTTPS, ou
+depuis `localhost` pendant le developpement. Le premier chargement en ligne precache l'interface et
+les vues compilees, puis precharge les donnees des graphiques et tuiles courantes.
+
+Les lectures visuelles utilisent le reseau en priorite et la derniere reponse locale en cas
+d'indisponibilite de l'instance. Les filtres et periodes deja consultes sont egalement conserves.
+Les registres de transactions, la boite de categorisation et les pieces jointes ne sont
+volontairement pas stockes pour le mode hors ligne. Les modifications restent reservees au mode
+connecte.
 
 ## Base persistante et migrations
 

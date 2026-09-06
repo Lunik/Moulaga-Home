@@ -8,6 +8,7 @@ import {
 
 import { apiDelete, apiGet, apiPatch, apiPost, apiUpload, queryString } from '../api/client'
 import { AttachmentManager } from '../AttachmentManager'
+import { useOnlineStatus } from '../pwa'
 import type {
   Account,
   AppSettings,
@@ -81,13 +82,14 @@ export function BudgetView({
   navigate: (route: Route) => void
   onRefresh: () => Promise<void>
 }) {
+  const isOnline = useOnlineStatus()
   const archivedAccountIds = new Set(accounts.filter((account) => account.archived).map((account) => account.id))
-  const uncategorizedCount = transactions.filter(
+  const uncategorizedCount = isOnline ? transactions.filter(
     (transaction) =>
       transaction.category_id === null &&
       transaction.transfer_group === null &&
       !archivedAccountIds.has(transaction.account_id),
-  ).length
+  ).length : 0
 
   return (
     <div className="view-stack">
@@ -116,17 +118,33 @@ export function BudgetView({
       {tab === 'recurring' && <RecurringPanel accounts={accounts} categories={categories} />}
       {tab === 'envelopes' && <EnvelopesPanel categories={categories} onRefresh={onRefresh} />}
       {tab === 'categorize' && (
-        <CategorizationPanel
-          categories={categories}
-          merchants={merchants}
-          settings={settings}
-          onRefresh={onRefresh}
-        />
+        isOnline ? (
+          <CategorizationPanel
+            categories={categories}
+            merchants={merchants}
+            settings={settings}
+            onRefresh={onRefresh}
+          />
+        ) : <OfflineTransactionPanel />
       )}
       {tab === 'transactions' && (
-        <TransactionLedger accounts={accounts} categories={categories} onRefresh={onRefresh} />
+        isOnline
+          ? <TransactionLedger accounts={accounts} categories={categories} onRefresh={onRefresh} />
+          : <OfflineTransactionPanel />
       )}
     </div>
+  )
+}
+
+function OfflineTransactionPanel() {
+  return (
+    <Panel title="Transactions" subtitle="Registre disponible avec une connexion à l'instance">
+      <EmptyState
+        icon="receipt"
+        title="Liste non conservée hors ligne"
+        text="Les tuiles budgétaires, enveloppes et graphiques de cashflow restent disponibles."
+      />
+    </Panel>
   )
 }
 

@@ -41,11 +41,13 @@ const colors = ['#16c79a', '#615fff', '#1da9e8', '#f97316', '#8758f6', '#ec4899'
 
 export function DashboardView({
   accounts,
+  isOnline,
   merchants,
   transactions,
   navigate,
 }: {
   accounts: Account[]
+  isOnline: boolean
   merchants: MerchantIdentity[]
   transactions: Transaction[]
   navigate: (route: Route) => void
@@ -190,7 +192,13 @@ export function DashboardView({
           )}
         </Panel>
         <Panel title="Activité récente" subtitle="Derniers mouvements">
-          {transactions.length > 0 ? (
+          {!isOnline ? (
+            <EmptyState
+              icon="receipt"
+              title="Registre non conservé hors ligne"
+              text="Les graphiques et les synthèses restent disponibles, contrairement aux listes de transactions."
+            />
+          ) : transactions.length > 0 ? (
             <div className="data-list">
               {transactions.slice(0, 6).map((transaction) => (
                 <div key={transaction.id}>

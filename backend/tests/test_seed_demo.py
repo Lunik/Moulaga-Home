@@ -83,6 +83,21 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         assert client.get("/api/portfolio/performance").json()
         assert client.get("/api/merchants").json()
         assert client.get("/api/contributions").json()
+        visual_read_models = [
+            "/api/accounts/institution-history",
+            "/api/budget/cashflow?period=cycle&by=source",
+            "/api/budget/cashflow?period=year&by=category",
+            "/api/budget/spending?period=cycle",
+            "/api/recurring/forecast?months=3",
+            "/api/portfolio/summary",
+            "/api/portfolio/allocation",
+            "/api/networth/overview",
+            "/api/networth/history",
+        ]
+        for path in visual_read_models:
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.json()
         households = client.get("/api/households").json()
         assert households
         goals = client.get(f"/api/households/{households[0]['id']}/goals").json()
