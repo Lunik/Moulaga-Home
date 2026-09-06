@@ -81,7 +81,13 @@ export function BudgetView({
   navigate: (route: Route) => void
   onRefresh: () => Promise<void>
 }) {
-  const uncategorizedCount = transactions.filter((transaction) => transaction.category_id === null).length
+  const archivedAccountIds = new Set(accounts.filter((account) => account.archived).map((account) => account.id))
+  const uncategorizedCount = transactions.filter(
+    (transaction) =>
+      transaction.category_id === null &&
+      transaction.transfer_group === null &&
+      !archivedAccountIds.has(transaction.account_id),
+  ).length
 
   return (
     <div className="view-stack">
@@ -98,7 +104,7 @@ export function BudgetView({
           >
             <Icon name={item.icon} />
             <span className="budget-tab-label">{item.label}</span>
-            {item.id === 'categorize' && (
+            {item.id === 'categorize' && uncategorizedCount > 0 && (
               <span className="nav-count">{uncategorizedCount}</span>
             )}
           </button>
