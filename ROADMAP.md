@@ -98,6 +98,19 @@ Constats :
 La gestion des comptes est suffisamment saine pour poursuivre l'audit du palier, sous reserve des
 deux arbitrages explicites ci-dessus.
 
+#### Palier 4 - Pilotage budgetaire (2026-09-06)
+
+Constats :
+
+- **OK** : apercu du cycle budgetaire (soldes, revenus, depenses, reste a vivre), enveloppes
+  budgetaires par cycle avec seuils et progression, cashflow Sankey en vue cycle ou annee,
+  hierarchie des categories avec ventilation des depenses, boite de categorisation et regles
+  deterministes, registre des transactions du module et configuration des categories ;
+- **ecarts corriges** : aucun ecart bloquant releve sur ce palier ;
+- **arbitrages produit** : aucun.
+
+Le pilotage budgetaire est suffisamment sain pour retirer le label `Beta` de la page Budget.
+
 ## Phase 0 - Fondations
 
 - [x] 12. Preferences : theme, langue/locale, date et style de navigation.
