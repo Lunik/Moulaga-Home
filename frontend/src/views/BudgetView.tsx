@@ -29,11 +29,9 @@ import type {
   Transaction,
   TransactionCount,
 } from '../api/types'
-import { isRouteBeta } from '../featureValidation'
 import type { BudgetTab, Route } from '../routing'
 import {
   AmountDirectionToggle,
-  BetaBadge,
   CategorizationSummary,
   EmptyState,
   Field,
@@ -84,6 +82,8 @@ export function BudgetView({
   navigate: (route: Route) => void
   onRefresh: () => Promise<void>
 }) {
+  const uncategorizedCount = transactions.filter((transaction) => transaction.category_id === null).length
+
   return (
     <div className="view-stack">
       <nav className="module-tabs budget-tabs" aria-label="Budget et cashflow">
@@ -92,13 +92,15 @@ export function BudgetView({
             className={tab === item.id ? 'active' : ''}
             type="button"
             key={item.id}
+            aria-current={tab === item.id ? 'page' : undefined}
+            aria-label={item.id === 'categorize' ? `${item.label} (${uncategorizedCount})` : item.label}
+            title={item.label}
             onClick={() => navigate({ name: 'budget', tab: item.id })}
           >
             <Icon name={item.icon} />
-            {item.label}
-            {isRouteBeta({ name: 'budget', tab: item.id }) && <BetaBadge />}
+            <span className="budget-tab-label">{item.label}</span>
             {item.id === 'categorize' && (
-              <span className="nav-count">{transactions.filter((transaction) => transaction.category_id === null).length}</span>
+              <span className="nav-count">{uncategorizedCount}</span>
             )}
           </button>
         ))}

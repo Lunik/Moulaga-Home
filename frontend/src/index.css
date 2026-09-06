@@ -2035,6 +2035,23 @@ textarea:focus-visible {
 
 .budget-tabs {
   width: 100%;
+  gap: 0.15rem;
+  padding: 0.22rem;
+}
+
+.budget-tabs button {
+  min-width: 0;
+  min-height: 2.3rem;
+  flex: 1 1 auto;
+  gap: 0.35rem;
+  padding: 0.45rem clamp(0.4rem, 0.65vw, 0.7rem);
+  font-size: 0.74rem;
+}
+
+.budget-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .budget-module-title h2 {
@@ -3820,6 +3837,17 @@ html[data-theme="light"] .status-badge {
 }
 
 @media (max-width: 1180px) {
+  .budget-tabs button {
+    gap: 0.2rem;
+    padding-inline: 0.2rem;
+    font-size: 0.7rem;
+  }
+
+  .budget-tabs svg {
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -4256,6 +4284,49 @@ html[data-theme="light"] .status-badge {
     flex: 1 0 auto;
   }
 
+  .budget-tabs {
+    gap: 0.1rem;
+    padding: 0.18rem;
+    border-radius: 0.75rem;
+    overflow: hidden;
+  }
+
+  .budget-tabs button {
+    position: relative;
+    min-width: 0;
+    min-height: 2.15rem;
+    flex: 1 1 0;
+    gap: 0.25rem;
+    padding: 0.35rem 0.3rem;
+    border-radius: 0.55rem;
+    font-size: 0.7rem;
+  }
+
+  .budget-tabs button.active {
+    flex: 0 1 auto;
+    padding-inline: 0.55rem;
+  }
+
+  .budget-tabs button:not(.active) .budget-tab-label {
+    display: none;
+  }
+
+  .budget-tabs svg {
+    width: 0.95rem;
+    height: 0.95rem;
+  }
+
+  .budget-tabs .nav-count {
+    position: absolute;
+    top: 0.15rem;
+    right: 0.1rem;
+    min-width: 0.85rem;
+    height: 0.85rem;
+    padding: 0 0.15rem;
+    border: 1px solid var(--surface-soft);
+    font-size: 0.5rem;
+  }
+
   .transaction-form .primary-button,
   .form-buttons,
   .form-buttons button {
@@ -4357,6 +4428,17 @@ html[data-theme="light"] .status-badge {
   }
 
   .transaction-table .attachment-table-row > td::before {
+    display: none;
+  }
+}
+
+@media (max-width: 340px) {
+  .budget-tabs button.active {
+    flex: 1 1 0;
+    padding-inline: 0.3rem;
+  }
+
+  .budget-tabs button.active .budget-tab-label {
     display: none;
   }
 }
