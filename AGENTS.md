@@ -94,6 +94,17 @@ cd backend && .venv/bin/python -m ruff check app tests && .venv/bin/python -m py
 cd frontend && npm run build && npm run lint
 ```
 
+Puis, pour toute fonctionnalite terminee, lancer la demonstration locale et indiquer au
+developpeur l'URL et les ecrans a valider :
+
+```bash
+./scripts/demo-local.sh start
+```
+
+Cette instance sert le frontend construit et la seed synthetique depuis le depot
+(`.data/demo`, `.data/demo-runtime`), sans jamais toucher `./data` ni le conteneur Docker.
+Elle s'arrete avec `./scripts/demo-local.sh stop`.
+
 ## Important
 
 Si une modification touche la migration CSV ou les données bancaires, lire en priorité la commande

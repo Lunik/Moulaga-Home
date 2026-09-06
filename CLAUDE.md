@@ -15,10 +15,12 @@ Ce dépôt cible une application auto-hébergée de budget personnel.
 cd backend && .venv/bin/python -m ruff check app tests
 cd backend && .venv/bin/python -m pytest
 cd frontend && npm run build && npm run lint
+./scripts/demo-local.sh start
 ```
 
 ## Référence
 
 - `AGENTS.md` : conventions métier et architecture
 - `.copilot/instructions.md` : instructions Copilot
+- `.copilot/skills/local-demo/SKILL.md` : démonstration locale pour la validation développeur
 - `README.md` : usage et démarrage

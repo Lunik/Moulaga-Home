@@ -144,6 +144,18 @@ duplique pas les transactions.
 
 ## Donnees fictives pour la QA
 
+Pour une demonstration locale complete depuis le depot, sans Docker :
+
+```bash
+./scripts/demo-local.sh start
+```
+
+Le script installe les dependances manquantes, construit le frontend, regenere la seed synthetique
+dans `.data/demo` puis sert l'application sur <http://127.0.0.1:8010> (premier port libre a partir
+de 8010). `./scripts/demo-local.sh status`, `logs`, `restart` et `stop` pilotent l'instance. Les
+donnees de cette instance sont synthetiques, confinees a `.data/` et ignorees par Git ; la base
+persistante `./data` n'est jamais touchee.
+
 Le demarrage Docker standard active deja la seed de demonstration et la recree a chaque demarrage.
 Pour lancer la meme seed manuellement hors du conteneur, utiliser un dossier temporaire explicite :
 

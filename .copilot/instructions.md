@@ -40,6 +40,7 @@ cd frontend && npm run build && npm run lint
 - `web-build-test` — vérifie backend + frontend après une modification
 - `budget-import-check` — vérifie la commande de migration bancaire initiale
 - `demo-seed-check` — maintient la seed synthétique comme catalogue exécutable des fonctionnalités
+- `local-demo` — lance la démonstration locale dans le dépôt pour la validation par le développeur
 
 ## Règles métier
 
@@ -66,4 +67,5 @@ cd frontend && npm run build && npm run lint
 2. Identifier le scenario de demonstration du changement et mettre a jour la seed et son test.
 3. Modifier uniquement le périmètre nécessaire.
 4. Utiliser `demo-seed-check`, puis vérifier le build et les tests avec `web-build-test`.
-5. Ne pas publier de données bancaires ni de pièces jointes sensibles.
+5. Lancer `local-demo` et presenter au developpeur l'URL et les ecrans a valider.
+6. Ne pas publier de données bancaires ni de pièces jointes sensibles.

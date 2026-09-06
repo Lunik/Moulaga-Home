@@ -24,6 +24,7 @@ Ce dépôt utilise `.copilot/` pour centraliser les instructions et les compéte
 ```bash
 skill: "demo-seed-check"
 skill: "web-build-test"
+skill: "local-demo"
 ```
 
 Ou manuellement :
@@ -31,6 +32,7 @@ Ou manuellement :
 ```bash
 cd backend && .venv/bin/python -m ruff check app tests && .venv/bin/python -m pytest
 cd frontend && npm run build && npm run lint
+./scripts/demo-local.sh start
 ```
 
 ## Points clés
@@ -42,4 +44,5 @@ cd frontend && npm run build && npm run lint
 - La migration doit rester atomique et idempotente.
 - Les migrations de schema doivent sauvegarder une base existante avant modification.
 - La categorisation privee et les identites marchandes restent entierement locales.
+- La demonstration locale se lance avec `./scripts/demo-local.sh`, dans `.data/demo`, jamais sur `./data`.
 - `ROADMAP.md` trace les 26 surfaces fonctionnelles, leur validation et l'ordre d'audit iteratif.
