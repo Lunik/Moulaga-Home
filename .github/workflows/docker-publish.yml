@@ -85,3 +85,66 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        continue-on-error: true
+        uses: requarks/changelog-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          writeToFile: false
+
+      - name: Fallback changelog
+        id: changelog_fallback
+        if: steps.changelog.outcome == 'failure' || steps.changelog.outputs.changes == ''
+        run: |
+          previous=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          {
+            echo "changes<<CHANGELOG_EOF"
+            if [ -n "${previous}" ]; then
+              git log --no-show-signature --pretty='- %s (%h)' "${previous}..${GITHUB_REF_NAME}"
+            else
+              echo "_Première publication : pas de tag précédent._"
+              echo ""
+              git log --no-show-signature --pretty='- %s (%h)' "${GITHUB_REF_NAME}"
+            fi
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release compose file
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image }}:${{ github.ref_name }}
+        run: |
+          yq eval '.services.moulaga.image = strenv(IMAGE_REF) | del(.services.moulaga.build)' docker-compose.yml > docker-compose.release.yml
+
+      - name: Write image reference file
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          {
+            echo "${IMAGE}:${TAG}"
+            echo "${IMAGE}@${DIGEST}"
+          } > image-digest.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.changes || steps.changelog_fallback.outputs.changes }}
+          files: |
+            docker-compose.release.yml
+            image-digest.txt
