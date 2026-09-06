@@ -5,6 +5,7 @@ import { apiGet } from './api/client'
 import type { Account, AppSettings, Category, MerchantIdentity, Transaction } from './api/types'
 import { ViewErrorBoundary } from './ErrorBoundary'
 import { isRouteBeta } from './featureValidation'
+import { useOfflineDataWarmup, useOnlineStatus } from './pwa'
 import { type Route, useRoute } from './routing'
 import { BetaBadge, Icon, configureUiPreferences, errorMessage, longToday } from './ui'
 
@@ -34,6 +35,8 @@ const navigation: Array<{
 export default function App() {
   const [route, navigate] = useRoute()
   const queryClient = useQueryClient()
+  const isOnline = useOnlineStatus()
+  useOfflineDataWarmup(isOnline)
   const accounts = useQuery({
     queryKey: ['accounts'],
     queryFn: () => apiGet<Account[]>('/accounts?include_archived=true'),
@@ -45,6 +48,7 @@ export default function App() {
   const transactions = useQuery({
     queryKey: ['transactions'],
     queryFn: () => apiGet<Transaction[]>('/transactions?limit=1000'),
+    enabled: isOnline,
   })
   const settings = useQuery({
     queryKey: ['settings'],
@@ -76,7 +80,7 @@ export default function App() {
   const firstError = [
     accounts.error,
     categories.error,
-    transactions.error,
+    isOnline ? transactions.error : null,
     settings.error,
     settings.data?.local_merchant_identities ? merchants.error : null,
   ].find(Boolean)
@@ -85,7 +89,7 @@ export default function App() {
 
   return (
     <div className="app-shell" data-navigation={settings.data?.navigation_style ?? 'sidebar'}>
-      <Sidebar activeSection={activeSection} navigate={navigate} />
+      <Sidebar activeSection={activeSection} isOnline={isOnline} navigate={navigate} />
       <main className="app-content">
         <header className="page-header">
           <div>
@@ -95,6 +99,11 @@ export default function App() {
               {isRouteBeta(route) && <BetaBadge />}
             </div>
           </div>
+          {!isOnline && (
+            <span className="offline-status" role="status">
+              <Icon name="database" /> Hors ligne · vues en cache
+            </span>
+          )}
         </header>
 
         {firstError && <div className="error-banner" role="alert">Impossible de charger les données locales : {errorMessage(firstError)}</div>}
@@ -106,6 +115,7 @@ export default function App() {
               accounts={accounts.data ?? []}
               merchants={settings.data?.local_merchant_identities ? merchants.data ?? [] : []}
               transactions={transactions.data ?? []}
+              isOnline={isOnline}
               navigate={navigate}
             />
           )}
@@ -149,9 +159,11 @@ export default function App() {
 
 function Sidebar({
   activeSection,
+  isOnline,
   navigate,
 }: {
   activeSection: Route['name']
+  isOnline: boolean
   navigate: (route: Route) => void
 }) {
   return (
@@ -181,10 +193,13 @@ function Sidebar({
           </button>
         ))}
       </nav>
-      <div className="storage-status">
+      <div className={`storage-status ${isOnline ? '' : 'offline'}`}>
         <span className="status-icon"><Icon name="database" /></span>
-        <span><strong>Stockage local</strong><small>Base SQLite persistante</small></span>
-        <span className="status-dot" aria-label="Disponible" />
+        <span>
+          <strong>{isOnline ? 'Stockage local' : 'Mode hors ligne'}</strong>
+          <small>{isOnline ? 'Base SQLite persistante' : 'Vues en cache'}</small>
+        </span>
+        <span className={`status-dot ${isOnline ? '' : 'offline'}`} aria-label={isOnline ? 'Disponible' : 'Hors ligne'} />
       </div>
     </aside>
   )

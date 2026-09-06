@@ -34,6 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger("moulaga")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+REVALIDATED_STATIC_FILES = frozenset({"index.html", "manifest.webmanifest", "sw.js"})
 
 
 @asynccontextmanager
@@ -105,8 +106,17 @@ def _mount_frontend(app: FastAPI) -> None:
             return JSONResponse({"detail": "Ressource introuvable"}, status_code=404)
         candidate = (STATIC_DIR / full_path).resolve()
         if full_path and candidate.is_file() and candidate.is_relative_to(STATIC_DIR.resolve()):
-            return FileResponse(candidate)
-        return FileResponse(STATIC_DIR / "index.html")
+            return _frontend_file_response(candidate)
+        return _frontend_file_response(STATIC_DIR / "index.html")
+
+
+def _frontend_file_response(path: Path) -> FileResponse:
+    headers: dict[str, str] = {}
+    if path.name in REVALIDATED_STATIC_FILES:
+        headers["Cache-Control"] = "no-cache"
+    if path.name == "sw.js":
+        headers["Service-Worker-Allowed"] = "/"
+    return FileResponse(path, headers=headers)
 
 
 app = create_app()

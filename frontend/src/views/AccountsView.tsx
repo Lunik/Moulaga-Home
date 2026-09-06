@@ -24,6 +24,7 @@ import type {
   TransactionCount,
 } from '../api/types'
 import { AttachmentManager } from '../AttachmentManager'
+import { useOnlineStatus } from '../pwa'
 import type { Route } from '../routing'
 import { calculateSavingsProjection } from '../savingsProjection'
 import {
@@ -433,6 +434,7 @@ export function AccountDetailView({
   onRefresh: () => Promise<void>
 }) {
   const queryClient = useQueryClient()
+  const isOnline = useOnlineStatus()
   const transactionPageSize = 100
   const [transactionPage, setTransactionPage] = useState(0)
   const account = useQuery({
@@ -446,6 +448,7 @@ export function AccountDetailView({
       limit: transactionPageSize,
       offset: transactionPage * transactionPageSize,
     })}`),
+    enabled: isOnline,
   })
   const snapshots = useQuery({
     queryKey: ['account-snapshots', accountId],
@@ -473,7 +476,7 @@ export function AccountDetailView({
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
   const errors = [
     account.error,
-    transactions.error,
+    isOnline ? transactions.error : null,
     snapshots.error,
     uncategorizedCount.error,
     positionsEnabled ? positions.error : null,
@@ -837,7 +840,7 @@ export function AccountDetailView({
       <Panel
         title="Transactions"
         subtitle={`${account.data.transaction_count} mouvement${account.data.transaction_count === 1 ? '' : 's'}`}
-        action={!readOnly ? (
+        action={!readOnly && isOnline ? (
           <button
             className="primary-button small-button"
             type="button"
@@ -847,51 +850,61 @@ export function AccountDetailView({
           </button>
         ) : undefined}
       >
-        {!readOnly && (uncategorizedCount.data?.count ?? 0) > 0 && (
+        {!readOnly && isOnline && (uncategorizedCount.data?.count ?? 0) > 0 && (
           <CategorizationSummary
             detail={`${uncategorizedCount.data?.count ?? 0} mouvement${(uncategorizedCount.data?.count ?? 0) === 1 ? '' : 's'} sans catégorie sur ce compte`}
             onCategorize={() => navigate({ name: 'budget', tab: 'categorize' })}
           />
         )}
-        <div className="data-table-wrap">
-          <table className="transaction-table">
-            <thead><tr><th>Date</th><th>Libellé</th><th>Catégorie</th><th className="amount-column">Montant</th><th /></tr></thead>
-            <tbody>
-              {transactions.data?.map((transaction) => (
-                <AccountTransactionRow
-                  key={transaction.id}
-                  transaction={transaction}
-                  onEdit={() => setEditingTransaction(transaction)}
-                  onSaved={refreshDetail}
-                  readOnly={readOnly}
-                />
-              ))}
-            </tbody>
-          </table>
-          {(transactions.data?.length ?? 0) === 0 && <EmptyState icon="receipt" text="Aucune transaction sur ce compte." />}
-        </div>
-        {account.data.transaction_count > transactionPageSize && (
-          <div className="pagination">
-            <button
-              className="secondary-button small-button"
-              type="button"
-              disabled={transactionPage === 0}
-              onClick={() => setTransactionPage((current) => current - 1)}
-            >
-              <Icon name="back" />Précédent
-            </button>
-            <span>
-              Page {transactionPage + 1} sur {Math.ceil(account.data.transaction_count / transactionPageSize)}
-            </span>
-            <button
-              className="secondary-button small-button"
-              type="button"
-              disabled={(transactionPage + 1) * transactionPageSize >= account.data.transaction_count}
-              onClick={() => setTransactionPage((current) => current + 1)}
-            >
-              Suivant<Icon name="arrow" />
-            </button>
-          </div>
+        {isOnline ? (
+          <>
+            <div className="data-table-wrap">
+              <table className="transaction-table">
+                <thead><tr><th>Date</th><th>Libellé</th><th>Catégorie</th><th className="amount-column">Montant</th><th /></tr></thead>
+                <tbody>
+                  {transactions.data?.map((transaction) => (
+                    <AccountTransactionRow
+                      key={transaction.id}
+                      transaction={transaction}
+                      onEdit={() => setEditingTransaction(transaction)}
+                      onSaved={refreshDetail}
+                      readOnly={readOnly}
+                    />
+                  ))}
+                </tbody>
+              </table>
+              {(transactions.data?.length ?? 0) === 0 && <EmptyState icon="receipt" text="Aucune transaction sur ce compte." />}
+            </div>
+            {account.data.transaction_count > transactionPageSize && (
+              <div className="pagination">
+                <button
+                  className="secondary-button small-button"
+                  type="button"
+                  disabled={transactionPage === 0}
+                  onClick={() => setTransactionPage((current) => current - 1)}
+                >
+                  <Icon name="back" />Précédent
+                </button>
+                <span>
+                  Page {transactionPage + 1} sur {Math.ceil(account.data.transaction_count / transactionPageSize)}
+                </span>
+                <button
+                  className="secondary-button small-button"
+                  type="button"
+                  disabled={(transactionPage + 1) * transactionPageSize >= account.data.transaction_count}
+                  onClick={() => setTransactionPage((current) => current + 1)}
+                >
+                  Suivant<Icon name="arrow" />
+                </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <EmptyState
+            icon="receipt"
+            title="Transactions indisponibles hors ligne"
+            text="Les soldes, relevés, positions et graphiques de ce compte restent consultables."
+          />
         )}
         {!readOnly && <div className="account-delete-action">
           <button

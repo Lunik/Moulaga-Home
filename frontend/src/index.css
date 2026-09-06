@@ -224,6 +224,15 @@ textarea:focus-visible {
   box-shadow: 0 0 0 4px rgb(22 199 154 / 10%);
 }
 
+.status-dot.offline {
+  background: var(--warning);
+  box-shadow: 0 0 0 4px rgb(247 181 0 / 12%);
+}
+
+.storage-status.offline .status-icon {
+  color: var(--warning);
+}
+
 .app-content {
   width: 100%;
   max-width: 106rem;
@@ -244,6 +253,24 @@ textarea:focus-visible {
 
 .page-header {
   margin-bottom: 2rem;
+}
+
+.offline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid rgb(247 181 0 / 24%);
+  border-radius: 999px;
+  background: rgb(247 181 0 / 8%);
+  color: var(--warning);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.offline-status svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 .page-header h1 {
@@ -3798,6 +3825,26 @@ html[data-theme="light"] {
 
 html[data-theme="light"] body {
   background: var(--background);
+}
+
+@media (display-mode: standalone) {
+  body {
+    overscroll-behavior-y: none;
+  }
+
+  .app-shell {
+    min-height: 100dvh;
+  }
+
+  .sidebar {
+    height: 100dvh;
+    padding-top: max(1.75rem, env(safe-area-inset-top));
+    padding-bottom: max(1.75rem, env(safe-area-inset-bottom));
+  }
+
+  .app-content {
+    padding-bottom: max(4rem, env(safe-area-inset-bottom));
+  }
 }
 
 html[data-theme="light"] .sidebar {

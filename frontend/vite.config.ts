@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process'
 
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { VitePWA } from 'vite-plugin-pwa'
 
 function appVersion(): string {
   if (process.env.MOULAGA_VERSION) return process.env.MOULAGA_VERSION
@@ -18,7 +19,90 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(appVersion()),
   },
-  plugins: [react()],
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      manifest: {
+        id: '/',
+        name: 'Moulaga',
+        short_name: 'Moulaga',
+        description: 'Budget, comptes et patrimoine prives sur votre instance Moulaga.',
+        lang: 'fr',
+        start_url: '/',
+        scope: '/',
+        display: 'standalone',
+        background_color: '#080809',
+        theme_color: '#080809',
+        categories: ['finance', 'productivity'],
+        icons: [
+          {
+            src: 'pwa-64x64.png',
+            sizes: '64x64',
+            type: 'image/png',
+          },
+          {
+            src: 'pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+          },
+          {
+            src: 'maskable-icon-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+      },
+      workbox: {
+        cacheId: 'moulaga',
+        cleanupOutdatedCaches: true,
+        clientsClaim: true,
+        skipWaiting: true,
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        globIgnores: ['**/pwa-*.png', '**/maskable-icon-*.png'],
+        runtimeCaching: [
+          {
+            urlPattern: ({ request, url }) => {
+              if (
+                request.method !== 'GET'
+                || url.origin !== self.location.origin
+                || !url.pathname.startsWith('/api/')
+              ) {
+                return false
+              }
+              const transactionRead = url.pathname === '/api/transactions'
+                || /^\/api\/transactions\/\d+(?:\/|$)/.test(url.pathname)
+              return !transactionRead
+                && url.pathname !== '/api/categorization/inbox'
+                && url.pathname !== '/api/health'
+                && !url.pathname.includes('/attachments')
+                && !url.pathname.endsWith('/download')
+            },
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'moulaga-visual-data-v1',
+              networkTimeoutSeconds: 4,
+              cacheableResponse: {
+                statuses: [200],
+              },
+              expiration: {
+                maxEntries: 500,
+                purgeOnQuotaError: true,
+              },
+            },
+          },
+        ],
+      },
+    }),
+  ],
   server: {
     port: 5173,
     proxy: {
