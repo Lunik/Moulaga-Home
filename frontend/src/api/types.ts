@@ -153,9 +153,13 @@ export interface Envelope {
   category_id: number
   category_name: string
   color: string
+  parent_id: number | null
   budget: Money | null
+  direct_spent: Money
   spent: Money
   remaining: Money | null
+  children_budget: Money
+  remainder_budget: Money | null
 }
 
 export interface CashflowFlow {

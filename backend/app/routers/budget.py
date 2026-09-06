@@ -10,6 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..account_access import require_account
+from ..category_budgeting import (
+    ParentBudgetTooSmall,
+    ensure_ancestor_budgets,
+    root_budget_total,
+    validate_parent_budget,
+)
 from ..common import money
 from ..db import get_session
 from ..models import Account, Category, Transaction
@@ -85,9 +91,19 @@ async def create_category(
     payload: CategoryCreate,
     session: AsyncSession = Depends(get_session),
 ) -> CategoryRead:
+    if payload.parent_id is not None:
+        parent = await session.get(Category, payload.parent_id)
+        if parent is None:
+            raise HTTPException(status_code=404, detail="Categorie parente introuvable")
+        if parent.archived:
+            raise HTTPException(status_code=409, detail="La categorie parente est archivee")
+        if parent.kind != payload.kind:
+            raise HTTPException(status_code=422, detail="Le parent doit avoir le meme type")
     category = Category(**payload.model_dump())
     session.add(category)
     try:
+        await session.flush()
+        await ensure_ancestor_budgets(session, category.parent_id)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -105,7 +121,13 @@ async def update_category_budget(
     category = await session.get(Category, category_id)
     if category is None:
         raise HTTPException(status_code=404, detail="Categorie introuvable")
+    try:
+        await validate_parent_budget(session, category_id, payload.monthly_budget)
+    except ParentBudgetTooSmall as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     category.monthly_budget = payload.monthly_budget
+    await session.flush()
+    await ensure_ancestor_budgets(session, category.parent_id)
     await session.commit()
     await session.refresh(category)
     spent = await _current_month_category_spend(session)
@@ -191,9 +213,7 @@ async def overview(session: AsyncSession = Depends(get_session)) -> Overview:
             Transaction.transfer_group.is_(None),
         )
     )
-    budget = await session.scalar(
-        select(func.coalesce(func.sum(Category.monthly_budget), 0)).where(Category.kind == "expense")
-    )
+    categories = (await session.execute(select(Category))).scalars().all()
     uncategorized = await session.scalar(
         select(func.count()).select_from(Transaction).where(
             Transaction.category_id.is_(None),
@@ -204,7 +224,7 @@ async def overview(session: AsyncSession = Depends(get_session)) -> Overview:
         )
     )
     expenses_abs = abs(Decimal(expenses or 0))
-    budget_total = Decimal(budget or 0)
+    budget_total = root_budget_total(categories)
     return Overview(
         balance=money(Decimal(account_total or 0) + Decimal(transaction_total or 0)),
         income_current_month=money(income),

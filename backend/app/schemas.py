@@ -375,9 +375,13 @@ class EnvelopeRead(BaseModel):
     category_id: int
     category_name: str
     color: str
+    parent_id: int | None = None
     budget: Decimal | None
+    direct_spent: Decimal = Decimal("0.00")
     spent: Decimal
     remaining: Decimal | None
+    children_budget: Decimal = Decimal("0.00")
+    remainder_budget: Decimal | None = None
 
 
 class CashflowFlow(BaseModel):

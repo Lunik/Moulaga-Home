@@ -62,6 +62,13 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         assert unlimited["budget"] is None
         assert unlimited["remaining"] is None
         assert unlimited["spent"] == "58.40"
+        logement = next(envelope for envelope in envelopes if envelope["category_name"] == "Logement")
+        assert logement["children_budget"] == "160.00"
+        assert logement["remainder_budget"] == "740.00"
+        assert logement["direct_spent"] == "750.00"
+        assert logement["spent"] == "884.99"
+        budget_overview = client.get("/api/budget/overview").json()
+        assert budget_overview["budget_total"] == "1350.00"
         categories = client.get("/api/categories").json()
         archived_category = next(
             category for category in categories if category["name"] == "Ancienne categorie demo"

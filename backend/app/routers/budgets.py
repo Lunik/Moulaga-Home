@@ -9,6 +9,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import Select, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..category_budgeting import (
+    budgeted_category_ids,
+    effective_parent_ids,
+    root_budget_total,
+)
 from ..common import cycle_bounds, get_preferences, money
 from ..db import get_session
 from ..models import Account, Category, Contribution, RecurringSeries, Transaction
@@ -68,11 +73,12 @@ async def cycle_overview(
             end,
         )
     )
-    budget = await session.scalar(
-        select(func.coalesce(func.sum(Category.monthly_budget), 0)).where(
-            Category.kind == "expense", Category.archived.is_(False)
+    categories = (
+        await session.execute(
+            select(Category).where(Category.kind == "expense")
         )
-    )
+    ).scalars().all()
+    budget = root_budget_total(categories)
     uncategorized = await session.scalar(
         _in_cycle(
             select(func.count()).select_from(Transaction).where(Transaction.category_id.is_(None)),
@@ -80,20 +86,19 @@ async def cycle_overview(
             end,
         )
     )
-    # Envelope spending: expenses booked in-cycle against budgeted expense categories.
-    envelope_spent_raw = await session.scalar(
-        select(func.coalesce(func.sum(-Transaction.amount), 0))
-        .select_from(Transaction)
-        .join(Category, Transaction.category_id == Category.id)
-        .where(
-            Transaction.amount < 0,
-            Transaction.booked_at >= start,
-            Transaction.booked_at <= end,
-            Category.kind == "expense",
-            Category.archived.is_(False),
-            Category.monthly_budget.is_not(None),
+    # A budget on a parent covers every transaction in its active subtree.
+    covered_category_ids = budgeted_category_ids(categories)
+    envelope_spent_raw = Decimal("0")
+    if covered_category_ids:
+        envelope_spent_raw = await session.scalar(
+            select(func.coalesce(func.sum(-Transaction.amount), 0)).where(
+                Transaction.amount < 0,
+                Transaction.booked_at >= start,
+                Transaction.booked_at <= end,
+                Transaction.transfer_group.is_(None),
+                Transaction.category_id.in_(covered_category_ids),
+            )
         )
-    )
     # Upcoming recurring items whose next occurrence falls inside the cycle.
     recurring_rows = (
         await session.execute(
@@ -140,41 +145,99 @@ async def envelopes(
     on: date | None = None, session: AsyncSession = Depends(get_session)
 ) -> list[EnvelopeRead]:
     start, end, _ = await _bounds(session, on)
-    spent_expr = func.coalesce(
-        func.sum(case((Transaction.amount < 0, -Transaction.amount), else_=0)), 0
-    )
-    rows = (
+    categories = (
         await session.execute(
-            select(Category.id, Category.name, Category.color, Category.monthly_budget, spent_expr)
-            .outerjoin(
-                Transaction,
-                (Transaction.category_id == Category.id)
-                & (Transaction.booked_at >= start)
-                & (Transaction.booked_at <= end)
-                & Transaction.transfer_group.is_(None),
-            )
-            .where(
-                Category.kind == "expense",
-                Category.archived.is_(False),
-            )
-            .group_by(Category.id)
+            select(Category)
+            .where(Category.kind == "expense")
             .order_by(Category.name)
         )
+    ).scalars().all()
+    effective_parents = effective_parent_ids(categories)
+    active_categories = [category for category in categories if not category.archived]
+    spent_rows = (
+        await session.execute(
+            select(Transaction.category_id, func.sum(-Transaction.amount))
+            .where(
+                Transaction.amount < 0,
+                Transaction.booked_at >= start,
+                Transaction.booked_at <= end,
+                Transaction.transfer_group.is_(None),
+                Transaction.category_id.is_not(None),
+            )
+            .group_by(Transaction.category_id)
+        )
     ).all()
+    direct_spent_by_category = {
+        category_id: money(spent)
+        for category_id, spent in spent_rows
+        if category_id is not None
+    }
+    children_by_parent: dict[int, list[tuple[int, Decimal | None]]] = {}
+    for category in active_categories:
+        parent_id = effective_parents.get(category.id)
+        if parent_id is not None:
+            children_by_parent.setdefault(parent_id, []).append(
+                (category.id, category.monthly_budget)
+            )
+
+    aggregate_spent_by_category: dict[int, Decimal] = {}
+
+    def aggregate_spent(category_id: int, visiting: set[int] | None = None) -> Decimal:
+        if category_id in aggregate_spent_by_category:
+            return aggregate_spent_by_category[category_id]
+        current_visiting = set() if visiting is None else set(visiting)
+        if category_id in current_visiting:
+            return Decimal("0")
+        current_visiting.add(category_id)
+        total = direct_spent_by_category.get(category_id, Decimal("0"))
+        for child_id, _child_budget in children_by_parent.get(category_id, []):
+            total += aggregate_spent(child_id, current_visiting)
+        aggregate_spent_by_category[category_id] = money(total)
+        return aggregate_spent_by_category[category_id]
+
     result = []
-    for cat_id, name, color, budget, spent in rows:
-        budget_amount = money(budget) if budget is not None else None
-        spent_amount = money(spent)
+    for category in active_categories:
+        budget_amount = (
+            money(category.monthly_budget)
+            if category.monthly_budget is not None
+            else None
+        )
+        direct_spent_amount = direct_spent_by_category.get(
+            category.id, Decimal("0")
+        )
+        spent_amount = aggregate_spent(category.id)
+        child_budgets = children_by_parent.get(category.id)
+        children_budget = money(
+            sum(
+                (
+                    Decimal(child_budget)
+                    for _child_id, child_budget in child_budgets or []
+                    if child_budget is not None
+                ),
+                Decimal("0"),
+            )
+        )
+        remainder_budget = None
+        if (
+            child_budgets
+            and budget_amount is not None
+            and budget_amount > children_budget
+        ):
+            remainder_budget = money(budget_amount - children_budget)
         result.append(
             EnvelopeRead(
-                category_id=cat_id,
-                category_name=name,
-                color=color,
+                category_id=category.id,
+                category_name=category.name,
+                color=category.color,
+                parent_id=effective_parents.get(category.id),
                 budget=budget_amount,
+                direct_spent=direct_spent_amount,
                 spent=spent_amount,
                 remaining=money(budget_amount - spent_amount)
                 if budget_amount is not None
                 else None,
+                children_budget=children_budget,
+                remainder_budget=remainder_budget,
             )
         )
     return result

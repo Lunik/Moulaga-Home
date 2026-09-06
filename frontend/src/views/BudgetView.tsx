@@ -60,7 +60,6 @@ const budgetTabs: Array<{ id: BudgetTab; label: string; icon: Parameters<typeof 
   { id: 'envelopes', label: 'Enveloppes', icon: 'budget' },
   { id: 'categorize', label: 'À catégoriser', icon: 'sparkle' },
   { id: 'transactions', label: 'Transactions', icon: 'receipt' },
-  { id: 'manage', label: 'Configuration', icon: 'rules' },
 ]
 
 export function BudgetView({
@@ -109,7 +108,7 @@ export function BudgetView({
       {tab === 'overview' && <BudgetOverviewPanel navigate={navigate} />}
       {tab === 'cashflow' && <CashflowPanel categories={categories} />}
       {tab === 'recurring' && <RecurringPanel accounts={accounts} categories={categories} />}
-      {tab === 'envelopes' && <EnvelopePanel categories={categories} onRefresh={onRefresh} />}
+      {tab === 'envelopes' && <EnvelopesPanel categories={categories} onRefresh={onRefresh} />}
       {tab === 'categorize' && (
         <CategorizationPanel
           categories={categories}
@@ -121,7 +120,6 @@ export function BudgetView({
       {tab === 'transactions' && (
         <TransactionLedger accounts={accounts} categories={categories} onRefresh={onRefresh} />
       )}
-      {tab === 'manage' && <ManageBudget categories={categories} onRefresh={onRefresh} />}
     </div>
   )
 }
@@ -701,325 +699,6 @@ function RecurringDetectionModal({
       )}
       {error && <p className="form-error">{errorMessage(error)}</p>}
     </Modal>
-  )
-}
-
-function EnvelopePanel({ categories, onRefresh }: { categories: Category[]; onRefresh: () => Promise<void> }) {
-  const queryClient = useQueryClient()
-  const [showCreateModal, setShowCreateModal] = useState(false)
-  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null)
-  const envelopes = useQuery({
-    queryKey: ['budget-envelopes', 'current'],
-    queryFn: () => apiGet<Envelope[]>('/budget/envelopes'),
-  })
-  const expenses = categories.filter((category) => category.kind === 'expense' && !category.archived)
-  const totalBudget = expenses.reduce((sum, category) => sum + Number(category.monthly_budget ?? 0), 0)
-  const totalSpent = (envelopes.data ?? []).reduce((sum, envelope) => sum + Number(envelope.spent), 0)
-  const budgetedSpent = (envelopes.data ?? []).reduce(
-    (sum, envelope) => sum + (envelope.budget === null ? 0 : Number(envelope.spent)),
-    0,
-  )
-  const refreshEnvelopes = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['budget-envelopes'] }),
-      queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
-      queryClient.invalidateQueries({ queryKey: ['categorization-rules'] }),
-      onRefresh(),
-    ])
-  }
-  return (
-    <>
-      <section className="section-intro">
-        <p>Suivez chaque catégorie de dépense avec un plafond mensuel ou sans limite.</p>
-        <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
-          <Icon name="plus" />Ajouter une enveloppe
-        </button>
-      </section>
-      {showCreateModal && (
-        <EnvelopeCreateModal
-          onClose={() => setShowCreateModal(false)}
-          onSaved={async () => {
-            await refreshEnvelopes()
-            setShowCreateModal(false)
-          }}
-        />
-      )}
-      {categoryToDelete && (
-        <EnvelopeDeleteModal
-          category={categoryToDelete}
-          destinations={expenses.filter((category) => category.id !== categoryToDelete.id)}
-          key={categoryToDelete.id}
-          onClose={() => setCategoryToDelete(null)}
-          onSaved={async () => {
-            await refreshEnvelopes()
-            setCategoryToDelete(null)
-          }}
-        />
-      )}
-      {envelopes.error && <div className="error-banner">{errorMessage(envelopes.error)}</div>}
-      <section className="metric-grid budget-summary">
-        <BudgetMetric label="Budget mensuel" value={money(totalBudget)} icon="budget" />
-        <BudgetMetric label="Dépensé" value={money(totalSpent)} icon="receipt" tone="negative" />
-        <BudgetMetric label="Disponible" value={money(totalBudget - budgetedSpent)} icon="trend" tone={totalBudget >= budgetedSpent ? 'positive' : 'negative'} />
-      </section>
-      {expenses.length > 0 ? (
-        <section className="budget-list">
-          {expenses.map((category) => (
-            <EnvelopeCard
-              category={category}
-              key={category.id}
-              onDelete={() => setCategoryToDelete(category)}
-              onSaved={refreshEnvelopes}
-              spent={(envelopes.data ?? []).find((envelope) => envelope.category_id === category.id)?.spent}
-            />
-          ))}
-        </section>
-      ) : (
-        <EmptyState
-          icon="budget"
-          title="Aucune enveloppe"
-          text="Ajoutez une enveloppe pour commencer à suivre vos dépenses."
-          action={<button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}><Icon name="plus" />Ajouter une enveloppe</button>}
-        />
-      )}
-    </>
-  )
-}
-
-function EnvelopeCard({
-  category,
-  onDelete,
-  onSaved,
-  spent: spentValue,
-}: {
-  category: Category
-  onDelete: () => void
-  onSaved: () => Promise<void>
-  spent?: string
-}) {
-  const [editing, setEditing] = useState(false)
-  const [budget, setBudget] = useState(category.monthly_budget ?? '')
-  const [unlimited, setUnlimited] = useState(category.monthly_budget === null)
-  const spent = Number(spentValue ?? 0)
-  const limit = Number(category.monthly_budget ?? 0)
-  const ratio = limit > 0 ? (spent / limit) * 100 : 0
-  const update = useMutation({
-    mutationFn: () => apiPatch<Category>(`/categories/${category.id}/budget`, {
-      monthly_budget: unlimited ? null : budget,
-    }),
-    onSuccess: async () => {
-      setEditing(false)
-      await onSaved()
-    },
-  })
-  const openEditor = () => {
-    setBudget(category.monthly_budget ?? '')
-    setUnlimited(category.monthly_budget === null)
-    setEditing(true)
-  }
-  return (
-    <article className="budget-card">
-      <div className="budget-card-top">
-        <div>
-          <h2><i style={{ background: category.color }} />{category.name}</h2>
-          <p>{category.monthly_budget === null ? `${money(spent)} dépensés ce mois-ci` : `${money(spent)} / ${money(limit)}`}</p>
-        </div>
-        {editing ? (
-          <form className="budget-editor" onSubmit={(event) => {
-            event.preventDefault()
-            update.mutate()
-          }}>
-            <EnvelopeLimitChoice unlimited={unlimited} onChange={setUnlimited} compact />
-            {!unlimited && (
-              <input
-                aria-label={`Plafond de ${category.name}`}
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={budget}
-                onChange={(event) => setBudget(event.target.value)}
-                required
-                autoFocus
-              />
-            )}
-            <div className="budget-editor-actions">
-              <button className="primary-button small-button" type="submit" disabled={update.isPending}>Enregistrer</button>
-              <button className="text-button" type="button" onClick={() => setEditing(false)}>Annuler</button>
-            </div>
-          </form>
-        ) : (
-          <div className="budget-card-actions">
-            <button className="secondary-button small-button" type="button" onClick={openEditor}>
-              <Icon name="edit" />Modifier
-            </button>
-            <button className="icon-action destructive-button" type="button" aria-label={`Supprimer ${category.name}`} onClick={onDelete}>
-              <Icon name="trash" />
-            </button>
-          </div>
-        )}
-      </div>
-      {category.monthly_budget === null ? (
-        <div className="budget-unlimited-state">
-          <StatusBadge tone="primary">Sans plafond</StatusBadge>
-          <span>Suivi informatif, sans impact sur le budget disponible.</span>
-        </div>
-      ) : (
-        <>
-          <ProgressBar value={ratio} color={category.color} danger={ratio > 100} />
-          <div className="budget-card-bottom">
-            <span>{Math.round(ratio)}% consommé</span>
-            <strong className={limit - spent < 0 ? 'negative' : ''}>{limit - spent >= 0 ? `${money(limit - spent)} disponibles` : `${money(spent - limit)} dépassés`}</strong>
-          </div>
-        </>
-      )}
-      {update.error && <p className="form-error">{errorMessage(update.error)}</p>}
-    </article>
-  )
-}
-
-function EnvelopeCreateModal({
-  onClose,
-  onSaved,
-}: {
-  onClose: () => void
-  onSaved: () => Promise<void>
-}) {
-  const [name, setName] = useState('')
-  const [color, setColor] = useState('#615fff')
-  const [budget, setBudget] = useState('')
-  const [unlimited, setUnlimited] = useState(false)
-  const mutation = useMutation({
-    mutationFn: () => apiPost<Category>('/categories', {
-      name,
-      kind: 'expense',
-      color,
-      monthly_budget: unlimited ? null : budget,
-      parent_id: null,
-    }),
-    onSuccess: onSaved,
-  })
-  const formId = 'envelope-create'
-  return (
-    <Modal
-      title="Nouvelle enveloppe"
-      description="Créez une catégorie de dépense avec un plafond mensuel facultatif."
-      onClose={onClose}
-      actions={(
-        <>
-          <button
-            className="primary-button"
-            type="submit"
-            form={formId}
-            disabled={mutation.isPending || (!unlimited && !budget)}
-          >
-            {mutation.isPending ? 'Création…' : 'Créer l’enveloppe'}
-          </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
-        </>
-      )}
-    >
-      <form className="modal-form" id={formId} onSubmit={(event: FormEvent) => {
-        event.preventDefault()
-        mutation.mutate()
-      }}>
-        <Field label="Nom">
-          <input value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
-        </Field>
-        <Field label="Couleur">
-          <input className="color-input envelope-color-input" type="color" value={color} onChange={(event) => setColor(event.target.value)} />
-        </Field>
-        <div className="field">
-          <span>Type d’enveloppe</span>
-          <EnvelopeLimitChoice unlimited={unlimited} onChange={setUnlimited} />
-        </div>
-        {!unlimited && (
-          <Field label="Plafond mensuel">
-            <input type="number" min="0.01" step="0.01" value={budget} onChange={(event) => setBudget(event.target.value)} required />
-          </Field>
-        )}
-        {unlimited && <p className="modal-hint">Les dépenses seront suivies sans réduire le budget disponible des enveloppes plafonnées.</p>}
-        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-      </form>
-    </Modal>
-  )
-}
-
-function EnvelopeDeleteModal({
-  category,
-  destinations,
-  onClose,
-  onSaved,
-}: {
-  category: Category
-  destinations: Category[]
-  onClose: () => void
-  onSaved: () => Promise<void>
-}) {
-  const [replacementCategoryId, setReplacementCategoryId] = useState(String(destinations[0]?.id ?? ''))
-  const mutation = useMutation({
-    mutationFn: () => apiDelete(`/categories/${category.id}${queryString({
-      replacement_category_id: Number(replacementCategoryId),
-    })}`),
-    onSuccess: onSaved,
-  })
-  return (
-    <Modal
-      title={`Supprimer « ${category.name} » ?`}
-      description="L’enveloppe et sa catégorie seront supprimées définitivement."
-      onClose={onClose}
-      actions={(
-        <>
-          <button
-            className="secondary-button destructive-button"
-            type="button"
-            disabled={!replacementCategoryId || mutation.isPending}
-            onClick={() => mutation.mutate()}
-          >
-            {mutation.isPending ? 'Suppression…' : 'Reporter puis supprimer'}
-          </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
-        </>
-      )}
-    >
-      <div className="modal-warning warning">
-        <Icon name="alert" />
-        <p>
-          Toutes les transactions de cette enveloppe seront réaffectées à la catégorie choisie.
-          Ses règles de catégorisation et séries récurrentes seront également conservées et transférées.
-        </p>
-      </div>
-      {destinations.length > 0 ? (
-        <div className="envelope-delete-target">
-          <Field label="Reporter les dépenses vers">
-            <select value={replacementCategoryId} onChange={(event) => setReplacementCategoryId(event.target.value)}>
-              {destinations.map((destination) => (
-                <option key={destination.id} value={destination.id}>{destination.name}</option>
-              ))}
-            </select>
-          </Field>
-        </div>
-      ) : (
-        <p className="modal-hint">Ajoutez une autre enveloppe avant de supprimer celle-ci.</p>
-      )}
-      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </Modal>
-  )
-}
-
-function EnvelopeLimitChoice({
-  unlimited,
-  onChange,
-  compact = false,
-}: {
-  unlimited: boolean
-  onChange: (unlimited: boolean) => void
-  compact?: boolean
-}) {
-  return (
-    <div className={`segmented-control envelope-limit-choice${compact ? ' compact-segments' : ''}`} role="group" aria-label="Type d’enveloppe">
-      <button className={unlimited ? '' : 'active'} type="button" aria-pressed={!unlimited} onClick={() => onChange(false)}>Avec plafond</button>
-      <button className={unlimited ? 'active' : ''} type="button" aria-pressed={unlimited} onClick={() => onChange(true)}>Sans plafond</button>
-    </div>
   )
 }
 
@@ -1770,19 +1449,64 @@ function LedgerTransactionModal({
   )
 }
 
-function ManageBudget({ categories, onRefresh }: { categories: Category[]; onRefresh: () => Promise<void> }) {
+function EnvelopesPanel({ categories, onRefresh }: { categories: Category[]; onRefresh: () => Promise<void> }) {
+  const queryClient = useQueryClient()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [categoryToEdit, setCategoryToEdit] = useState<Category | null>(null)
   const [categoryToRemove, setCategoryToRemove] = useState<Category | null>(null)
   const [categoryToRestore, setCategoryToRestore] = useState<Category | null>(null)
-  const categoryIds = new Set(categories.map((category) => category.id))
-  const roots = categories.filter(
-    (category) => category.parent_id === null || !categoryIds.has(category.parent_id),
+  const envelopes = useQuery({
+    queryKey: ['budget-envelopes', 'current'],
+    queryFn: () => apiGet<Envelope[]>('/budget/envelopes'),
+  })
+  const envelopeByCategory = useMemo(
+    () => new Map((envelopes.data ?? []).map((envelope) => [envelope.category_id, envelope])),
+    [envelopes.data],
   )
+  const effectiveParentByCategory = useMemo(
+    () => effectiveCategoryParentIds(categories),
+    [categories],
+  )
+  const roots = [
+    ...categories.filter(
+      (category) => (
+        !category.archived
+        && effectiveParentByCategory.get(category.id) === null
+      ),
+    ),
+    ...categories.filter((category) => category.archived),
+  ]
+  const activeExpenseRoots = roots.filter(
+    (category) => category.kind === 'expense' && !category.archived,
+  )
+  const totalBudget = activeExpenseRoots.reduce(
+    (sum, category) => sum + Number(category.monthly_budget ?? 0),
+    0,
+  )
+  const totalSpent = activeExpenseRoots.reduce(
+    (sum, category) => sum + Number(envelopeByCategory.get(category.id)?.spent ?? 0),
+    0,
+  )
+  const budgetedSpent = activeExpenseRoots.reduce(
+    (sum, category) => (
+      category.monthly_budget === null
+        ? sum
+        : sum + Number(envelopeByCategory.get(category.id)?.spent ?? 0)
+    ),
+    0,
+  )
+  const refresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['budget-envelopes'] }),
+      queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
+      queryClient.invalidateQueries({ queryKey: ['categorization-rules'] }),
+      onRefresh(),
+    ])
+  }
   return (
     <>
       <section className="section-intro">
-        <p>Catégories, sous-catégories et règles métier.</p>
+        <p>Répartissez votre budget entre catégories et sous-catégories.</p>
         <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
           <Icon name="plus" />Ajouter une catégorie
         </button>
@@ -1792,7 +1516,7 @@ function ManageBudget({ categories, onRefresh }: { categories: Category[]; onRef
           categories={categories}
           onClose={() => setShowCreateModal(false)}
           onSaved={async () => {
-            await onRefresh()
+            await refresh()
             setShowCreateModal(false)
           }}
         />
@@ -1803,19 +1527,24 @@ function ManageBudget({ categories, onRefresh }: { categories: Category[]; onRef
           category={categoryToEdit}
           key={categoryToEdit.id}
           onClose={() => setCategoryToEdit(null)}
+          onRemove={() => {
+            setCategoryToRemove(categoryToEdit)
+            setCategoryToEdit(null)
+          }}
           onSaved={async () => {
-            await onRefresh()
+            await refresh()
             setCategoryToEdit(null)
           }}
         />
       )}
       {categoryToRemove && (
         <CategoryRemovalModal
+          categories={categories}
           category={categoryToRemove}
           key={categoryToRemove.id}
           onClose={() => setCategoryToRemove(null)}
           onSaved={async () => {
-            await onRefresh()
+            await refresh()
             setCategoryToRemove(null)
           }}
         />
@@ -1826,26 +1555,47 @@ function ManageBudget({ categories, onRefresh }: { categories: Category[]; onRef
           key={categoryToRestore.id}
           onClose={() => setCategoryToRestore(null)}
           onSaved={async () => {
-            await onRefresh()
+            await refresh()
             setCategoryToRestore(null)
           }}
         />
       )}
-      <Panel title="Catégories" subtitle="Déplacez, renommez, archivez ou restaurez vos catégories.">
-        <div className="category-tree-list">
-          {roots.map((category) => (
-            <CategoryTreeRow
-              categories={categories}
-              category={category}
-              depth={0}
-              key={category.id}
-              onEdit={setCategoryToEdit}
-              onRemove={setCategoryToRemove}
-              onRestore={setCategoryToRestore}
-            />
-          ))}
+      {envelopes.error && <div className="error-banner">{errorMessage(envelopes.error)}</div>}
+      <section className="budget-summary" aria-label="Résumé du budget mensuel">
+        <div><span>Budget</span><strong>{money(totalBudget)}</strong></div>
+        <div><span>Dépensé</span><strong>{money(totalSpent)}</strong></div>
+        <div>
+          <span>Disponible</span>
+          <strong className={totalBudget >= budgetedSpent ? 'positive' : 'negative'}>
+            {money(totalBudget - budgetedSpent)}
+          </strong>
         </div>
-      </Panel>
+      </section>
+      {roots.length > 0 ? (
+        <Panel title="Catégories" subtitle="Le budget d’un parent est réparti entre ses sous-catégories.">
+          <div className="category-tree-list">
+            {roots.map((category) => (
+              <CategoryTreeRow
+                categories={categories}
+                category={category}
+                depth={0}
+                effectiveParentByCategory={effectiveParentByCategory}
+                envelopeByCategory={envelopeByCategory}
+                key={category.id}
+                onEdit={setCategoryToEdit}
+                onRestore={setCategoryToRestore}
+              />
+            ))}
+          </div>
+        </Panel>
+      ) : (
+        <EmptyState
+          icon="budget"
+          title="Aucune catégorie"
+          text="Ajoutez une catégorie de dépense pour commencer à suivre vos enveloppes."
+          action={<button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}><Icon name="plus" />Ajouter une catégorie</button>}
+        />
+      )}
     </>
   )
 }
@@ -1854,40 +1604,62 @@ function CategoryTreeRow({
   categories,
   category,
   depth,
+  effectiveParentByCategory,
+  envelopeByCategory,
   onEdit,
-  onRemove,
   onRestore,
 }: {
   categories: Category[]
   category: Category
   depth: number
+  effectiveParentByCategory: Map<number, number | null>
+  envelopeByCategory: Map<number, Envelope>
   onEdit: (category: Category) => void
-  onRemove: (category: Category) => void
   onRestore: (category: Category) => void
 }) {
-  const children = categories.filter((child) => child.parent_id === category.id)
+  const children = category.archived
+    ? []
+    : categories.filter(
+      (child) => (
+        !child.archived
+        && effectiveParentByCategory.get(child.id) === category.id
+      ),
+    )
+  const activeChildren = children.filter((child) => !child.archived)
+  const envelope = envelopeByCategory.get(category.id)
+  const remainderBudget = Number(envelope?.remainder_budget ?? 0)
   return (
     <div className="category-tree-group">
       <CategoryTreeItem
         category={category}
+        childCount={activeChildren.length}
         depth={depth}
+        envelope={envelope}
+        spent={Number(envelope?.spent ?? 0)}
         onEdit={() => onEdit(category)}
-        onRemove={() => onRemove(category)}
         onRestore={() => onRestore(category)}
       />
-      {children.length > 0 && (
+      {(children.length > 0 || remainderBudget > 0) && (
         <div className="category-tree-children">
           {children.map((child) => (
             <CategoryTreeRow
               categories={categories}
               category={child}
               depth={depth + 1}
+              effectiveParentByCategory={effectiveParentByCategory}
+              envelopeByCategory={envelopeByCategory}
               key={child.id}
               onEdit={onEdit}
-              onRemove={onRemove}
               onRestore={onRestore}
             />
           ))}
+          {remainderBudget > 0 && (
+            <RemainderCategoryRow
+              budget={remainderBudget}
+              color={category.color}
+              spent={Number(envelope?.direct_spent ?? 0)}
+            />
+          )}
         </div>
       )}
     </div>
@@ -1896,17 +1668,23 @@ function CategoryTreeRow({
 
 function CategoryTreeItem({
   category,
+  childCount,
   depth,
+  envelope,
+  spent,
   onEdit,
-  onRemove,
   onRestore,
 }: {
   category: Category
+  childCount: number
   depth: number
+  envelope?: Envelope
+  spent: number
   onEdit: () => void
-  onRemove: () => void
   onRestore: () => void
 }) {
+  const budget = envelope?.budget !== undefined && envelope.budget !== null ? Number(envelope.budget) : null
+  const showBudgetRow = !category.archived && category.kind === 'expense'
   return (
     <div className={`category-tree-row ${depth > 0 ? 'child' : ''} ${category.archived ? 'archived' : ''}`}>
       {depth > 0 && <Icon name="arrow" />}
@@ -1914,26 +1692,76 @@ function CategoryTreeItem({
       <strong>{category.name}</strong>
       {category.archived
         ? <StatusBadge tone="warning">Archivée</StatusBadge>
-        : depth > 0
-        ? <small>Sous-catégorie</small>
-        : <StatusBadge tone={category.kind === 'income' ? 'positive' : 'neutral'}>{category.kind === 'income' ? 'Revenu' : 'Dépense'}</StatusBadge>}
-      {depth === 0 && category.is_default && <small>Par défaut</small>}
+        : childCount > 0
+          ? <small>{childCount} sous-catégorie{childCount === 1 ? '' : 's'}</small>
+          : category.kind === 'income'
+            ? <small>Revenu</small>
+            : null}
       <div className="row-actions">
         {category.archived ? (
           <button className="icon-action positive" type="button" aria-label={`Restaurer ${category.name}`} onClick={onRestore}>
             <Icon name="refresh" />
           </button>
         ) : (
-          <>
-            <button className="icon-action" type="button" aria-label={`Modifier ${category.name}`} onClick={onEdit}>
-              <Icon name="edit" />
-            </button>
-            <button className="icon-action destructive-button" type="button" aria-label={`Supprimer ${category.name}`} onClick={onRemove}>
-              <Icon name="trash" />
-            </button>
-          </>
+          <button className="icon-action" type="button" aria-label={`Modifier ${category.name}`} onClick={onEdit}>
+            <Icon name="edit" />
+          </button>
         )}
       </div>
+      {showBudgetRow && (
+        <CategoryBudgetLine budget={budget} color={category.color} spent={spent} />
+      )}
+    </div>
+  )
+}
+
+function RemainderCategoryRow({
+  budget,
+  color,
+  spent,
+}: {
+  budget: number
+  color: string
+  spent: number
+}) {
+  return (
+    <div className="category-tree-row category-tree-remainder child">
+      <Icon name="arrow" />
+      <i style={{ background: color }} />
+      <strong>Autres</strong>
+      <span className="category-automatic-label">Automatique</span>
+      <CategoryBudgetLine budget={budget} color={color} spent={spent} />
+    </div>
+  )
+}
+
+function CategoryBudgetLine({
+  budget,
+  color,
+  spent,
+}: {
+  budget: number | null
+  color: string
+  spent: number
+}) {
+  if (budget === null) {
+    return (
+      <div className="category-tree-budget no-limit">
+        <small>Sans plafond{spent > 0 ? ` · ${money(spent)} dépensés` : ''}</small>
+      </div>
+    )
+  }
+  const remaining = budget - spent
+  const ratio = budget > 0 ? (spent / budget) * 100 : 0
+  return (
+    <div className="category-tree-budget">
+      <div className="category-budget-copy">
+        <span>{money(spent)} dépensés</span>
+        <strong className={remaining < 0 ? 'negative' : ''}>
+          {remaining >= 0 ? `${money(remaining)} restants` : `${money(-remaining)} dépassés`}
+        </strong>
+      </div>
+      <ProgressBar value={ratio} color={color} danger={ratio > 100} />
     </div>
   )
 }
@@ -1942,17 +1770,37 @@ function CategoryEditorModal({
   categories,
   category,
   onClose,
+  onRemove,
   onSaved,
 }: {
   categories: Category[]
   category?: Category
   onClose: () => void
+  onRemove?: () => void
   onSaved: () => Promise<void>
 }) {
+  const effectiveParentByCategory = useMemo(
+    () => effectiveCategoryParentIds(categories),
+    [categories],
+  )
+  const childrenBudget = category
+    ? categories
+      .filter((candidate) => (
+        !candidate.archived
+        && effectiveParentByCategory.get(candidate.id) === category.id
+      ))
+      .reduce((sum, child) => sum + Number(child.monthly_budget ?? 0), 0)
+    : 0
   const [name, setName] = useState(category?.name ?? '')
   const [kind, setKind] = useState<Category['kind']>(category?.kind ?? 'expense')
   const [color, setColor] = useState(category?.color ?? '#615fff')
   const [parentId, setParentId] = useState(String(category?.parent_id ?? ''))
+  const [unlimited, setUnlimited] = useState(
+    category ? category.monthly_budget === null && childrenBudget === 0 : true,
+  )
+  const [budget, setBudget] = useState(
+    category?.monthly_budget ?? (childrenBudget > 0 ? childrenBudget.toFixed(2) : ''),
+  )
   const descendants = category ? categoryDescendantIds(category.id, categories) : new Set<number>()
   const parentOptions = categories.filter((candidate) => (
     candidate.kind === kind
@@ -1965,34 +1813,38 @@ function CategoryEditorModal({
       setParentId('')
     }
   }, [parentId, parentOptions])
+  const showBudgetFields = kind === 'expense'
   const mutation = useMutation({
     mutationFn: () => {
       const payload = {
         name,
         color,
         parent_id: parentId ? Number(parentId) : null,
+        monthly_budget: showBudgetFields && !unlimited ? budget : null,
       }
       return category
         ? apiPatch<Category>(`/categories/${category.id}`, payload)
-        : apiPost<Category>('/categories', {
-          ...payload,
-          kind,
-          monthly_budget: null,
-        })
+        : apiPost<Category>('/categories', { ...payload, kind })
     },
     onSuccess: onSaved,
   })
   const formId = category ? `category-edit-${category.id}` : 'category-create'
+  const budgetMissing = showBudgetFields && !unlimited && !budget
   return (
     <Modal
       title={category ? 'Modifier la catégorie' : 'Nouvelle catégorie'}
-      description={category ? 'Renommez, recolorez ou déplacez cette catégorie.' : 'Créez une catégorie principale ou placez-la sous un parent.'}
+      description={category ? 'Renommez, recolorez, déplacez ou ajustez le plafond de cette catégorie.' : 'Créez une catégorie de revenu ou de dépense, avec un plafond mensuel facultatif.'}
       onClose={onClose}
       actions={(
         <>
-          <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending || !name.trim()}>
+          <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending || !name.trim() || budgetMissing}>
             {mutation.isPending ? 'Enregistrement…' : category ? 'Enregistrer' : 'Créer la catégorie'}
           </button>
+          {category && onRemove && (
+            <button className="text-button destructive-button" type="button" onClick={onRemove}>
+              Supprimer
+            </button>
+          )}
           <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
@@ -2023,47 +1875,129 @@ function CategoryEditorModal({
         <Field label="Couleur">
           <input className="color-input category-modal-color" type="color" value={color} onChange={(event) => setColor(event.target.value)} />
         </Field>
+        {showBudgetFields && (
+          <>
+            <div className="field">
+              <span>Enveloppe de dépense</span>
+              <EnvelopeLimitChoice
+                allowUnlimited={childrenBudget === 0}
+                unlimited={unlimited}
+                onChange={setUnlimited}
+              />
+            </div>
+            {!unlimited && (
+              <Field label="Plafond mensuel">
+                <input
+                  type="number"
+                  min={childrenBudget > 0 ? childrenBudget : '0.01'}
+                  step="0.01"
+                  value={budget}
+                  onChange={(event) => setBudget(event.target.value)}
+                  required
+                />
+              </Field>
+            )}
+            {childrenBudget > 0 && (
+              <p className="modal-hint">
+                {money(childrenBudget)} sont déjà répartis entre les sous-catégories.
+                Le reliquat éventuel sera placé automatiquement dans « Autres ».
+              </p>
+            )}
+            {unlimited && <p className="modal-hint">Les dépenses seront suivies sans réduire le budget disponible des enveloppes plafonnées.</p>}
+          </>
+        )}
         {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
     </Modal>
   )
 }
 
+function EnvelopeLimitChoice({
+  allowUnlimited = true,
+  unlimited,
+  onChange,
+}: {
+  allowUnlimited?: boolean
+  unlimited: boolean
+  onChange: (unlimited: boolean) => void
+}) {
+  return (
+    <div className="segmented-control envelope-limit-choice" role="group" aria-label="Type d’enveloppe">
+      <button className={unlimited ? '' : 'active'} type="button" aria-pressed={!unlimited} onClick={() => onChange(false)}>Avec plafond</button>
+      <button
+        className={unlimited ? 'active' : ''}
+        type="button"
+        aria-pressed={unlimited}
+        disabled={!allowUnlimited}
+        onClick={() => onChange(true)}
+      >
+        Sans plafond
+      </button>
+    </div>
+  )
+}
+
 function CategoryRemovalModal({
+  categories,
   category,
   onClose,
   onSaved,
 }: {
+  categories: Category[]
   category: Category
   onClose: () => void
   onSaved: () => Promise<void>
 }) {
+  const [reassign, setReassign] = useState(false)
+  const destinations = categories.filter((candidate) => (
+    candidate.kind === category.kind && candidate.id !== category.id && !candidate.archived
+  ))
+  const [replacementCategoryId, setReplacementCategoryId] = useState(String(destinations[0]?.id ?? ''))
   const usage = useQuery({
     queryKey: ['transaction-count', 'category', category.id],
     queryFn: () => apiGet<TransactionCount>(`/transactions/count${queryString({
       category_id: category.id,
     })}`),
   })
-  const mutation = useMutation({
+  const archiveOrDelete = useMutation({
     mutationFn: () => apiPost<CategoryRemovalResult>(`/categories/${category.id}/remove`),
+    onSuccess: onSaved,
+  })
+  const reassignAndDelete = useMutation({
+    mutationFn: () => apiDelete(`/categories/${category.id}${queryString({
+      replacement_category_id: Number(replacementCategoryId),
+    })}`),
     onSuccess: onSaved,
   })
   const transactionCount = usage.data?.count ?? 0
   return (
     <Modal
       title={`Supprimer « ${category.name} » ?`}
-      description="La suppression protège automatiquement votre historique."
+      description={reassign
+        ? 'Les transactions, règles et séries récurrentes liées seront réaffectées avant la suppression définitive.'
+        : 'La suppression protège automatiquement votre historique.'}
       onClose={onClose}
       actions={(
         <>
-          <button
-            className="secondary-button destructive-button"
-            type="button"
-            disabled={usage.isLoading || mutation.isPending}
-            onClick={() => mutation.mutate()}
-          >
-            {mutation.isPending ? 'Traitement…' : transactionCount > 0 ? 'Archiver la catégorie' : 'Supprimer la catégorie'}
-          </button>
+          {reassign ? (
+            <button
+              className="secondary-button destructive-button"
+              type="button"
+              disabled={!replacementCategoryId || reassignAndDelete.isPending}
+              onClick={() => reassignAndDelete.mutate()}
+            >
+              {reassignAndDelete.isPending ? 'Suppression…' : 'Réaffecter puis supprimer'}
+            </button>
+          ) : (
+            <button
+              className="secondary-button destructive-button"
+              type="button"
+              disabled={usage.isLoading || archiveOrDelete.isPending}
+              onClick={() => archiveOrDelete.mutate()}
+            >
+              {archiveOrDelete.isPending ? 'Traitement…' : transactionCount > 0 ? 'Archiver la catégorie' : 'Supprimer la catégorie'}
+            </button>
+          )}
           <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
@@ -2078,7 +2012,28 @@ function CategoryRemovalModal({
               : 'Si aucun autre élément ne dépend de cette catégorie, elle sera supprimée définitivement. Sinon, elle sera archivée et restera restaurable.'}
         </p>
       </div>
-      {(usage.error || mutation.error) && <p className="form-error">{errorMessage(usage.error ?? mutation.error)}</p>}
+      {transactionCount > 0 && destinations.length > 0 && (
+        <label className="toggle-row category-removal-reassign-toggle">
+          <span>
+            <strong>Réaffecter avant suppression définitive</strong>
+            <small>Déplace les transactions, règles et séries vers une autre catégorie puis supprime celle-ci sans possibilité de restauration.</small>
+          </span>
+          <input type="checkbox" checked={reassign} onChange={(event) => setReassign(event.target.checked)} />
+          <span className="toggle-visual" aria-hidden="true" />
+        </label>
+      )}
+      {reassign && (
+        <Field label="Réaffecter vers">
+          <select value={replacementCategoryId} onChange={(event) => setReplacementCategoryId(event.target.value)}>
+            {destinations.map((destination) => (
+              <option key={destination.id} value={destination.id}>{destination.name}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {(usage.error || archiveOrDelete.error || reassignAndDelete.error) && (
+        <p className="form-error">{errorMessage(usage.error ?? archiveOrDelete.error ?? reassignAndDelete.error)}</p>
+      )}
     </Modal>
   )
 }
@@ -2128,6 +2083,32 @@ function categoryDescendantIds(categoryId: number, categories: Category[]): Set<
   }
   visit(categoryId)
   return descendants
+}
+
+function effectiveCategoryParentIds(categories: Category[]): Map<number, number | null> {
+  const byId = new Map(categories.map((category) => [category.id, category]))
+  const result = new Map<number, number | null>()
+  for (const category of categories) {
+    if (category.archived) continue
+    let parentId = category.parent_id
+    const visited = new Set([category.id])
+    while (parentId !== null) {
+      if (visited.has(parentId)) {
+        parentId = null
+        break
+      }
+      visited.add(parentId)
+      const parent = byId.get(parentId)
+      if (!parent) {
+        parentId = null
+        break
+      }
+      if (!parent.archived) break
+      parentId = parent.parent_id
+    }
+    result.set(category.id, parentId)
+  }
+  return result
 }
 
 function SpendingTree({ categories, nodes }: { categories: Category[]; nodes: SpendingNode[] }) {

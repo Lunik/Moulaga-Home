@@ -177,7 +177,6 @@ async def _seed(
 
     # --- Category hierarchy + budgets ------------------------------------- #
     logement = categories[("Logement", "expense")]
-    logement.monthly_budget = money("900.00")
     courses = categories[("Courses", "expense")]
     courses.monthly_budget = money("450.00")
     electricite = Category(
@@ -187,6 +186,10 @@ async def _seed(
     internet = Category(
         name="Internet", kind="expense", color="#38bdf8", parent_id=logement.id,
         monthly_budget=money("40.00"),
+    )
+    logement_remainder = money("740.00")
+    logement.monthly_budget = money(
+        electricite.monthly_budget + internet.monthly_budget + logement_remainder
     )
     archived_category = Category(
         name="Ancienne categorie demo",

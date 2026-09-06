@@ -9,6 +9,7 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from .category_budgeting import synchronize_parent_budgets
 from .config import settings
 from .migrations import run_migrations, sqlite_file_path
 from .models import Account, Category, Preferences
@@ -61,6 +62,8 @@ async def init_db() -> None:
 
         if await session.scalar(select(Preferences.id).limit(1)) is None:
             session.add(Preferences(id=1))
+        await session.flush()
+        await synchronize_parent_budgets(session)
         await session.commit()
 
 

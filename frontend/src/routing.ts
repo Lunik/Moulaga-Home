@@ -7,7 +7,6 @@ export type BudgetTab =
   | 'envelopes'
   | 'categorize'
   | 'transactions'
-  | 'manage'
 
 export type WealthTab = 'overview' | 'holdings' | 'real-estate' | 'debts'
 
@@ -27,8 +26,9 @@ const budgetTabs = new Set<BudgetTab>([
   'envelopes',
   'categorize',
   'transactions',
-  'manage',
 ])
+// Categories used to have their own "Configuration" tab; envelopes now cover both.
+const legacyBudgetTabs: Record<string, BudgetTab> = { manage: 'envelopes' }
 const wealthTabs = new Set<WealthTab>(['overview', 'holdings', 'real-estate', 'debts'])
 
 export function useRoute(): [Route, (route: Route) => void] {
@@ -79,7 +79,8 @@ function parseHash(hash: string): Route {
   if (parts[0] === 'accounts') return { name: 'accounts' }
   if (parts[0] === 'budget') {
     const tab = parts[1] as BudgetTab
-    return { name: 'budget', tab: budgetTabs.has(tab) ? tab : 'overview' }
+    if (budgetTabs.has(tab)) return { name: 'budget', tab }
+    return { name: 'budget', tab: legacyBudgetTabs[parts[1]] ?? 'overview' }
   }
   if (parts[0] === 'wealth') {
     const tab = parts[1] as WealthTab

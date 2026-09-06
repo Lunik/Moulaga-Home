@@ -82,7 +82,12 @@ def test_budget_envelopes_and_hierarchical_spending(client):
     parent = _category(client, "Logement")
     child = client.post(
         "/api/categories",
-        json={"name": "Electricite", "kind": "expense", "parent_id": parent["id"]},
+        json={
+            "name": "Electricite",
+            "kind": "expense",
+            "parent_id": parent["id"],
+            "monthly_budget": "120.00",
+        },
     ).json()
     client.patch(f"/api/categories/{parent['id']}", json={"monthly_budget": "500.00"})
 
@@ -102,11 +107,21 @@ def test_budget_envelopes_and_hierarchical_spending(client):
     logement = next(e for e in envelopes if e["category_id"] == parent["id"])
     electricite = next(e for e in envelopes if e["category_id"] == child["id"])
     assert logement["budget"] == "500.00"
-    assert logement["spent"] == "300.00"
-    assert logement["remaining"] == "200.00"
-    assert electricite["budget"] is None
+    assert logement["direct_spent"] == "300.00"
+    assert logement["spent"] == "420.00"
+    assert logement["remaining"] == "80.00"
+    assert logement["children_budget"] == "120.00"
+    assert logement["remainder_budget"] == "380.00"
+    assert electricite["parent_id"] == parent["id"]
+    assert electricite["budget"] == "120.00"
+    assert electricite["direct_spent"] == "120.00"
     assert electricite["spent"] == "120.00"
-    assert electricite["remaining"] is None
+    assert electricite["remaining"] == "0.00"
+
+    overview = client.get("/api/budget/overview").json()
+    assert overview["budget_total"] == "500.00"
+    assert overview["envelope_spent"] == "420.00"
+    assert overview["envelope_remaining"] == "80.00"
 
     spending = client.get("/api/budget/spending").json()
     logement_node = next(n for n in spending if n["category_id"] == parent["id"])
@@ -114,6 +129,128 @@ def test_budget_envelopes_and_hierarchical_spending(client):
     assert logement_node["amount"] == "420.00"
     assert logement_node["transaction_count"] == 2
     assert any(c["category_id"] == child["id"] for c in logement_node["children"])
+
+
+def test_parent_budget_tracks_child_allocations(client):
+    parent = client.post(
+        "/api/categories",
+        json={
+            "name": "Maison",
+            "kind": "expense",
+            "monthly_budget": "200.00",
+        },
+    ).json()
+    first_child = client.post(
+        "/api/categories",
+        json={
+            "name": "Entretien",
+            "kind": "expense",
+            "parent_id": parent["id"],
+            "monthly_budget": "50.00",
+        },
+    ).json()
+
+    envelope = next(
+        item
+        for item in client.get("/api/budget/envelopes").json()
+        if item["category_id"] == parent["id"]
+    )
+    assert envelope["children_budget"] == "50.00"
+    assert envelope["remainder_budget"] == "150.00"
+
+    client.post(
+        "/api/categories",
+        json={
+            "name": "Travaux",
+            "kind": "expense",
+            "parent_id": parent["id"],
+            "monthly_budget": "250.00",
+        },
+    )
+    updated_parent = client.get(f"/api/categories/{parent['id']}").json()
+    assert updated_parent["monthly_budget"] == "300.00"
+
+    too_small = client.patch(
+        f"/api/categories/{parent['id']}",
+        json={"monthly_budget": "299.00"},
+    )
+    assert too_small.status_code == 422
+    assert "300.00" in too_small.json()["detail"]
+
+    client.patch(
+        f"/api/categories/{first_child['id']}",
+        json={"monthly_budget": "20.00"},
+    )
+    envelope = next(
+        item
+        for item in client.get("/api/budget/envelopes").json()
+        if item["category_id"] == parent["id"]
+    )
+    assert envelope["budget"] == "300.00"
+    assert envelope["children_budget"] == "270.00"
+    assert envelope["remainder_budget"] == "30.00"
+
+
+def test_archived_intermediate_category_does_not_duplicate_budget(client):
+    root = client.post(
+        "/api/categories",
+        json={
+            "name": "Racine budget",
+            "kind": "expense",
+            "monthly_budget": "100.00",
+        },
+    ).json()
+    middle = client.post(
+        "/api/categories",
+        json={
+            "name": "Intermediaire budget",
+            "kind": "expense",
+            "parent_id": root["id"],
+            "monthly_budget": "100.00",
+        },
+    ).json()
+    leaf = client.post(
+        "/api/categories",
+        json={
+            "name": "Feuille budget",
+            "kind": "expense",
+            "parent_id": middle["id"],
+            "monthly_budget": "100.00",
+        },
+    ).json()
+
+    archived = client.post(f"/api/categories/{middle['id']}/archive")
+    assert archived.status_code == 200
+
+    overview = client.get("/api/budget/overview").json()
+    assert overview["budget_total"] == "100.00"
+    envelopes = client.get("/api/budget/envelopes").json()
+    root_envelope = next(item for item in envelopes if item["category_id"] == root["id"])
+    leaf_envelope = next(item for item in envelopes if item["category_id"] == leaf["id"])
+    assert root_envelope["children_budget"] == "100.00"
+    assert root_envelope["remainder_budget"] is None
+    assert leaf_envelope["parent_id"] == root["id"]
+
+    grown = client.patch(
+        f"/api/categories/{leaf['id']}",
+        json={
+            "name": "Feuille budget modifiee",
+            "parent_id": middle["id"],
+            "monthly_budget": "200.00",
+        },
+    )
+    assert grown.status_code == 200
+    assert client.get(f"/api/categories/{root['id']}").json()["monthly_budget"] == "200.00"
+    assert client.get(f"/api/categories/{middle['id']}").json()["monthly_budget"] == "100.00"
+
+    restored = client.post(
+        f"/api/categories/{middle['id']}/archive",
+        params={"archived": False},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["monthly_budget"] == "200.00"
+    assert client.get(f"/api/categories/{root['id']}").json()["monthly_budget"] == "200.00"
+    assert client.get("/api/budget/overview").json()["budget_total"] == "200.00"
 
 
 # --------------------------------------------------------------------------- #

@@ -11,6 +11,11 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..category_budgeting import (
+    ParentBudgetTooSmall,
+    ensure_ancestor_budgets,
+    validate_parent_budget,
+)
 from ..common import money
 from ..db import get_session
 from ..models import CategorizationRule, Category, RecurringSeries, Transaction
@@ -74,18 +79,32 @@ async def update_category(
         raise HTTPException(status_code=404, detail="Categorie introuvable")
 
     data = payload.model_dump(exclude_unset=True)
-    if "parent_id" in data and data["parent_id"] is not None:
+    parent_changed = (
+        "parent_id" in data and data["parent_id"] != category.parent_id
+    )
+    if parent_changed and data["parent_id"] is not None:
         parent = await session.get(Category, data["parent_id"])
         if parent is None:
             raise HTTPException(status_code=404, detail="Categorie parente introuvable")
+        if parent.archived:
+            raise HTTPException(status_code=409, detail="La categorie parente est archivee")
         if parent.kind != category.kind:
             raise HTTPException(status_code=422, detail="Le parent doit avoir le meme type")
         if await _would_create_cycle(session, category_id, data["parent_id"]):
             raise HTTPException(status_code=422, detail="Hierarchie circulaire interdite")
 
+    if "monthly_budget" in data:
+        try:
+            await validate_parent_budget(session, category_id, data["monthly_budget"])
+        except ParentBudgetTooSmall as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     for field, value in data.items():
         setattr(category, field, value)
     try:
+        await session.flush()
+        if not category.archived:
+            await ensure_ancestor_budgets(session, category.id)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -107,6 +126,9 @@ async def archive_category(
     if category is None:
         raise HTTPException(status_code=404, detail="Categorie introuvable")
     category.archived = archived
+    await session.flush()
+    if not archived:
+        await ensure_ancestor_budgets(session, category.id)
     await session.commit()
     await session.refresh(category)
     return CategoryRead.model_validate(category).model_copy(
