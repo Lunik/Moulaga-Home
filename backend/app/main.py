@@ -49,7 +49,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Moulaga",
         description="Gestion personnelle de budget, comptes et transactions.",
-        version="1.0.0",
+        version="1.1.0",
         lifespan=lifespan,
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
