@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
@@ -15,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from ..account_access import ensure_account_writable, require_account
 from ..attachments import attachment_path, remove_attachment, store_attachment
-from ..common import money
+from ..common import local_today, money
 from ..db import get_session
 from ..models import (
     Account,
@@ -263,14 +262,14 @@ async def archive_account(
         session.add_all(
             [
                 Transaction(
-                    booked_at=date.today(),
+                    booked_at=local_today(),
                     description=f"Transfert vers {destination.name}",
                     amount=money(-balance),
                     account_id=account.id,
                     transfer_group=transfer_group,
                 ),
                 Transaction(
-                    booked_at=date.today(),
+                    booked_at=local_today(),
                     description=f"Transfert depuis {account.name}",
                     amount=money(balance),
                     account_id=destination.id,

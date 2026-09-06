@@ -71,9 +71,14 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-spending'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-cashflow'] }),
+      queryClient.invalidateQueries({ queryKey: ['overview'] }),
+      queryClient.invalidateQueries({ queryKey: ['monthly-stats'] }),
+      queryClient.invalidateQueries({ queryKey: ['dashboard-accounts'] }),
+      queryClient.invalidateQueries({ queryKey: ['dashboard-transactions'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
       queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['debts'] }),
       queryClient.invalidateQueries({ queryKey: ['account-institution-history'] }),
     ])
   }
@@ -84,6 +89,8 @@ export default function App() {
     settings.error,
     settings.data?.local_merchant_identities ? merchants.error : null,
   ].find(Boolean)
+  const dashboardExternalError = settings.error
+    ?? (settings.data?.local_merchant_identities ? merchants.error : null)
   const pageTitle = titleForRoute(route)
   const activeSection = route.name === 'account' ? 'accounts' : route.name
 
@@ -106,49 +113,51 @@ export default function App() {
           )}
         </header>
 
-        {firstError && <div className="error-banner" role="alert">Impossible de charger les données locales : {errorMessage(firstError)}</div>}
+        {firstError && route.name !== 'dashboard' && (
+          <div className="error-banner" role="alert">Impossible de charger les données locales : {errorMessage(firstError)}</div>
+        )}
 
         <ViewErrorBoundary key={window.location.hash}>
           <Suspense fallback={<div className="loading-card">Chargement de la vue…</div>}>
             {route.name === 'dashboard' && (
-            <DashboardView
-              accounts={accounts.data ?? []}
-              merchants={settings.data?.local_merchant_identities ? merchants.data ?? [] : []}
-              transactions={transactions.data ?? []}
-              isOnline={isOnline}
-              navigate={navigate}
-            />
-          )}
-          {route.name === 'accounts' && (
-            <AccountsView
-              accounts={accounts.data ?? []}
-              navigate={navigate}
-              onRefresh={refreshCore}
-            />
-          )}
-          {route.name === 'account' && (
-            <AccountDetailView
-              accountId={route.accountId}
-              accounts={accounts.data ?? []}
-              categories={categories.data ?? []}
-              navigate={navigate}
-              onRefresh={refreshCore}
-            />
-          )}
-          {route.name === 'budget' && (
-            <BudgetView
-              tab={route.tab}
-              accounts={accounts.data ?? []}
-              categories={categories.data ?? []}
-              merchants={settings.data?.local_merchant_identities ? merchants.data ?? [] : []}
-              transactions={transactions.data ?? []}
-              settings={settings.data}
-              navigate={navigate}
-              onRefresh={refreshCore}
-            />
-          )}
-          {route.name === 'wealth' && <WealthView tab={route.tab} accounts={accounts.data ?? []} navigate={navigate} />}
-          {route.name === 'family' && <FamilyView accounts={accounts.data ?? []} />}
+              <DashboardView
+                externalError={dashboardExternalError}
+                isOnline={isOnline}
+                merchants={settings.data?.local_merchant_identities ? merchants.data ?? [] : []}
+                navigate={navigate}
+                onRefresh={refreshCore}
+              />
+            )}
+            {route.name === 'accounts' && (
+              <AccountsView
+                accounts={accounts.data ?? []}
+                navigate={navigate}
+                onRefresh={refreshCore}
+              />
+            )}
+            {route.name === 'account' && (
+              <AccountDetailView
+                accountId={route.accountId}
+                accounts={accounts.data ?? []}
+                categories={categories.data ?? []}
+                navigate={navigate}
+                onRefresh={refreshCore}
+              />
+            )}
+            {route.name === 'budget' && (
+              <BudgetView
+                tab={route.tab}
+                accounts={accounts.data ?? []}
+                categories={categories.data ?? []}
+                merchants={settings.data?.local_merchant_identities ? merchants.data ?? [] : []}
+                transactions={transactions.data ?? []}
+                settings={settings.data}
+                navigate={navigate}
+                onRefresh={refreshCore}
+              />
+            )}
+            {route.name === 'wealth' && <WealthView tab={route.tab} accounts={accounts.data ?? []} navigate={navigate} />}
+            {route.name === 'family' && <FamilyView accounts={accounts.data ?? []} />}
             {route.name === 'settings' && <SettingsView />}
           </Suspense>
         </ViewErrorBoundary>

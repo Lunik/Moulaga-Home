@@ -5,7 +5,8 @@ une base SQLite locale et persistante.
 
 ## Fonctionnalites
 
-- tableau de bord du patrimoine net, actifs, biens immobiliers, dettes et evolution mensuelle ;
+- tableau de bord des soldes, revenus, depenses et budget restant, avec activite recente,
+  comparaison mensuelle et synthese du patrimoine net ;
 - comptes groupes par etablissement, numero ou identifiant facultatif, historique,
   releves avec pieces jointes locales, configurations de livrets et positions ;
 - registre pagine des transactions avec pieces jointes locales ajoutables des la creation,

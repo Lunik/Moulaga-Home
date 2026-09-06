@@ -6,11 +6,11 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..account_access import require_account
-from ..common import money
+from ..common import local_today, money
 from ..db import get_session
 from ..models import (
     Account,
@@ -476,7 +476,7 @@ async def generate_portfolio_snapshot(
     period: str | None = None, session: AsyncSession = Depends(get_session)
 ) -> PortfolioSnapshotRead:
     """Idempotently record the current portfolio valuation for a month (YYYY-MM)."""
-    reference = period or date.today().strftime("%Y-%m")
+    reference = period or local_today().strftime("%Y-%m")
     if len(reference) != 7 or reference[4] != "-":
         raise HTTPException(status_code=422, detail="Periode invalide (attendu AAAA-MM)")
     holdings = (await session.execute(select(Holding))).scalars().all()
@@ -551,19 +551,24 @@ async def _investment_account_ids(session: AsyncSession) -> set[int]:
     return set(rows)
 
 
-@router.get("/networth/overview", response_model=NetWorthOverview)
-async def net_worth_overview(session: AsyncSession = Depends(get_session)) -> NetWorthOverview:
+async def _current_net_worth_components(
+    session: AsyncSession,
+    through: date,
+) -> tuple[Decimal, Decimal, Decimal, Decimal, set[int]]:
     investment_accounts = await _investment_account_ids(session)
-
-    # Cash: computed balances of accounts that do NOT hold investments, so a
-    # holding's market value is never double counted with its account balance.
     account_rows = (
         await session.execute(
             select(
                 Account.id,
                 Account.initial_balance + func.coalesce(func.sum(Transaction.amount), 0),
             )
-            .outerjoin(Transaction, Transaction.account_id == Account.id)
+            .outerjoin(
+                Transaction,
+                and_(
+                    Transaction.account_id == Account.id,
+                    Transaction.booked_at <= through,
+                ),
+            )
             .group_by(Account.id)
         )
     ).all()
@@ -583,6 +588,18 @@ async def net_worth_overview(session: AsyncSession = Depends(get_session)) -> Ne
     )
     debts = await session.scalar(select(func.coalesce(func.sum(Debt.balance), 0)))
     debts_total = Decimal(debts or 0)
+    return cash, investments, real_estate, debts_total, investment_accounts
+
+
+@router.get("/networth/overview", response_model=NetWorthOverview)
+async def net_worth_overview(
+    as_of: date | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> NetWorthOverview:
+    through = as_of or local_today()
+    cash, investments, real_estate, debts_total, _ = (
+        await _current_net_worth_components(session, through)
+    )
 
     return NetWorthOverview(
         cash=money(cash),
@@ -594,42 +611,62 @@ async def net_worth_overview(session: AsyncSession = Depends(get_session)) -> Ne
 
 
 @router.get("/networth/history", response_model=list[NetWorthPoint])
-async def net_worth_history(session: AsyncSession = Depends(get_session)) -> list[NetWorthPoint]:
-    """Historical net worth from cash snapshots plus cumulative contributions.
+async def net_worth_history(
+    as_of: date | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> list[NetWorthPoint]:
+    """Historical net worth from account and portfolio valuation snapshots.
 
-    Investment accounts are excluded from the cash side (their value is tracked
-    via contributions) so nothing is double counted. Real estate enters at its
-    owned purchase value on acquisition, with the latest valuation adjustment
-    applied in the current month. Current total debt is subtracted from each
-    period as a conservative baseline.
+    Missing account snapshots carry their last known balance forward. Before a
+    portfolio valuation exists, contributions and owned property values provide
+    a conservative fallback. The current point always uses live values so it
+    reconciles with ``/networth/overview``. Current debt is subtracted from every
+    period because debt history is not persisted yet.
     """
-    investment_accounts = await _investment_account_ids(session)
+    today = as_of or local_today()
+    current_period = today.strftime("%Y-%m")
+    cash, investments, real_estate, debts_total, investment_accounts = (
+        await _current_net_worth_components(session, today)
+    )
     snapshots = (
-        await session.execute(select(BalanceSnapshot).order_by(BalanceSnapshot.period))
+        await session.execute(
+            select(BalanceSnapshot)
+            .where(BalanceSnapshot.period <= current_period)
+            .order_by(BalanceSnapshot.period, BalanceSnapshot.account_id)
+        )
     ).scalars().all()
 
-    cash_by_period: dict[str, Decimal] = {}
+    cash_snapshots_by_period: dict[str, list[BalanceSnapshot]] = {}
     for snapshot in snapshots:
         if snapshot.account_id in investment_accounts:
             continue
-        cash_by_period[snapshot.period] = cash_by_period.get(
-            snapshot.period, Decimal("0")
-        ) + Decimal(snapshot.balance)
+        cash_snapshots_by_period.setdefault(snapshot.period, []).append(snapshot)
 
     contrib_rows = (
         await session.execute(
             select(
                 func.strftime("%Y-%m", Contribution.occurred_on), func.sum(Contribution.amount)
             )
+            .where(Contribution.occurred_on <= today)
             .group_by(func.strftime("%Y-%m", Contribution.occurred_on))
             .order_by(func.strftime("%Y-%m", Contribution.occurred_on))
         )
     ).all()
     contrib_by_period = {period: Decimal(amount or 0) for period, amount in contrib_rows}
+    portfolio_snapshots = (
+        await session.execute(
+            select(PortfolioSnapshot)
+            .where(PortfolioSnapshot.period <= current_period)
+            .order_by(PortfolioSnapshot.period)
+        )
+    ).scalars().all()
+    portfolio_by_period = {
+        snapshot.period: Decimal(snapshot.market_value)
+        for snapshot in portfolio_snapshots
+    }
 
     properties = (await session.execute(select(RealEstateAsset))).scalars().all()
     property_changes: dict[str, Decimal] = {}
-    current_period = date.today().strftime("%Y-%m")
     for asset in properties:
         purchase_price, current_value = _real_estate_owned_values(asset)
         acquired_on = asset.acquired_on or asset.created_at.date()
@@ -643,23 +680,39 @@ async def net_worth_history(session: AsyncSession = Depends(get_session)) -> lis
             - purchase_price
         )
 
-    debts = await session.scalar(select(func.coalesce(func.sum(Debt.balance), 0)))
-    debts_total = Decimal(debts or 0)
-
-    periods = sorted(set(cash_by_period) | set(contrib_by_period) | set(property_changes))
+    periods = sorted(
+        set(cash_snapshots_by_period)
+        | set(contrib_by_period)
+        | set(portfolio_by_period)
+        | set(property_changes)
+        | {current_period}
+    )
     points: list[NetWorthPoint] = []
     cumulative_contrib = Decimal("0")
     cumulative_real_estate = Decimal("0")
+    latest_cash_by_account: dict[int, Decimal] = {}
+    latest_portfolio_value: Decimal | None = None
     for period in periods:
+        for snapshot in cash_snapshots_by_period.get(period, []):
+            latest_cash_by_account[snapshot.account_id] = Decimal(snapshot.balance)
         cumulative_contrib += contrib_by_period.get(period, Decimal("0"))
         cumulative_real_estate += property_changes.get(period, Decimal("0"))
-        cash = cash_by_period.get(period, Decimal("0"))
+        if period in portfolio_by_period:
+            latest_portfolio_value = portfolio_by_period[period]
+
+        cash_value = sum(latest_cash_by_account.values(), Decimal("0"))
+        invested_assets = (
+            latest_portfolio_value
+            if latest_portfolio_value is not None
+            else cumulative_contrib + cumulative_real_estate
+        )
+        if period == current_period:
+            cash_value = cash
+            invested_assets = investments + real_estate
         points.append(
             NetWorthPoint(
                 period=period,
-                net_worth=money(
-                    cash + cumulative_contrib + cumulative_real_estate - debts_total
-                ),
+                net_worth=money(cash_value + invested_assets - debts_total),
             )
         )
     return points

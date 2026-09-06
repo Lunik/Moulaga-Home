@@ -353,8 +353,12 @@ function ContributionForm({ accounts, holdings }: { accounts: Account[]; holding
     onSuccess: async () => {
       setOpen(false)
       setAmount('')
-      await queryClient.invalidateQueries({ queryKey: ['investment-contributions'] })
-      await queryClient.invalidateQueries({ queryKey: ['wealth-summary'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['investment-contributions'] }),
+        queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['portfolio-performance'] }),
+        queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+      ])
     },
   })
   if (!open) {
@@ -415,8 +419,13 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
           accounts={accounts}
           onCancel={() => setShowForm(false)}
           onSaved={async () => {
-            await queryClient.invalidateQueries({ queryKey: ['holdings'] })
-            await queryClient.invalidateQueries({ queryKey: ['wealth-summary'] })
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['holdings'] }),
+              queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
+              queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
+              queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
+              queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+            ])
             setShowForm(false)
           }}
         />
@@ -457,9 +466,13 @@ function HoldingRow({ accounts, holding }: { accounts: Account[]; holding: Holdi
   const [editing, setEditing] = useState(false)
   const [price, setPrice] = useState(holding.current_price)
   const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ['holdings'] })
-    await queryClient.invalidateQueries({ queryKey: ['wealth-summary'] })
-    await queryClient.invalidateQueries({ queryKey: ['net-worth'] })
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['holdings'] }),
+      queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+    ])
   }
   const update = useMutation({
     mutationFn: () => apiPatch<Holding>(`/holdings/${holding.id}`, { current_price: price }),

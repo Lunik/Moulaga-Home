@@ -81,10 +81,13 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
   const accounts = accountsResult.status === 'fulfilled' ? accountsResult.value : []
   const households = householdsResult.status === 'fulfilled' ? householdsResult.value : []
   const baseSummary = await warmPaths([
+    `/accounts${queryString({ include_archived: true, as_of: anchorDate })}`,
     '/categories?include_archived=true',
     '/preferences',
     '/merchants',
     '/rules',
+    `/overview${queryString({ as_of: anchorDate })}`,
+    `/stats/monthly${queryString({ as_of: anchorDate })}`,
     `/budget/overview${queryString({ on: anchorDate })}`,
     `/budget/envelopes${queryString({ on: anchorDate })}`,
     '/budget/envelopes',
@@ -97,6 +100,8 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
     '/portfolio/performance',
     '/networth/overview',
     '/networth/history',
+    `/networth/overview${queryString({ as_of: anchorDate })}`,
+    `/networth/history${queryString({ as_of: anchorDate })}`,
     '/holdings',
     '/debts',
     '/real-estate',
