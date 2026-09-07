@@ -34,7 +34,6 @@ import type {
   TransactionCount,
 } from '../api/types'
 import { routeHash, type BudgetTab, type Route } from '../routing'
-import { ScheduleImportModal } from '../ScheduleImportModal'
 import {
   AmountDirectionToggle,
   CategorizationSummary,
@@ -332,7 +331,6 @@ function RecurringPanel({
   const queryClient = useQueryClient()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [seriesToEdit, setSeriesToEdit] = useState<RecurringSeries | null>(null)
-  const [seriesForSchedule, setSeriesForSchedule] = useState<RecurringSeries | null>(null)
   const [showDetectionModal, setShowDetectionModal] = useState(false)
   const [detectionProposals, setDetectionProposals] = useState<RecurringDetectionProposal[]>([])
   const [selectedProposalKeys, setSelectedProposalKeys] = useState<string[]>([])
@@ -363,6 +361,7 @@ function RecurringPanel({
       queryClient.invalidateQueries({ queryKey: ['recurring-changes'] }),
       queryClient.invalidateQueries({ queryKey: ['recurring-forecast'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
+      queryClient.invalidateQueries({ queryKey: ['debts'] }),
     ])
   }
   const previewDetection = useMutation({
@@ -434,21 +433,6 @@ function RecurringPanel({
           }}
         />
       )}
-      {seriesForSchedule && (
-        <ScheduleImportModal
-          title={`Échéancier · ${seriesForSchedule.label}`}
-          description="Collez deux colonnes TSV : la date, puis le montant de l’assurance crédit."
-          endpoint={`/recurring/${seriesForSchedule.id}/schedule/import`}
-          amountLabel="cotisation"
-          ariaLabel={`Échéancier TSV de ${seriesForSchedule.label}`}
-          placeholder={'05/10/2026\t34,80 €\n05/11/2026\t34,55 €'}
-          onClose={() => setSeriesForSchedule(null)}
-          onSaved={async () => {
-            await refreshRecurring()
-            setSeriesForSchedule(null)
-          }}
-        />
-      )}
       {showDetectionModal && (
         <RecurringDetectionModal
           error={confirmDetection.error}
@@ -482,7 +466,7 @@ function RecurringPanel({
               <RecurringRow
                 assets={(realEstate.data ?? []).filter((asset) => (
                   (debts.data ?? []).some(
-                    (debt) => debt.id === asset.debt_id && debt.recurring_series_id === item.id,
+                    (debt) => asset.debt_ids.includes(debt.id) && debt.recurring_series_id === item.id,
                   )
                 ))}
                 debts={(debts.data ?? []).filter((debt) => debt.recurring_series_id === item.id)}
@@ -490,8 +474,8 @@ function RecurringPanel({
                 item={item}
                 key={item.id}
                 onEdit={() => setSeriesToEdit(item)}
-                onImportSchedule={() => setSeriesForSchedule(item)}
                 onSaved={refreshRecurring}
+                readOnly={accounts.find((account) => account.id === item.account_id)?.archived ?? false}
               />
             ))}
           </div>
@@ -552,17 +536,18 @@ function RecurringRow({
   focused,
   item,
   onEdit,
-  onImportSchedule,
   onSaved,
+  readOnly,
 }: {
   assets: RealEstateAsset[]
   debts: Debt[]
   focused: boolean
   item: RecurringSeries
   onEdit: () => void
-  onImportSchedule: () => void
   onSaved: () => Promise<void>
+  readOnly: boolean
 }) {
+  const [showAttachments, setShowAttachments] = useState(false)
   const update = useMutation({
     mutationFn: (status: RecurringSeries['status']) =>
       apiPatch<RecurringSeries>(`/recurring/${item.id}`, { status }),
@@ -587,15 +572,9 @@ function RecurringRow({
           {item.amount_type === 'variable' && <StatusBadge>Montant variable</StatusBadge>}
         </span>
         <small>{frequencyLabel(item.frequency)} · prochaine le {formatDate(item.next_due)}</small>
-        {(item.credit_insurance_rate !== null || item.schedule_count > 0) && (
+        {item.credit_insurance_rate !== null && (
           <small>
-            {item.credit_insurance_rate !== null && (
-              <>Taux assurance {Number(item.credit_insurance_rate).toLocaleString('fr-FR', { maximumFractionDigits: 3 })}%</>
-            )}
-            {item.credit_insurance_rate !== null && item.schedule_count > 0 && ' · '}
-            {item.schedule_count > 0 && (
-              <>{item.schedule_count} échéance{item.schedule_count === 1 ? '' : 's'} importée{item.schedule_count === 1 ? '' : 's'}</>
-            )}
+            Taux assurance {Number(item.credit_insurance_rate).toLocaleString('fr-FR', { maximumFractionDigits: 3 })}%
           </small>
         )}
         <small>Détection locale · {Math.round(item.confidence * 100)}% de confiance</small>
@@ -626,14 +605,18 @@ function RecurringRow({
       </span>
       <strong className={Number(item.amount ?? 0) >= 0 ? 'positive' : ''}>{signedMoney(item.amount ?? 0)}</strong>
       <div className="row-actions">
-        {item.recurring_type === 'credit_insurance' && (
+        {(!readOnly || item.attachment_count > 0) && (
           <button
-            className="secondary-button small-button"
+            className="icon-action attachment-button"
             type="button"
-            aria-label="Importer l’échéancier"
-            onClick={onImportSchedule}
+            aria-label={`Pièces jointes${item.attachment_count > 0 ? ` (${item.attachment_count})` : ''}`}
+            aria-expanded={showAttachments}
+            onClick={() => setShowAttachments((current) => !current)}
           >
-            <Icon name="database" /> Échéancier
+            <Icon name="attachment" />
+            {item.attachment_count > 0 && (
+              <span className="attachment-count-badge">{item.attachment_count}</span>
+            )}
           </button>
         )}
         <button className="icon-action" type="button" aria-label="Modifier" onClick={onEdit}>
@@ -658,6 +641,14 @@ function RecurringRow({
         <Icon name="trash" />
       </button>
       {(update.error || remove.error) && <span className="form-error row-error">{errorMessage(update.error ?? remove.error)}</span>}
+      {showAttachments && (
+        <div className="entity-attachment-panel">
+          <AttachmentManager
+            owner={{ kind: 'recurring', seriesId: item.id }}
+            readOnly={readOnly}
+          />
+        </div>
+      )}
     </article>
   )
 }

@@ -1,4 +1,4 @@
-import { FormEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, FormEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Area,
@@ -16,6 +16,7 @@ import {
 } from 'recharts'
 
 import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
+import { AttachmentManager } from '../AttachmentManager'
 import type {
   Account,
   Debt,
@@ -32,7 +33,6 @@ import type {
 import { supportsHoldings } from '../accountCapabilities'
 import { isRouteBeta } from '../featureValidation'
 import { routeHash, type Route, type WealthTab } from '../routing'
-import { ScheduleImportModal } from '../ScheduleImportModal'
 import {
   BetaBadge,
   EmptyState,
@@ -708,7 +708,9 @@ function RealEstatePanel({
   const totalEquity = totalOwned - totalDebt
   useLinkedEntityFocus('real-estate', focusId, assets.length > 0)
   const availableDebts = debts.filter(
-    (debt) => !assets.some((asset) => asset.debt_id === debt.id && asset.id !== editingAsset?.id),
+    (debt) => !assets.some(
+      (asset) => asset.debt_ids.includes(debt.id) && asset.id !== editingAsset?.id,
+    ),
   )
   const refresh = async () => {
     await Promise.all([
@@ -793,7 +795,7 @@ function RealEstatePanel({
             {filtered.map((asset) => (
               <RealEstateRow
                 asset={asset}
-                debt={debts.find((debt) => debt.id === asset.debt_id)}
+                debts={asset.debts}
                 focused={focusId === asset.id}
                 key={asset.id}
                 onChanged={refresh}
@@ -817,17 +819,18 @@ function RealEstatePanel({
 
 function RealEstateRow({
   asset,
-  debt,
+  debts,
   focused,
   onChanged,
   onEdit,
 }: {
   asset: RealEstateAsset
-  debt?: Debt
+  debts: RealEstateAsset['debts']
   focused: boolean
   onChanged: () => Promise<void>
   onEdit: () => void
 }) {
+  const [showAttachments, setShowAttachments] = useState(false)
   const remove = useMutation({
     mutationFn: () => apiDelete(`/real-estate/${asset.id}`),
     onSuccess: onChanged,
@@ -865,28 +868,44 @@ function RealEstateRow({
       <span className="property-equity">
         <small>Valeur nette</small>
         <strong className={Number(asset.net_equity) >= 0 ? 'positive' : 'negative'}>{money(asset.net_equity)}</strong>
-        {debt && (
+        {debts.length > 0 && (
           <span className="linked-entities property-links">
-            <LinkedEntityLink
-              href={routeHash({ name: 'wealth', tab: 'debts', focusId: debt.id })}
-              icon="debt"
-              label={`Dette : ${debt.name}`}
-            />
-            {debt.recurring_series_id && debt.recurring_series_name && (
-              <LinkedEntityLink
-                href={routeHash({
-                  name: 'budget',
-                  tab: 'recurring',
-                  focusId: debt.recurring_series_id,
-                })}
-                icon="recurring"
-                label={`Récurrence : ${debt.recurring_series_name}`}
-              />
-            )}
+            {debts.map((debt) => (
+              <Fragment key={debt.id}>
+                <LinkedEntityLink
+                  href={routeHash({ name: 'wealth', tab: 'debts', focusId: debt.id })}
+                  icon="debt"
+                  label={`Dette : ${debt.name}`}
+                />
+                {debt.recurring_series_id && debt.recurring_series_name && (
+                  <LinkedEntityLink
+                    href={routeHash({
+                      name: 'budget',
+                      tab: 'recurring',
+                      focusId: debt.recurring_series_id,
+                    })}
+                    icon="recurring"
+                    label={`Récurrence : ${debt.recurring_series_name}`}
+                  />
+                )}
+              </Fragment>
+            ))}
           </span>
         )}
       </span>
       <span className="row-actions">
+        <button
+          className="icon-action attachment-button"
+          type="button"
+          aria-label={`Pièces jointes${asset.attachment_count > 0 ? ` (${asset.attachment_count})` : ''}`}
+          aria-expanded={showAttachments}
+          onClick={() => setShowAttachments((current) => !current)}
+        >
+          <Icon name="attachment" />
+          {asset.attachment_count > 0 && (
+            <span className="attachment-count-badge">{asset.attachment_count}</span>
+          )}
+        </button>
         <button className="icon-action" type="button" aria-label="Modifier" onClick={onEdit}><Icon name="edit" /></button>
         <button
           className="icon-action"
@@ -900,6 +919,14 @@ function RealEstateRow({
         </button>
       </span>
       {remove.error && <span className="form-error row-error">{errorMessage(remove.error)}</span>}
+      {showAttachments && (
+        <div className="entity-attachment-panel">
+          <AttachmentManager
+            owner={{ kind: 'real-estate', assetId: asset.id }}
+            readOnly={false}
+          />
+        </div>
+      )}
     </article>
   )
 }
@@ -922,7 +949,7 @@ function RealEstateModal({
   const [purchasePrice, setPurchasePrice] = useState(asset?.purchase_price ?? '')
   const [currentValue, setCurrentValue] = useState(asset?.current_value ?? '')
   const [ownershipShare, setOwnershipShare] = useState(asset?.ownership_share ?? '100')
-  const [debtId, setDebtId] = useState(asset?.debt_id ? String(asset.debt_id) : '')
+  const [debtIds, setDebtIds] = useState<number[]>(asset?.debt_ids ?? [])
   const mutation = useMutation({
     mutationFn: () => {
       const payload = {
@@ -933,7 +960,7 @@ function RealEstateModal({
         purchase_price: purchasePrice,
         current_value: currentValue || null,
         ownership_share: ownershipShare,
-        debt_id: debtId ? Number(debtId) : null,
+        debt_ids: debtIds,
       }
       return asset
         ? apiPatch<RealEstateAsset>(`/real-estate/${asset.id}`, payload)
@@ -989,14 +1016,32 @@ function RealEstateModal({
         <Field label="Quote-part (%)">
           <FormInput type="number" min="0.01" max="100" step="0.01" value={ownershipShare} onChange={(event) => setOwnershipShare(event.target.value)} required />
         </Field>
-        <Field label="Emprunt associé">
-          <FormSelect value={debtId} onChange={(event) => setDebtId(event.target.value)}>
-            <option value="">Aucun emprunt</option>
-            {debts.map((debt) => (
-              <option key={debt.id} value={debt.id}>{debt.name} · {money(debt.balance)}</option>
-            ))}
-          </FormSelect>
-        </Field>
+        <div className="field real-estate-debt-field">
+          <span>Emprunts associés</span>
+          {debts.length > 0 ? (
+            <div className="real-estate-debt-options">
+              {debts.map((debt) => (
+                <label className="real-estate-debt-option" key={debt.id}>
+                  <FormInput
+                    type="checkbox"
+                    checked={debtIds.includes(debt.id)}
+                    onChange={() => setDebtIds((current) => (
+                      current.includes(debt.id)
+                        ? current.filter((debtId) => debtId !== debt.id)
+                        : [...current, debt.id]
+                    ))}
+                  />
+                  <span>
+                    <strong>{debt.name}</strong>
+                    <small>{money(debt.balance)} restant</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <small className="modal-hint">Aucun emprunt disponible.</small>
+          )}
+        </div>
         {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
     </Modal>
@@ -1019,7 +1064,6 @@ function DebtsPanel({
   const queryClient = useQueryClient()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [debtToEdit, setDebtToEdit] = useState<Debt | null>(null)
-  const [debtForSchedule, setDebtForSchedule] = useState<Debt | null>(null)
   const total = debts.reduce((sum, debt) => sum + Number(debt.balance), 0)
   const monthly = debts.reduce((sum, debt) => sum + Number(debt.minimum_payment ?? 0), 0)
   useLinkedEntityFocus('debt', focusId, debts.length > 0)
@@ -1029,6 +1073,9 @@ function DebtsPanel({
       queryClient.invalidateQueries({ queryKey: ['real-estate'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+      queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
+      queryClient.invalidateQueries({ queryKey: ['recurring-forecast'] }),
+      queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
     ])
   }
 
@@ -1064,33 +1111,18 @@ function DebtsPanel({
           }}
         />
       )}
-      {debtForSchedule && (
-        <ScheduleImportModal
-          title={`Échéancier · ${debtForSchedule.name}`}
-          description="Collez deux colonnes TSV : la date, puis le capital restant dû."
-          endpoint={`/debts/${debtForSchedule.id}/schedule/import`}
-          amountLabel="capital restant dû"
-          ariaLabel={`Échéancier TSV de ${debtForSchedule.name}`}
-          placeholder={'15/10/2026\t176 840,20 €\n15/11/2026\t175 675,10 €'}
-          onClose={() => setDebtForSchedule(null)}
-          onSaved={async () => {
-            await refresh()
-            setDebtForSchedule(null)
-          }}
-        />
-      )}
       <Panel title="Dettes" subtitle={`Total restant : ${money(total)} · Mensualités : ${money(monthly)} / mois`}>
         {debts.length > 0 ? (
           <div className="debt-list">
             {debts.map((debt) => (
               <DebtRow
-                asset={assets.find((asset) => asset.debt_id === debt.id)}
+                asset={assets.find((asset) => asset.debt_ids.includes(debt.id))}
                 debt={debt}
                 focused={focusId === debt.id}
                 key={debt.id}
                 onEdit={() => setDebtToEdit(debt)}
-                onImportSchedule={() => setDebtForSchedule(debt)}
                 onSaved={refresh}
+                readOnly={accounts.find((account) => account.id === debt.account_id)?.archived ?? false}
               />
             ))}
           </div>
@@ -1107,21 +1139,21 @@ function DebtRow({
   debt,
   focused,
   onEdit,
-  onImportSchedule,
   onSaved,
+  readOnly,
 }: {
   asset?: RealEstateAsset
   debt: Debt
   focused: boolean
   onEdit: () => void
-  onImportSchedule: () => void
   onSaved: () => Promise<void>
+  readOnly: boolean
 }) {
+  const [showAttachments, setShowAttachments] = useState(false)
   const remove = useMutation({
     mutationFn: () => apiDelete(`/debts/${debt.id}`),
     onSuccess: onSaved,
   })
-  const canImportSchedule = debt.debt_type === 'consumer_credit' || debt.debt_type === 'mortgage'
   return (
     <article
       className={focused ? 'linked-entity-target' : undefined}
@@ -1143,14 +1175,6 @@ function DebtRow({
         {debt.minimum_payment !== null && <span>{money(debt.minimum_payment)} / mois</span>}
         {debt.interest_rate !== null && <span>Taux {Number(debt.interest_rate).toLocaleString('fr-FR')}%</span>}
         {debt.due_date && <span>Fin prévue {formatDate(debt.due_date)}</span>}
-        {debt.schedule_count > 0 && (
-          <span>{debt.schedule_count} échéance{debt.schedule_count === 1 ? '' : 's'}</span>
-        )}
-        {debt.next_schedule_date && debt.next_schedule_balance !== null && (
-          <span>
-            Projection au {formatDate(debt.next_schedule_date)} : {money(debt.next_schedule_balance)}
-          </span>
-        )}
         {(asset || (debt.recurring_series_id && debt.recurring_series_name)) && (
           <span className="linked-entities debt-links">
             {asset && (
@@ -1173,9 +1197,18 @@ function DebtRow({
             )}
           </span>
         )}
-        {canImportSchedule && (
-          <button className="secondary-button small-button" type="button" onClick={onImportSchedule}>
-            <Icon name="database" /> Échéancier
+        {(!readOnly || debt.attachment_count > 0) && (
+          <button
+            className="icon-action attachment-button"
+            type="button"
+            aria-label={`Pièces jointes${debt.attachment_count > 0 ? ` (${debt.attachment_count})` : ''}`}
+            aria-expanded={showAttachments}
+            onClick={() => setShowAttachments((current) => !current)}
+          >
+            <Icon name="attachment" />
+            {debt.attachment_count > 0 && (
+              <span className="attachment-count-badge">{debt.attachment_count}</span>
+            )}
           </button>
         )}
         <button className="icon-action" type="button" aria-label="Modifier" onClick={onEdit}>
@@ -1193,6 +1226,14 @@ function DebtRow({
         </button>
       </div>
       {remove.error && <p className="form-error">{errorMessage(remove.error)}</p>}
+      {showAttachments && (
+        <div className="entity-attachment-panel">
+          <AttachmentManager
+            owner={{ kind: 'debt', debtId: debt.id }}
+            readOnly={readOnly}
+          />
+        </div>
+      )}
     </article>
   )
 }
@@ -1288,7 +1329,11 @@ function DebtModal({
           <FormInput type="number" min="0" step="0.01" value={interestRate} onChange={(event) => setInterestRate(event.target.value)} />
         </Field>
         <Field label="Compte associé">
-          <FormSelect value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+          <FormSelect
+            value={accountId}
+            onChange={(event) => setAccountId(event.target.value)}
+            required={!recurringSeriesId && Number(monthlyPayment) > 0}
+          >
             <option value="">Aucun compte</option>
             {selectableAccounts.map((account) => (
               <option key={account.id} value={account.id}>{account.name}</option>
@@ -1303,18 +1348,17 @@ function DebtModal({
             ))}
           </FormSelect>
         </Field>
+        {!recurringSeriesId && Number(monthlyPayment) > 0 && (
+          <p className="modal-hint debt-modal-wide">
+            Une série mensuelle de remboursement sera créée automatiquement dans le budget.
+          </p>
+        )}
         <Field label="Fin prévue">
           <FormInput type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
         </Field>
         <Field label="Couleur">
           <FormInput type="color" value={color} onChange={(event) => setColor(event.target.value)} />
         </Field>
-        {(debtType === 'consumer_credit' || debtType === 'mortgage') && (
-          <p className="modal-hint debt-modal-wide">
-            Une fois la dette enregistrée, l’action « Échéancier » permet d’importer les
-            capitaux restants dus au format TSV.
-          </p>
-        )}
         {debt && (
           <label className="toggle-row debt-modal-wide">
             <span>

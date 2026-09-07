@@ -247,7 +247,7 @@ export interface RecurringSeries {
   custom_type: string | null
   credit_insurance_rate: string | null
   confidence: number
-  schedule_count: number
+  attachment_count: number
 }
 
 export interface RecurringDetectionProposal {
@@ -307,23 +307,7 @@ export interface Debt {
   due_date?: string | null
   color?: string
   archived?: boolean
-  schedule_count: number
-  next_schedule_date: string | null
-  next_schedule_balance: Money | null
-}
-
-export interface DebtScheduleEntry {
-  id: number
-  debt_id: number
-  due_date: string
-  remaining_balance: Money
-}
-
-export interface RecurringScheduleEntry {
-  id: number
-  series_id: number
-  due_date: string
-  amount: Money
+  attachment_count: number
 }
 
 export interface RealEstateAsset {
@@ -335,13 +319,22 @@ export interface RealEstateAsset {
   purchase_price: Money
   current_value: Money | null
   ownership_share: string
-  debt_id: number | null
-  debt_name: string | null
+  debt_ids: number[]
+  debts: RealEstateDebt[]
   debt_balance: Money
   owned_purchase_price: Money
   owned_value: Money
   gain: Money
   net_equity: Money
+  attachment_count: number
+}
+
+export interface RealEstateDebt {
+  id: number
+  name: string
+  balance: Money
+  recurring_series_id: number | null
+  recurring_series_name: string | null
 }
 
 export interface Holding {

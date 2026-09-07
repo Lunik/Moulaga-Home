@@ -638,27 +638,16 @@ class RecurringRead(BaseModel):
     confidence: Decimal
     account_name: str = ""
     category_name: str | None = None
-    schedule_count: int = 0
+    attachment_count: int = 0
 
 
-class ScheduleImportRequest(BaseModel):
-    content: str = Field(max_length=100_000)
-
-
-class RecurringScheduleRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class RecurringSeriesAttachmentRead(BaseModel):
     id: int
     series_id: int
-    due_date: date
-    amount: Decimal
-
-
-class RecurringScheduleImportResult(BaseModel):
-    imported_count: int
-    created_count: int
-    updated_count: int
-    entries: list[RecurringScheduleRead]
+    original_name: str
+    storage_path: str
+    content_type: str | None
+    size: int
 
 
 class DetectionProposal(BaseModel):
@@ -771,25 +760,16 @@ class DebtRead(BaseModel):
     archived: bool
     paid: Decimal
     progress: Decimal
-    schedule_count: int = 0
-    next_schedule_date: date | None = None
-    next_schedule_balance: Decimal | None = None
+    attachment_count: int = 0
 
 
-class DebtScheduleRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class DebtAttachmentRead(BaseModel):
     id: int
     debt_id: int
-    due_date: date
-    remaining_balance: Decimal
-
-
-class DebtScheduleImportResult(BaseModel):
-    imported_count: int
-    created_count: int
-    updated_count: int
-    entries: list[DebtScheduleRead]
+    original_name: str
+    storage_path: str
+    content_type: str | None
+    size: int
 
 
 _PROPERTY_TYPE = (
@@ -803,6 +783,14 @@ def _validate_acquired_on(value: date | None) -> date | None:
     return value
 
 
+def _validate_debt_ids(value: list[int]) -> list[int]:
+    if any(debt_id <= 0 for debt_id in value):
+        raise ValueError("Les identifiants de dette doivent être positifs")
+    if len(value) != len(set(value)):
+        raise ValueError("Une dette ne peut être associée qu'une seule fois")
+    return value
+
+
 class RealEstateCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     property_type: str = Field(default="primary_residence", pattern=_PROPERTY_TYPE)
@@ -813,7 +801,7 @@ class RealEstateCreate(BaseModel):
     ownership_share: Decimal = Field(
         default=Decimal("100.00"), gt=0, le=100, max_digits=5, decimal_places=2
     )
-    debt_id: int | None = Field(default=None, gt=0)
+    debt_ids: list[int] = Field(default_factory=list, max_length=100)
 
     @field_validator("name")
     @classmethod
@@ -833,6 +821,11 @@ class RealEstateCreate(BaseModel):
     def validate_acquired_on(cls, value: date | None) -> date | None:
         return _validate_acquired_on(value)
 
+    @field_validator("debt_ids")
+    @classmethod
+    def validate_debt_ids(cls, value: list[int]) -> list[int]:
+        return _validate_debt_ids(value)
+
 
 class RealEstateUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
@@ -844,7 +837,7 @@ class RealEstateUpdate(BaseModel):
     ownership_share: Decimal | None = Field(
         default=None, gt=0, le=100, max_digits=5, decimal_places=2
     )
-    debt_id: int | None = Field(default=None, gt=0)
+    debt_ids: list[int] = Field(default_factory=list, max_length=100)
 
     @field_validator("name")
     @classmethod
@@ -864,6 +857,18 @@ class RealEstateUpdate(BaseModel):
     def validate_acquired_on(cls, value: date | None) -> date | None:
         return _validate_acquired_on(value)
 
+    @field_validator("debt_ids")
+    @classmethod
+    def validate_debt_ids(cls, value: list[int]) -> list[int]:
+        return _validate_debt_ids(value)
+
+class RealEstateDebtRead(BaseModel):
+    id: int
+    name: str
+    balance: Decimal
+    recurring_series_id: int | None
+    recurring_series_name: str | None
+
 
 class RealEstateRead(BaseModel):
     id: int
@@ -874,13 +879,23 @@ class RealEstateRead(BaseModel):
     purchase_price: Decimal
     current_value: Decimal | None
     ownership_share: Decimal
-    debt_id: int | None
-    debt_name: str | None
+    debt_ids: list[int]
+    debts: list[RealEstateDebtRead]
     debt_balance: Decimal
     owned_purchase_price: Decimal
     owned_value: Decimal
     gain: Decimal
     net_equity: Decimal
+    attachment_count: int = 0
+
+
+class RealEstateAttachmentRead(BaseModel):
+    id: int
+    asset_id: int
+    original_name: str
+    storage_path: str
+    content_type: str | None
+    size: int
 
 
 class HoldingCreate(BaseModel):

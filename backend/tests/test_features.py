@@ -1103,6 +1103,114 @@ def test_snapshot_attachments_use_hashed_local_paths(client, tmp_path):
     assert not second_file.exists()
 
 
+def test_recurring_debt_and_real_estate_attachments(client, tmp_path):
+    account_id = _account_id(client)
+    series = client.post(
+        "/api/recurring",
+        json={
+            "label": "Assurance habitation",
+            "account_id": account_id,
+            "frequency": "yearly",
+            "next_due": "2027-01-15",
+            "amount": "-120.00",
+            "recurring_type": "home_insurance",
+        },
+    ).json()
+    debt = client.post(
+        "/api/debts",
+        json={
+            "name": "Prêt synthétique",
+            "principal": "100000.00",
+            "balance": "80000.00",
+            "account_id": account_id,
+            "recurring_series_id": series["id"],
+        },
+    ).json()
+    asset = client.post(
+        "/api/real-estate",
+        json={
+            "name": "Maison synthétique",
+            "purchase_price": "150000.00",
+            "current_value": "175000.00",
+            "debt_ids": [debt["id"]],
+        },
+    ).json()
+    resources = [
+        (
+            "recurring",
+            series["id"],
+            f"/api/recurring/{series['id']}",
+            "series_id",
+        ),
+        (
+            "debt",
+            debt["id"],
+            f"/api/debts/{debt['id']}",
+            "debt_id",
+        ),
+        (
+            "real-estate",
+            asset["id"],
+            f"/api/real-estate/{asset['id']}",
+            "asset_id",
+        ),
+    ]
+
+    def attachment_count(kind, owner_id):
+        endpoint = {
+            "recurring": "/api/recurring",
+            "debt": "/api/debts",
+            "real-estate": "/api/real-estate",
+        }[kind]
+        owner = next(item for item in client.get(endpoint).json() if item["id"] == owner_id)
+        return owner["attachment_count"]
+
+    payload = b"%PDF-1.4 document synthetique"
+    stored_files = []
+    for kind, owner_id, resource_path, owner_field in resources:
+        assert attachment_count(kind, owner_id) == 0
+        uploaded = client.post(
+            f"{resource_path}/attachments",
+            files={"file": (f"../../contrat {kind}.pdf", payload, "application/pdf")},
+        )
+        assert uploaded.status_code == 201
+        attachment = uploaded.json()
+        assert attachment[owner_field] == owner_id
+        relative_path = attachment["storage_path"].lstrip("/")
+        parts = relative_path.split("/")
+        assert parts[0] == "attached"
+        assert len(parts[1]) == 2
+        assert len(parts[2]) == 2
+        assert len(parts[3]) == 64
+        stored_file = tmp_path / relative_path
+        assert stored_file.read_bytes() == payload
+        assert client.get(f"{resource_path}/attachments").json() == [attachment]
+        downloaded = client.get(
+            f"{resource_path}/attachments/{attachment['id']}/download"
+        )
+        assert downloaded.content == payload
+        assert "attachment" in downloaded.headers["content-disposition"]
+        assert attachment_count(kind, owner_id) == 1
+
+        deleted = client.delete(
+            f"{resource_path}/attachments/{attachment['id']}"
+        )
+        assert deleted.status_code == 204
+        assert not stored_file.exists()
+        assert attachment_count(kind, owner_id) == 0
+
+        replacement = client.post(
+            f"{resource_path}/attachments",
+            files={"file": (f"archive-{kind}.txt", b"archive synthetique", "text/plain")},
+        ).json()
+        stored_files.append(tmp_path / replacement["storage_path"].lstrip("/"))
+
+    assert client.delete(f"/api/real-estate/{asset['id']}").status_code == 204
+    assert client.delete(f"/api/debts/{debt['id']}").status_code == 204
+    assert client.delete(f"/api/recurring/{series['id']}").status_code == 204
+    assert all(not path.exists() for path in stored_files)
+
+
 def test_archived_account_is_read_only_across_linked_resources(client):
     account_id = _account_id(client)
     assert client.patch(
@@ -1148,6 +1256,23 @@ def test_archived_account_is_read_only_across_linked_resources(client):
             "next_due": "2026-02-01",
             "amount": "-5.00",
         },
+    ).json()
+    recurring_attachment = client.post(
+        f"/api/recurring/{recurring['id']}/attachments",
+        files={"file": ("contrat.txt", b"contrat synthetique", "text/plain")},
+    ).json()
+    debt = client.post(
+        "/api/debts",
+        json={
+            "name": "Dette archivee",
+            "principal": "500.00",
+            "balance": "400.00",
+            "account_id": account_id,
+        },
+    ).json()
+    debt_attachment = client.post(
+        f"/api/debts/{debt['id']}/attachments",
+        files={"file": ("offre.txt", b"offre synthetique", "text/plain")},
     ).json()
 
     assert client.post(f"/api/accounts/{account_id}/archive").status_code == 200
@@ -1214,6 +1339,21 @@ def test_archived_account_is_read_only_across_linked_resources(client):
             json={"status": "paused"},
         ),
         client.delete(f"/api/recurring/{recurring['id']}"),
+        client.post(
+            f"/api/recurring/{recurring['id']}/attachments",
+            files={"file": ("autre.txt", b"interdit", "text/plain")},
+        ),
+        client.delete(
+            f"/api/recurring/{recurring['id']}/attachments/"
+            f"{recurring_attachment['id']}"
+        ),
+        client.post(
+            f"/api/debts/{debt['id']}/attachments",
+            files={"file": ("autre.txt", b"interdit", "text/plain")},
+        ),
+        client.delete(
+            f"/api/debts/{debt['id']}/attachments/{debt_attachment['id']}"
+        ),
     ]
     assert all(response.status_code == 409 for response in blocked)
     assert all("lecture seule" in response.json()["detail"] for response in blocked)
@@ -1233,6 +1373,12 @@ def test_archived_account_is_read_only_across_linked_resources(client):
     ).status_code == 200
     assert client.get(
         "/api/holdings", params={"account_id": account_id}
+    ).status_code == 200
+    assert client.get(
+        f"/api/recurring/{recurring['id']}/attachments"
+    ).status_code == 200
+    assert client.get(
+        f"/api/debts/{debt['id']}/attachments"
     ).status_code == 200
 
 
@@ -1563,10 +1709,9 @@ def test_recurring_series_can_be_fully_updated(client):
     assert updated["custom_type"] == "Service spécialisé"
 
 
-def test_credit_insurance_schedule_import_drives_forecast(client):
+def test_credit_insurance_uses_standard_recurring_forecast(client):
     account_id = _account_id(client)
     first_due = date.today() + timedelta(days=10)
-    second_due = date.today() + timedelta(days=70)
     series = client.post(
         "/api/recurring",
         json={
@@ -1581,79 +1726,28 @@ def test_credit_insurance_schedule_import_drives_forecast(client):
         },
     ).json()
 
-    imported = client.post(
-        f"/api/recurring/{series['id']}/schedule/import",
-        json={
-            "content": (
-                "Date\tCotisation\n"
-                f"{first_due.strftime('%d/%m/%Y')}\t34,80 €\n"
-                f"{second_due.strftime('%d/%m/%Y')}\t34,55 €"
-            )
-        },
-    )
-
-    assert imported.status_code == 200
-    assert imported.json()["created_count"] == 2
-    assert [entry["amount"] for entry in imported.json()["entries"]] == [
-        "-34.80",
-        "-34.55",
-    ]
+    assert series["attachment_count"] == 0
+    api_paths = client.get("/api/openapi.json").json()["paths"]
+    assert "/api/recurring/{series_id}/schedule" not in api_paths
+    assert "/api/recurring/{series_id}/schedule/import" not in api_paths
     refreshed = next(
         item for item in client.get("/api/recurring").json() if item["id"] == series["id"]
     )
     assert refreshed["credit_insurance_rate"] == "0.320"
-    assert refreshed["schedule_count"] == 2
     assert refreshed["next_due"] == first_due.isoformat()
-    assert refreshed["amount"] == "-34.80"
-
-    reimported = client.post(
-        f"/api/recurring/{series['id']}/schedule/import",
-        json={"content": f"{second_due.strftime('%d/%m/%Y')}\t33,95 €"},
-    )
-    assert reimported.status_code == 200
-    assert reimported.json()["created_count"] == 0
-    assert reimported.json()["updated_count"] == 1
-    refreshed = next(
-        item for item in client.get("/api/recurring").json() if item["id"] == series["id"]
-    )
-    assert refreshed["next_due"] == first_due.isoformat()
-    assert refreshed["amount"] == "-34.80"
+    assert refreshed["amount"] == "-35.00"
 
     forecast = client.get("/api/recurring/forecast", params={"months": 3}).json()
     insurance_points = [point for point in forecast if point["series_id"] == series["id"]]
-    assert [(point["due_date"], point["amount"]) for point in insurance_points] == [
-        (first_due.isoformat(), "-34.80"),
-        (second_due.isoformat(), "-33.95"),
-    ]
+    assert insurance_points
+    assert insurance_points[0]["due_date"] == first_due.isoformat()
+    assert {point["amount"] for point in insurance_points} == {"-35.00"}
     overview = client.get(
         "/api/budget/overview",
         params={"on": first_due.isoformat()},
     ).json()
     assert overview["upcoming_recurring_count"] == 1
-    assert overview["upcoming_recurring_amount"] == "-34.80"
-
-    invalid = client.post(
-        f"/api/recurring/{series['id']}/schedule/import",
-        json={"content": "date invalide\t10,00"},
-    )
-    assert invalid.status_code == 422
-    assert len(client.get(f"/api/recurring/{series['id']}/schedule").json()) == 2
-
-    regular = client.post(
-        "/api/recurring",
-        json={
-            "label": "Abonnement",
-            "account_id": account_id,
-            "frequency": "monthly",
-            "next_due": first_due.isoformat(),
-            "amount": "-10.00",
-            "recurring_type": "subscription",
-        },
-    ).json()
-    assert client.post(
-        f"/api/recurring/{regular['id']}/schedule/import",
-        json={"content": f"{first_due.strftime('%d/%m/%Y')}\t10,00"},
-    ).status_code == 422
+    assert overview["upcoming_recurring_amount"] == "-35.00"
     assert client.post(
         "/api/recurring",
         json={
@@ -1681,6 +1775,89 @@ def test_debt_progress_and_validation(client):
         "/api/debts", json={"name": "Incoherent", "principal": "100.00", "balance": "200.00"}
     )
     assert invalid.status_code == 422
+
+
+def test_debt_monthly_payment_creates_and_syncs_recurring_series(client):
+    account_id = _account_id(client)
+    recurring_before = client.get("/api/recurring").json()
+    created = client.post(
+        "/api/debts",
+        json={
+            "name": "Prêt auto synchronisé",
+            "debt_type": "consumer_credit",
+            "principal": "12000.00",
+            "balance": "9000.00",
+            "minimum_payment": "250.00",
+            "account_id": account_id,
+            "due_date": "2030-05-15",
+        },
+    )
+
+    assert created.status_code == 201
+    debt = created.json()
+    assert debt["recurring_series_id"] is not None
+    assert debt["recurring_series_name"] == "Mensualité · Prêt auto synchronisé"
+    recurring = client.get("/api/recurring").json()
+    assert len(recurring) == len(recurring_before) + 1
+    series = next(
+        item for item in recurring if item["id"] == debt["recurring_series_id"]
+    )
+    assert series["account_id"] == account_id
+    assert series["frequency"] == "monthly"
+    assert series["amount"] == "-250.00"
+    assert series["amount_type"] == "fixed"
+    assert series["recurring_type"] == "loan_payment"
+    assert date.fromisoformat(series["next_due"]) >= date.today()
+    assert date.fromisoformat(series["next_due"]).day == 15
+
+    updated_debt = client.patch(
+        f"/api/debts/{debt['id']}",
+        json={"minimum_payment": "275.50"},
+    ).json()
+    assert updated_debt["minimum_payment"] == "275.50"
+    series = next(
+        item
+        for item in client.get("/api/recurring").json()
+        if item["id"] == debt["recurring_series_id"]
+    )
+    assert series["amount"] == "-275.50"
+
+    updated_series = client.patch(
+        f"/api/recurring/{series['id']}",
+        json={"amount": "300.25"},
+    ).json()
+    assert updated_series["amount"] == "-300.25"
+    debt = next(
+        item for item in client.get("/api/debts").json() if item["id"] == debt["id"]
+    )
+    assert debt["minimum_payment"] == "300.25"
+
+    cleared_debt = client.patch(
+        f"/api/debts/{debt['id']}",
+        json={"minimum_payment": None},
+    ).json()
+    assert cleared_debt["minimum_payment"] is None
+    assert next(
+        item
+        for item in client.get("/api/recurring").json()
+        if item["id"] == series["id"]
+    )["amount"] is None
+
+    debt_count = len(client.get("/api/debts").json())
+    recurring_count = len(client.get("/api/recurring").json())
+    missing_account = client.post(
+        "/api/debts",
+        json={
+            "name": "Dette sans compte",
+            "principal": "1000.00",
+            "balance": "900.00",
+            "minimum_payment": "50.00",
+        },
+    )
+    assert missing_account.status_code == 422
+    assert "compte est requis" in missing_account.json()["detail"]
+    assert len(client.get("/api/debts").json()) == debt_count
+    assert len(client.get("/api/recurring").json()) == recurring_count
 
 
 def test_holdings_require_supported_accounts_and_allow_full_update(client):
@@ -1778,7 +1955,7 @@ def test_holdings_require_supported_accounts_and_allow_full_update(client):
     )
 
 
-def test_debt_full_update_association_and_schedule_import(client):
+def test_debt_full_update_and_recurring_association(client):
     account_id = _account_id(client)
     due = date.today() + timedelta(days=20)
     series = client.post(
@@ -1809,40 +1986,10 @@ def test_debt_full_update_association_and_schedule_import(client):
     )
     assert debt.status_code == 201
     assert debt.json()["recurring_series_name"] == "Mensualité crédit"
-
-    first_due = date.today() + timedelta(days=30)
-    second_due = date.today() + timedelta(days=60)
-    imported = client.post(
-        f"/api/debts/{debt.json()['id']}/schedule/import",
-        json={
-            "content": (
-                "Date\tCapital restant dû\n"
-                f"{first_due.strftime('%d/%m/%Y')}\t174 250,00 €\n"
-                f"{second_due.strftime('%d/%m/%Y')}\t173 495,25 €"
-            )
-        },
-    )
-    assert imported.status_code == 200
-    assert imported.json()["created_count"] == 2
-    assert [entry["remaining_balance"] for entry in imported.json()["entries"]] == [
-        "174250.00",
-        "173495.25",
-    ]
-    listed_debt = next(
-        item for item in client.get("/api/debts").json() if item["id"] == debt.json()["id"]
-    )
-    assert listed_debt["schedule_count"] == 2
-    assert listed_debt["next_schedule_date"] == first_due.isoformat()
-    assert listed_debt["next_schedule_balance"] == "174250.00"
-
-    reimported = client.post(
-        f"/api/debts/{debt.json()['id']}/schedule/import",
-        json={"content": f"{first_due.strftime('%d/%m/%Y')}\t174 100,00 €"},
-    )
-    assert reimported.status_code == 200
-    assert reimported.json()["created_count"] == 0
-    assert reimported.json()["updated_count"] == 1
-    assert reimported.json()["entries"][0]["remaining_balance"] == "174100.00"
+    assert debt.json()["attachment_count"] == 0
+    api_paths = client.get("/api/openapi.json").json()["paths"]
+    assert "/api/debts/{debt_id}/schedule" not in api_paths
+    assert "/api/debts/{debt_id}/schedule/import" not in api_paths
 
     updated = client.patch(
         f"/api/debts/{debt.json()['id']}",
@@ -1874,27 +2021,12 @@ def test_debt_full_update_association_and_schedule_import(client):
         "due_date": "2041-12-31",
         "color": "#ef4444",
         "archived": True,
-        "schedule_count": 2,
+        "attachment_count": 0,
     }
     assert {
         field: updated.json()[field]
         for field in expected_fields
     } == expected_fields
-
-    other = client.post(
-        "/api/debts",
-        json={
-            "name": "Dette diverse",
-            "debt_type": "other",
-            "principal": "100.00",
-            "balance": "50.00",
-        },
-    ).json()
-    assert client.post(
-        f"/api/debts/{other['id']}/schedule/import",
-        json={"content": f"{first_due.strftime('%d/%m/%Y')}\t40,00"},
-    ).status_code == 422
-
 
 def test_holdings_portfolio_and_networth_no_double_count(client):
     cash_account = _account_id(client)  # seeded checking account, balance 0
@@ -1956,6 +2088,14 @@ def test_real_estate_crud_and_networth_integration(client):
             "balance": "100000.00",
         },
     ).json()
+    renovation_loan = client.post(
+        "/api/debts",
+        json={
+            "name": "Pret travaux synthetique",
+            "principal": "30000.00",
+            "balance": "20000.00",
+        },
+    ).json()
     response = client.post(
         "/api/real-estate",
         json={
@@ -1966,7 +2106,7 @@ def test_real_estate_crud_and_networth_integration(client):
             "purchase_price": "250000.00",
             "current_value": "300000.00",
             "ownership_share": "50.00",
-            "debt_id": mortgage["id"],
+            "debt_ids": [mortgage["id"], renovation_loan["id"]],
         },
     )
     assert response.status_code == 201
@@ -1974,8 +2114,13 @@ def test_real_estate_crud_and_networth_integration(client):
     assert asset["owned_purchase_price"] == "125000.00"
     assert asset["owned_value"] == "150000.00"
     assert asset["gain"] == "25000.00"
-    assert asset["debt_balance"] == "100000.00"
-    assert asset["net_equity"] == "50000.00"
+    assert asset["debt_ids"] == [mortgage["id"], renovation_loan["id"]]
+    assert [debt["name"] for debt in asset["debts"]] == [
+        "Pret immobilier synthetique",
+        "Pret travaux synthetique",
+    ]
+    assert asset["debt_balance"] == "120000.00"
+    assert asset["net_equity"] == "30000.00"
 
     assert client.post(
         "/api/real-estate",
@@ -1985,9 +2130,17 @@ def test_real_estate_crud_and_networth_integration(client):
             "purchase_price": "1000.00",
             "current_value": "1000.00",
             "ownership_share": "100.00",
-            "debt_id": mortgage["id"],
+            "debt_ids": [mortgage["id"]],
         },
     ).status_code == 409
+    assert client.post(
+        "/api/real-estate",
+        json={
+            "name": "Bien avec doublon",
+            "purchase_price": "1000.00",
+            "debt_ids": [renovation_loan["id"], renovation_loan["id"]],
+        },
+    ).status_code == 422
     assert client.post(
         "/api/real-estate",
         json={
@@ -2031,9 +2184,9 @@ def test_real_estate_crud_and_networth_integration(client):
     assert networth["cash"] == "0.00"
     assert networth["investments"] == "0.00"
     assert networth["real_estate"] == "150000.00"
-    assert networth["debts"] == "100000.00"
-    assert networth["net_worth"] == "50000.00"
-    assert client.get("/api/networth/history").json()[-1]["net_worth"] == "50000.00"
+    assert networth["debts"] == "120000.00"
+    assert networth["net_worth"] == "30000.00"
+    assert client.get("/api/networth/history").json()[-1]["net_worth"] == "30000.00"
 
     updated = client.patch(
         f"/api/real-estate/{asset['id']}",
@@ -2042,12 +2195,24 @@ def test_real_estate_crud_and_networth_integration(client):
     assert updated.status_code == 200
     assert updated.json()["address"] is None
     assert updated.json()["owned_value"] == "160000.00"
+    assert updated.json()["debt_ids"] == [mortgage["id"], renovation_loan["id"]]
+    assert updated.json()["debt_balance"] == "120000.00"
 
     assert client.delete(f"/api/debts/{mortgage['id']}").status_code == 204
     listed = client.get("/api/real-estate").json()
     assert len(listed) == 1
-    assert listed[0]["debt_id"] is None
-    assert listed[0]["net_equity"] == "160000.00"
+    assert listed[0]["debt_ids"] == [renovation_loan["id"]]
+    assert listed[0]["debt_balance"] == "20000.00"
+    assert listed[0]["net_equity"] == "140000.00"
+
+    cleared = client.patch(
+        f"/api/real-estate/{asset['id']}",
+        json={"debt_ids": []},
+    ).json()
+    assert cleared["debt_ids"] == []
+    assert cleared["debts"] == []
+    assert cleared["debt_balance"] == "0.00"
+    assert cleared["net_equity"] == "160000.00"
 
     assert client.delete(f"/api/real-estate/{asset['id']}").status_code == 204
     assert client.get("/api/real-estate").json() == []
