@@ -144,12 +144,77 @@ def test_schema_version_is_stamped_and_idempotent(tmp_path, monkeypatch):
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     finally:
         connection.close()
-    assert version >= 9
+    assert version >= 11
 
     # Re-opening a current database performs no backup (nothing pending).
     with TestClient(main.create_app()):
         pass
     assert list(tmp_path.glob("moulaga.backup-*.db")) == []
+
+
+def test_real_estate_current_value_becomes_nullable_without_data_loss(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "moulaga.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE real_estate_assets (
+                id INTEGER NOT NULL PRIMARY KEY,
+                name VARCHAR(120) NOT NULL,
+                property_type VARCHAR(32) NOT NULL DEFAULT 'primary_residence',
+                address VARCHAR(200),
+                acquired_on DATE,
+                purchase_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                current_value NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                ownership_share NUMERIC(5, 2) NOT NULL DEFAULT 100,
+                debt_id INTEGER,
+                created_at DATETIME NOT NULL,
+                FOREIGN KEY(debt_id) REFERENCES debts(id) ON DELETE SET NULL
+            );
+            CREATE UNIQUE INDEX ix_real_estate_assets_debt_id
+                ON real_estate_assets (debt_id);
+            INSERT INTO real_estate_assets (
+                id, name, property_type, purchase_price, current_value,
+                ownership_share, created_at
+            ) VALUES (
+                1, 'Bien historique', 'primary_residence', 250000, 275000,
+                100, '2026-01-01 00:00:00'
+            );
+            PRAGMA user_version = 10;
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        asset = client.get("/api/real-estate").json()[0]
+        assert asset["name"] == "Bien historique"
+        assert asset["current_value"] == "275000.00"
+
+        cleared = client.patch(
+            "/api/real-estate/1",
+            json={"current_value": None},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["current_value"] is None
+        assert cleared.json()["owned_value"] == "250000.00"
+
+    connection = sqlite3.connect(db_path)
+    try:
+        columns = {
+            row[1]: row
+            for row in connection.execute("PRAGMA table_info(real_estate_assets)")
+        }
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        connection.close()
+    assert columns["current_value"][3] == 0
+    assert version >= 11
+    assert list(tmp_path.glob("moulaga.backup-*.db"))
 
 
 def test_missing_table_is_recreated_after_safety_backup(tmp_path, monkeypatch):
@@ -180,7 +245,7 @@ def test_missing_table_is_recreated_after_safety_backup(tmp_path, monkeypatch):
         connection.close()
 
     assert table is not None
-    assert version >= 9
+    assert version >= 11
     assert list(tmp_path.glob("moulaga.backup-*.db"))
 
 

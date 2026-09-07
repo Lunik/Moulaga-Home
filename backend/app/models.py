@@ -282,7 +282,7 @@ class RealEstateAsset(Base):
     address: Mapped[str | None] = mapped_column(String(200), nullable=True)
     acquired_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     purchase_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
-    current_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    current_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     ownership_share: Mapped[Decimal] = mapped_column(
         Numeric(5, 2), default=Decimal("100.00")
     )

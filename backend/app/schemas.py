@@ -712,7 +712,7 @@ class RealEstateCreate(BaseModel):
     address: str | None = Field(default=None, max_length=200)
     acquired_on: date | None = None
     purchase_price: Decimal = Field(ge=0, **_MONEY)
-    current_value: Decimal = Field(ge=0, **_MONEY)
+    current_value: Decimal | None = Field(default=None, ge=0, **_MONEY)
     ownership_share: Decimal = Field(
         default=Decimal("100.00"), gt=0, le=100, max_digits=5, decimal_places=2
     )
@@ -775,7 +775,7 @@ class RealEstateRead(BaseModel):
     address: str | None
     acquired_on: date | None
     purchase_price: Decimal
-    current_value: Decimal
+    current_value: Decimal | None
     ownership_share: Decimal
     debt_id: int | None
     debt_name: str | None

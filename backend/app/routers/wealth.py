@@ -127,9 +127,14 @@ async def delete_debt(debt_id: int, session: AsyncSession = Depends(get_session)
 # --------------------------------------------------------------------------- #
 def _real_estate_owned_values(asset: RealEstateAsset) -> tuple[Decimal, Decimal]:
     share = Decimal(asset.ownership_share) / Decimal("100")
+    current_value = (
+        Decimal(asset.current_value)
+        if asset.current_value is not None
+        else Decimal(asset.purchase_price)
+    )
     return (
         money(Decimal(asset.purchase_price) * share),
-        money(Decimal(asset.current_value) * share),
+        money(current_value * share),
     )
 
 
@@ -143,7 +148,9 @@ def _real_estate_read(asset: RealEstateAsset, debt: Debt | None) -> RealEstateRe
         address=asset.address,
         acquired_on=asset.acquired_on,
         purchase_price=money(Decimal(asset.purchase_price)),
-        current_value=money(Decimal(asset.current_value)),
+        current_value=(
+            money(Decimal(asset.current_value)) if asset.current_value is not None else None
+        ),
         ownership_share=Decimal(asset.ownership_share),
         debt_id=asset.debt_id,
         debt_name=debt.name if debt is not None else None,

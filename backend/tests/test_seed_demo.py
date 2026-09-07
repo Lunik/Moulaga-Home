@@ -24,7 +24,7 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
     assert result.transactions > 100
     assert result.snapshots == 309
     assert result.debts == 4
-    assert result.real_estate_assets == 1
+    assert result.real_estate_assets == 2
     assert result.holdings == 2
     assert result.households == 1
     assert result.portfolio_snapshots > 0
@@ -57,8 +57,13 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         assert savings["legal_cap"] == "22950.00"
         assert client.get("/api/debts").json()
         real_estate = client.get("/api/real-estate").json()
-        assert len(real_estate) == 1
-        assert real_estate[0]["debt_name"] == "Pret immobilier demo"
+        assert len(real_estate) == 2
+        apartment = next(asset for asset in real_estate if asset["name"] == "Appartement demo")
+        assert apartment["debt_name"] == "Pret immobilier demo"
+        land = next(asset for asset in real_estate if asset["name"] == "Terrain demo")
+        assert land["current_value"] is None
+        assert land["owned_value"] == "22500.00"
+        assert land["gain"] == "0.00"
         assert client.get("/api/holdings").json()
         rules = client.get("/api/rules").json()
         assert any(len(rule["patterns"]) >= 3 for rule in rules)

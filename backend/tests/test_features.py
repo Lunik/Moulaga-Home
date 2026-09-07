@@ -1730,6 +1730,46 @@ def test_real_estate_crud_and_networth_integration(client):
     assert client.delete(f"/api/real-estate/{asset['id']}").status_code == 404
 
 
+def test_real_estate_current_value_is_optional(client):
+    response = client.post(
+        "/api/real-estate",
+        json={
+            "name": "Terrain sans estimation",
+            "property_type": "land",
+            "purchase_price": "80000.00",
+            "ownership_share": "25.00",
+        },
+    )
+    assert response.status_code == 201
+    asset = response.json()
+    assert asset["current_value"] is None
+    assert asset["owned_purchase_price"] == "20000.00"
+    assert asset["owned_value"] == "20000.00"
+    assert asset["gain"] == "0.00"
+    assert asset["net_equity"] == "20000.00"
+
+    summary = client.get("/api/portfolio/summary").json()
+    assert summary["cost_basis"] == "20000.00"
+    assert summary["market_value"] == "20000.00"
+    assert summary["gain"] == "0.00"
+
+    valued = client.patch(
+        f"/api/real-estate/{asset['id']}",
+        json={"current_value": "100000.00"},
+    )
+    assert valued.status_code == 200
+    assert valued.json()["current_value"] == "100000.00"
+    assert valued.json()["owned_value"] == "25000.00"
+
+    cleared = client.patch(
+        f"/api/real-estate/{asset['id']}",
+        json={"current_value": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["current_value"] is None
+    assert cleared.json()["owned_value"] == "20000.00"
+
+
 # --------------------------------------------------------------------------- #
 # Household local authorization
 # --------------------------------------------------------------------------- #

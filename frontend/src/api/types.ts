@@ -293,7 +293,7 @@ export interface RealEstateAsset {
   address: string | null
   acquired_on: string | null
   purchase_price: Money
-  current_value: Money
+  current_value: Money | null
   ownership_share: string
   debt_id: number | null
   debt_name: string | null
