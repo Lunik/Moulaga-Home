@@ -959,6 +959,10 @@ textarea:focus-visible {
   order: 1;
 }
 
+.account-type-filter-select {
+  display: none;
+}
+
 .archive-view-button {
   display: inline-flex;
   min-height: 2.35rem;
@@ -1198,6 +1202,7 @@ textarea:focus-visible {
 .field select,
 .field textarea,
 .transaction-toolbar select,
+.account-type-filter-select,
 .search-field {
   width: 100%;
   min-height: 2.8rem;
@@ -1209,7 +1214,8 @@ textarea:focus-visible {
 }
 
 .field select,
-.transaction-toolbar select {
+.transaction-toolbar select,
+.account-type-filter-select {
   appearance: none;
   padding-right: 2.8rem;
   background-image:
@@ -1223,7 +1229,8 @@ textarea:focus-visible {
 }
 
 .field select:hover,
-.transaction-toolbar select:hover {
+.transaction-toolbar select:hover,
+.account-type-filter-select:hover {
   border-color: var(--faint);
 }
 
@@ -3931,6 +3938,7 @@ html[data-theme="light"] .feature-form select,
 html[data-theme="light"] .section-intro select,
 html[data-theme="light"] .filter-row select,
 html[data-theme="light"] .transaction-toolbar select,
+html[data-theme="light"] .account-type-filter-select,
 html[data-theme="light"] .search-field,
 html[data-theme="light"] .compact-feature-form input,
 html[data-theme="light"] .compact-feature-form select,
@@ -4137,6 +4145,25 @@ html[data-theme="light"] .status-badge {
   .balance-hero .secondary-button,
   .section-intro .primary-button {
     width: 100%;
+  }
+
+  .account-filter-groups {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+  }
+
+  .account-filter-groups .filter-tabs {
+    display: none;
+  }
+
+  .account-type-filter-select {
+    display: block;
+    min-width: 0;
+  }
+
+  .archive-view-button {
+    margin-left: 0;
   }
 
   .metric-grid,
