@@ -44,6 +44,7 @@ class Account(Base):
     currency: Mapped[str] = mapped_column(String(3), default="EUR")
     initial_balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
     institution: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    regional_entity: Mapped[str | None] = mapped_column(String(120), nullable=True)
     account_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
     color: Mapped[str] = mapped_column(String(16), default="#4f46e5")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

@@ -190,7 +190,9 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
 
         assert checking["account_number"] == "DEMO-COURANT-001"
         assert checking["transaction_count"] > 100
-        assert savings["institution"] == checking["institution"] == "BNP Paribas"
+        assert checking["institution"] == savings["institution"] == "Caisse d’Épargne"
+        assert checking["regional_entity"] == "Loire Drôme Ardèche"
+        assert savings["regional_entity"] == "Rhône Alpes"
         assert savings["annual_interest_rate"] == "1.700"
         assert savings["legal_cap"] == "22950.00"
         assert pea["institution"] == "Boursobank"
@@ -314,7 +316,13 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         ).json()
         assert {
             point["institution"] for point in institution_history
-        } == {"Amundi", "BNP Paribas", "Boursobank", "Revolut"}
+        } == {
+            "Amundi",
+            "Boursobank",
+            "Caisse d’Épargne · Loire Drôme Ardèche",
+            "Caisse d’Épargne · Rhône Alpes",
+            "Revolut",
+        }
         assert sum(
             point["institution"] == "Boursobank"
             for point in institution_history
@@ -337,6 +345,18 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
             if point["period"] == latest_period
             and point["institution"] == "Amundi"
         ) == "19000.00"
+        assert next(
+            point["balance"]
+            for point in institution_history
+            if point["period"] == latest_period
+            and point["institution"] == "Caisse d’Épargne · Loire Drôme Ardèche"
+        ) == "5562.44"
+        assert next(
+            point["balance"]
+            for point in institution_history
+            if point["period"] == latest_period
+            and point["institution"] == "Caisse d’Épargne · Rhône Alpes"
+        ) == "6000.00"
         year, month = latest_period.split("-")
         quick_import = client.post(
             f"/api/accounts/{peg['id']}/snapshots/import",

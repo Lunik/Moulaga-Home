@@ -32,6 +32,7 @@ class AccountCreate(BaseModel):
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     initial_balance: Decimal = Field(default=Decimal("0.00"), **_MONEY)
     institution: str | None = Field(default=None, max_length=120)
+    regional_entity: str | None = Field(default=None, max_length=120)
     account_number: str | None = Field(default=None, max_length=120)
     color: str = Field(default="#4f46e5", pattern=HEX_COLOR)
     savings_product: str | None = Field(default=None, max_length=64)
@@ -45,7 +46,12 @@ class AccountCreate(BaseModel):
     def strip_required(cls, value: str) -> str:
         return _strip_required(value)
 
-    @field_validator("account_number", "savings_product")
+    @field_validator(
+        "institution",
+        "regional_entity",
+        "account_number",
+        "savings_product",
+    )
     @classmethod
     def strip_optional(cls, value: str | None) -> str | None:
         if value is None:
@@ -57,6 +63,14 @@ class AccountCreate(BaseModel):
     @classmethod
     def normalize_currency(cls, value: str) -> str:
         return value.upper()
+
+    @model_validator(mode="after")
+    def require_institution_for_regional_entity(self) -> AccountCreate:
+        if self.regional_entity is not None and self.institution is None:
+            raise ValueError(
+                "Une entite regionale necessite un etablissement"
+            )
+        return self
 
 
 class AccountRead(AccountCreate):
@@ -75,6 +89,7 @@ class AccountUpdate(BaseModel):
     initial_balance: Decimal | None = Field(default=None, **_MONEY)
     balance: Decimal | None = Field(default=None, **_MONEY)
     institution: str | None = Field(default=None, max_length=120)
+    regional_entity: str | None = Field(default=None, max_length=120)
     account_number: str | None = Field(default=None, max_length=120)
     color: str | None = Field(default=None, pattern=HEX_COLOR)
     archived: bool | None = None
@@ -96,7 +111,12 @@ class AccountUpdate(BaseModel):
     def normalize_currency(cls, value: str | None) -> str | None:
         return value.upper() if value else value
 
-    @field_validator("account_number", "savings_product")
+    @field_validator(
+        "institution",
+        "regional_entity",
+        "account_number",
+        "savings_product",
+    )
     @classmethod
     def strip_optional(cls, value: str | None) -> str | None:
         if value is None:

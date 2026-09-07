@@ -74,6 +74,7 @@ def test_legacy_database_upgrades_without_data_loss(tmp_path, monkeypatch):
         assert historic["color"] == "#4f46e5"
         assert historic["balance"] == "70.00"  # 100.00 initial - 30.00 expense preserved
         assert historic["account_number"] is None
+        assert historic["regional_entity"] is None
         assert historic["savings_product"] is None
         assert historic["annual_interest_rate"] is None
         assert historic["legal_cap"] is None
@@ -104,6 +105,7 @@ def test_legacy_database_upgrades_without_data_loss(tmp_path, monkeypatch):
     finally:
         connection.close()
     assert "account_number" in account_columns
+    assert "regional_entity" in account_columns
     assert "transfer_group" in transaction_columns
     assert attachment_table is not None
     assert snapshot_attachment_table is not None

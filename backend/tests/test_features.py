@@ -657,16 +657,17 @@ def test_account_snapshot_tsv_import_rejects_invalid_rows_atomically(
 
 def test_institution_history_groups_snapshots_and_respects_filters(client):
     checking_id = _account_id(client)
-    client.patch(
+    checking = client.patch(
         f"/api/accounts/{checking_id}",
-        json={"institution": "Banque Alpha"},
-    )
+        json={"institution": "  Caisse d'Epargne Loire Drome Ardeche  "},
+    ).json()
     savings = client.post(
         "/api/accounts",
         json={
             "name": "Épargne synthétique",
             "type": "savings",
-            "institution": "Banque Alpha",
+            "institution": "Caisse d’Épargne",
+            "regional_entity": "Rhône Alpes",
         },
     ).json()
     unassigned = client.post(
@@ -678,9 +679,23 @@ def test_institution_history_groups_snapshots_and_respects_filters(client):
         json={
             "name": "Compte archivé synthétique",
             "type": "checking",
-            "institution": "Banque Bêta",
+            "institution": "Crédit Agricole",
+            "regional_entity": "Sud Rhône Alpes",
         },
     ).json()
+    assert checking["institution"] == "Caisse d’Épargne"
+    assert checking["regional_entity"] == "Loire Drome Ardeche"
+    assert savings["institution"] == "Caisse d’Épargne"
+    assert savings["regional_entity"] == "Rhône Alpes"
+    assert archived["institution"] == "Crédit Agricole"
+    assert archived["regional_entity"] == "Sud Rhône Alpes"
+    assert client.post(
+        "/api/accounts",
+        json={
+            "name": "Entité sans établissement",
+            "regional_entity": "Région synthétique",
+        },
+    ).status_code == 422
 
     for account_id, period, balance in [
         (checking_id, "2026-01", "100.00"),
@@ -704,9 +719,11 @@ def test_institution_history_groups_snapshots_and_respects_filters(client):
         (point["period"], point["institution"]): point["balance"]
         for point in response.json()
     } == {
-        ("2026-01", "Banque Alpha"): "150.00",
+        ("2026-01", "Caisse d’Épargne · Loire Drome Ardeche"): "100.00",
+        ("2026-01", "Caisse d’Épargne · Rhône Alpes"): "50.00",
         ("2026-01", "Établissement non renseigné"): "20.00",
-        ("2026-02", "Banque Alpha"): "165.00",
+        ("2026-02", "Caisse d’Épargne · Loire Drome Ardeche"): "110.00",
+        ("2026-02", "Caisse d’Épargne · Rhône Alpes"): "55.00",
         ("2026-02", "Établissement non renseigné"): "20.00",
     }
 
@@ -716,8 +733,16 @@ def test_institution_history_groups_snapshots_and_respects_filters(client):
     )
     assert savings_history.status_code == 200
     assert savings_history.json() == [
-        {"period": "2026-01", "institution": "Banque Alpha", "balance": "50.00"},
-        {"period": "2026-02", "institution": "Banque Alpha", "balance": "55.00"},
+        {
+            "period": "2026-01",
+            "institution": "Caisse d’Épargne · Rhône Alpes",
+            "balance": "50.00",
+        },
+        {
+            "period": "2026-02",
+            "institution": "Caisse d’Épargne · Rhône Alpes",
+            "balance": "55.00",
+        },
     ]
 
     archived_history = client.get(
@@ -726,7 +751,11 @@ def test_institution_history_groups_snapshots_and_respects_filters(client):
     )
     assert archived_history.status_code == 200
     assert archived_history.json() == [
-        {"period": "2026-01", "institution": "Banque Bêta", "balance": "900.00"}
+        {
+            "period": "2026-01",
+            "institution": "Crédit Agricole · Sud Rhône Alpes",
+            "balance": "900.00",
+        }
     ]
 
 

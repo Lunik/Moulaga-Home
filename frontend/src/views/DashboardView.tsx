@@ -25,6 +25,7 @@ import type {
   PortfolioSummary,
   Transaction,
 } from '../api/types'
+import { accountInstitutionLabel } from '../institutions'
 import type { Route } from '../routing'
 import {
   CategorizationSummary,
@@ -391,7 +392,7 @@ export function DashboardView({
               {dashboardAccounts.map((account) => (
                 <button type="button" key={account.id} onClick={() => navigate({ name: 'account', accountId: account.id })}>
                   <InstitutionLogo institution={account.institution} />
-                  <span><strong>{account.name}</strong><small>{account.institution || account.type}</small></span>
+                  <span><strong>{account.name}</strong><small>{accountInstitutionLabel(account) || account.type}</small></span>
                   <strong className={Number(account.balance) < 0 ? 'negative' : undefined}>{money(account.balance)}</strong>
                 </button>
               ))}

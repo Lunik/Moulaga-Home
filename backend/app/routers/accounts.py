@@ -17,6 +17,12 @@ from ..account_balances import account_balance
 from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import local_today, money
 from ..db import get_session
+from ..institutions import (
+    UNASSIGNED_INSTITUTION,
+    institution_fields,
+    institution_group,
+    institution_label,
+)
 from ..models import (
     Account,
     BalanceSnapshot,
@@ -83,6 +89,10 @@ async def _account_read(session: AsyncSession, account: Account) -> AccountRead:
     return AccountRead.model_validate(account).model_copy(
         update={
             "balance": await _balance(session, account),
+            **institution_fields(
+                account.institution,
+                account.regional_entity,
+            ),
             "transaction_count": int(count or 0),
         }
     )
@@ -115,15 +125,12 @@ async def list_institution_history(
     account_type: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[InstitutionHistoryPoint]:
-    institution = func.coalesce(
-        func.nullif(func.trim(Account.institution), ""),
-        "Établissement non renseigné",
-    )
     statement = (
         select(
             Account.id.label("account_id"),
             BalanceSnapshot.period.label("period"),
-            institution.label("institution"),
+            Account.institution.label("institution"),
+            Account.regional_entity.label("regional_entity"),
             BalanceSnapshot.balance.label("balance"),
         )
         .join(Account, Account.id == BalanceSnapshot.account_id)
@@ -135,7 +142,11 @@ async def list_institution_history(
 
     rows = (await session.execute(statement)).all()
     snapshots_by_period: dict[str, list[tuple[int, str, Decimal]]] = {}
-    for account_id, period, institution_name, balance in rows:
+    for account_id, period, raw_institution, regional_entity, balance in rows:
+        institution_name = (
+            institution_label(raw_institution, regional_entity)
+            or UNASSIGNED_INSTITUTION
+        )
         snapshots_by_period.setdefault(period, []).append(
             (account_id, institution_name, Decimal(balance))
         )
@@ -176,13 +187,18 @@ async def get_account(
     count = await session.scalar(
         select(func.count()).select_from(Transaction).where(Transaction.account_id == account_id)
     )
+    normalized_institution = institution_fields(
+        account.institution,
+        account.regional_entity,
+    )
     detail = AccountDetail(
         id=account.id,
         name=account.name,
         type=account.type,
         currency=account.currency,
         initial_balance=account.initial_balance,
-        institution=account.institution,
+        institution=normalized_institution["institution"],
+        regional_entity=normalized_institution["regional_entity"],
         account_number=account.account_number,
         color=account.color,
         archived=account.archived,
@@ -210,6 +226,34 @@ async def update_account(
     balance = data.pop("balance", None)
     if balance is None and "initial_balance" in data:
         balance = data["initial_balance"]
+    if "institution" in data or "regional_entity" in data:
+        current_institution = institution_fields(
+            account.institution,
+            account.regional_entity,
+        )
+        next_institution = data.get(
+            "institution",
+            current_institution["institution"],
+        )
+        if "regional_entity" in data:
+            next_regional_entity = data["regional_entity"]
+        elif institution_group(next_institution) == institution_group(
+            current_institution["institution"]
+        ):
+            next_regional_entity = current_institution["regional_entity"]
+        else:
+            next_regional_entity = None
+        if next_regional_entity is not None and next_institution is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Une entite regionale necessite un etablissement",
+            )
+        data.update(
+            institution_fields(
+                next_institution,
+                next_regional_entity,
+            )
+        )
     requested_type = data.get("type")
     if requested_type in DEPRECATED_ACCOUNT_TYPES and requested_type != account.type:
         raise HTTPException(status_code=422, detail="Ce type de compte n'est plus disponible")

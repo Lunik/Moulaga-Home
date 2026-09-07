@@ -218,12 +218,14 @@ async def _seed(
     checking.type = "checking"
     checking.currency = "EUR"
     checking.initial_balance = money("1200.00")
-    checking.institution = "BNP Paribas"
+    checking.institution = "Caisse d’Épargne"
+    checking.regional_entity = "Loire Drôme Ardèche"
     checking.account_number = "DEMO-COURANT-001"
     checking.color = "#4f46e5"
     savings = Account(
         name="Livret epargne demo", type="savings", currency="EUR",
-        initial_balance=money("5000.00"), institution="BNP Paribas", color="#16a34a",
+        initial_balance=money("5000.00"), institution="Caisse d’Épargne",
+        regional_entity="Rhône Alpes", color="#16a34a",
         account_number="DEMO-LIVRET-001",
         savings_product="Livret A", annual_interest_rate=Decimal("1.700"),
         legal_cap=money("22950.00"),

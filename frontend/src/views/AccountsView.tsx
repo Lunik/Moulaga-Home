@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useId, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Area,
@@ -25,6 +25,11 @@ import type {
   TransactionCount,
 } from '../api/types'
 import { AttachmentManager } from '../AttachmentManager'
+import {
+  accountInstitutionLabel,
+  institutionOptions,
+  regionalEntitySuggestions,
+} from '../institutions'
 import { useOnlineStatus } from '../pwa'
 import type { Route } from '../routing'
 import { calculateSavingsProjection } from '../savingsProjection'
@@ -52,41 +57,6 @@ import {
   signedMoney,
 } from '../ui'
 
-const institutions = [
-  'ABN AMRO',
-  'Amundi',
-  'Banca Intesa Sanpaolo',
-  'Banco Santander',
-  'Bank of Ireland',
-  'Barclays',
-  'BBVA',
-  'BNP Paribas',
-  'Boursobank',
-  'Caisse d’Épargne',
-  'Commerzbank',
-  'Crédit Agricole',
-  'Crédit Mutuel',
-  'Danske Bank',
-  'Deutsche Bank',
-  'Fortuneo',
-  'Hello bank!',
-  'HSBC',
-  'ING',
-  'KBC',
-  'La Banque Postale',
-  'LCL',
-  'Lloyds Bank',
-  'Monabanq',
-  'N26',
-  'NatWest',
-  'Raiffeisen Bank',
-  'Revolut',
-  'Société Générale',
-  'Trade Republic',
-  'UniCredit',
-  'Volkswagen Bank',
-  'Wise',
-]
 const accountTypeOptions = [
   { value: 'checking', label: 'Compte courant' },
   { value: 'savings', label: 'Épargne' },
@@ -238,8 +208,8 @@ export function AccountsView({
   ]
   const accountGroups = Object.entries(
     visibleAccounts.reduce<Record<string, Account[]>>((groups, account) => {
-      const institution = account.institution?.trim() || 'Établissement non renseigné'
-      groups[institution] = [...(groups[institution] ?? []), account]
+      const group = accountInstitutionLabel(account) || 'Établissement non renseigné'
+      groups[group] = [...(groups[group] ?? []), account]
       return groups
     }, {}),
   ).sort(([left], [right]) => left.localeCompare(right, 'fr'))
@@ -354,7 +324,7 @@ export function AccountsView({
         )}
         className="account-history-panel"
         title="Évolution des soldes par établissement"
-        subtitle="Somme des relevés mensuels des comptes affichés"
+        subtitle="Une série distincte par établissement et entité régionale"
       >
         {visibleInstitutionChartSeries.length > 0 && (
           <div
@@ -429,24 +399,24 @@ export function AccountsView({
 
       {accountGroups.length > 0 ? (
         <div className="institution-groups">
-          {accountGroups.map(([institution, institutionAccounts]) => {
-            const collapsed = collapsedInstitutions.has(institution)
+          {accountGroups.map(([institutionLabel, institutionAccounts]) => {
+            const collapsed = collapsedInstitutions.has(institutionLabel)
             const institutionTotal = institutionAccounts.reduce(
               (sum, account) => sum + Number(account.balance),
               0,
             )
             return (
-              <section className="institution-group" key={institution}>
+              <section className="institution-group" key={institutionLabel}>
                 <button
                   aria-expanded={!collapsed}
                   className="institution-group-header"
                   type="button"
-                  onClick={() => toggleInstitution(institution)}
+                  onClick={() => toggleInstitution(institutionLabel)}
                 >
                   <span className="institution-group-identity">
-                    <InstitutionLogo institution={institution === 'Établissement non renseigné' ? null : institution} />
+                    <InstitutionLogo institution={institutionAccounts[0]?.institution} />
                     <span>
-                      <strong>{institution}</strong>
+                      <strong>{institutionLabel}</strong>
                       <small>
                         {institutionAccounts.length} compte{institutionAccounts.length === 1 ? '' : 's'}
                       </small>
@@ -500,7 +470,7 @@ function AccountCard({
       </div>
       <div className="account-card-copy">
         <h2>{account.name}</h2>
-        <p>{account.institution || 'Établissement non renseigné'}</p>
+        <p>{accountInstitutionLabel(account) || 'Établissement non renseigné'}</p>
         {account.account_number && (
           <small className="account-number">ID : {account.account_number}</small>
         )}
@@ -872,7 +842,7 @@ export function AccountDetailView({
         <p>Solde actuel</p>
         <strong>{money(account.data.balance)}</strong>
         <small>
-          {account.data.institution || 'Établissement non renseigné'}
+          {accountInstitutionLabel(account.data) || 'Établissement non renseigné'}
           {account.data.account_number && ` · ID : ${account.data.account_number}`}
         </small>
       </section>
@@ -1603,6 +1573,7 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
   const [name, setName] = useState('')
   const [type, setType] = useState('checking')
   const [institution, setInstitution] = useState('')
+  const [regionalEntity, setRegionalEntity] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
   const [initialBalance, setInitialBalance] = useState('0')
   const mutation = useMutation({
@@ -1611,6 +1582,7 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
       type,
       currency: 'EUR',
       institution: institution || null,
+      regional_entity: regionalEntity || null,
       account_number: accountNumber || null,
       initial_balance: initialBalance,
       ...(type === 'savings' ? {
@@ -1628,7 +1600,12 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
         mutation.mutate()
       }}>
         <Field label="Nom"><FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required /></Field>
-        <InstitutionField institution={institution} onChange={setInstitution} />
+        <InstitutionField
+          institution={institution}
+          onInstitutionChange={setInstitution}
+          onRegionalEntityChange={setRegionalEntity}
+          regionalEntity={regionalEntity}
+        />
         <Field label="Numéro / identifiant du compte">
           <FormInput
             value={accountNumber}
@@ -1659,6 +1636,7 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
   const [name, setName] = useState(account.name)
   const [type, setType] = useState(account.type)
   const [institution, setInstitution] = useState(account.institution ?? '')
+  const [regionalEntity, setRegionalEntity] = useState(account.regional_entity ?? '')
   const [accountNumber, setAccountNumber] = useState(account.account_number ?? '')
   const [balance, setBalance] = useState(account.balance)
   const mutation = useMutation({
@@ -1666,6 +1644,7 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
       name,
       type,
       institution: institution || null,
+      regional_entity: regionalEntity || null,
       account_number: accountNumber || null,
       ...(balance !== account.balance ? { balance } : {}),
       ...(type === 'savings' && account.type !== 'savings' ? {
@@ -1686,7 +1665,12 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
         mutation.mutate()
       }}>
         <Field label="Nom"><FormInput value={name} onChange={(event) => setName(event.target.value)} required /></Field>
-        <InstitutionField institution={institution} onChange={setInstitution} />
+        <InstitutionField
+          institution={institution}
+          onInstitutionChange={setInstitution}
+          onRegionalEntityChange={setRegionalEntity}
+          regionalEntity={regionalEntity}
+        />
         <Field label="Numéro / identifiant du compte">
           <FormInput
             value={accountNumber}
@@ -1718,14 +1702,20 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
 
 function InstitutionField({
   institution,
-  onChange,
+  onInstitutionChange,
+  onRegionalEntityChange,
+  regionalEntity,
 }: {
   institution: string
-  onChange: (value: string) => void
+  onInstitutionChange: (value: string) => void
+  onRegionalEntityChange: (value: string) => void
+  regionalEntity: string
 }) {
-  const isKnown = institutions.includes(institution)
+  const suggestionsId = useId()
+  const isKnown = institutionOptions.includes(institution)
   const [isOther, setIsOther] = useState(Boolean(institution) && !isKnown)
   const selection = isOther ? 'other' : institution
+  const suggestions = regionalEntitySuggestions[institution] ?? []
   return (
     <>
       <Field label="Établissement">
@@ -1735,11 +1725,12 @@ function InstitutionField({
           onChange={(event) => {
             const value = event.target.value
             setIsOther(value === 'other')
-            if (value !== 'other') onChange(value)
+            onInstitutionChange(value === 'other' ? '' : value)
+            onRegionalEntityChange('')
           }}
         >
           <option value="">Non renseigné</option>
-          {institutions.map((item) => <option key={item} value={item}>{item}</option>)}
+          {institutionOptions.map((item) => <option key={item} value={item}>{item}</option>)}
           <option value="other">Autre…</option>
         </FormSelect>
       </Field>
@@ -1748,12 +1739,32 @@ function InstitutionField({
           <FormInput
             aria-label="Autre établissement"
             value={institution}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => onInstitutionChange(event.target.value)}
             maxLength={120}
             required
           />
         </Field>
       )}
+      <Field
+        label="Entité régionale"
+        hint="Facultatif — par exemple Loire Drôme Ardèche ou Rhône Alpes."
+      >
+        <>
+          <FormInput
+            disabled={!institution.trim()}
+            list={suggestions.length > 0 ? suggestionsId : undefined}
+            value={regionalEntity}
+            onChange={(event) => onRegionalEntityChange(event.target.value)}
+            maxLength={120}
+            placeholder={suggestions[0] ?? 'Nom de la caisse ou entité locale'}
+          />
+          {suggestions.length > 0 && (
+            <datalist id={suggestionsId}>
+              {suggestions.map((item) => <option key={item} value={item} />)}
+            </datalist>
+          )}
+        </>
+      </Field>
     </>
   )
 }

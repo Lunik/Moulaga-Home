@@ -7,8 +7,9 @@ une base SQLite locale et persistante.
 
 - tableau de bord des soldes, revenus, depenses et budget restant, avec activite recente,
   comparaison mensuelle et synthese du patrimoine net ;
-- comptes groupes par etablissement, numero ou identifiant facultatif, historique,
-  releves avec pieces jointes locales, configurations de livrets et positions ;
+- comptes groupes par etablissement et entite regionale, avec selecteur de banque,
+  numero ou identifiant facultatif, historique, releves avec pieces jointes locales,
+  configurations de livrets et positions ;
 - registre pagine des transactions avec pieces jointes locales ajoutables des la creation,
   creation et edition en modale, deplacement entre comptes, suppression et filtres ;
 - cycle budgetaire configurable, enveloppes plafonnees ou non avec budgets parents repartis entre

@@ -18,6 +18,7 @@ export interface Account {
   initial_balance: Money
   balance: Money
   institution: string | null
+  regional_entity: string | null
   account_number: string | null
   archived: boolean
   transaction_count: number

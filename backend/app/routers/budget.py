@@ -19,6 +19,7 @@ from ..category_budgeting import (
 )
 from ..common import add_month, local_today, money
 from ..db import get_session
+from ..institutions import institution_fields
 from ..models import Account, Category, Transaction
 from ..schemas import (
     DEPRECATED_ACCOUNT_TYPES,
@@ -54,6 +55,10 @@ async def list_accounts(
         AccountRead.model_validate(account).model_copy(
             update={
                 "balance": balances.get(account.id, account.initial_balance),
+                **institution_fields(
+                    account.institution,
+                    account.regional_entity,
+                ),
                 "transaction_count": transaction_counts.get(account.id, 0),
             }
         )
@@ -65,7 +70,14 @@ async def list_accounts(
 async def create_account(payload: AccountCreate, session: AsyncSession = Depends(get_session)) -> AccountRead:
     if payload.type in DEPRECATED_ACCOUNT_TYPES:
         raise HTTPException(status_code=422, detail="Ce type de compte n'est plus disponible")
-    account = Account(**payload.model_dump())
+    data = payload.model_dump()
+    data.update(
+        institution_fields(
+            payload.institution,
+            payload.regional_entity,
+        )
+    )
+    account = Account(**data)
     session.add(account)
     try:
         await session.commit()
@@ -73,7 +85,15 @@ async def create_account(payload: AccountCreate, session: AsyncSession = Depends
         await session.rollback()
         raise HTTPException(status_code=409, detail="Un compte avec ce nom existe deja") from exc
     await session.refresh(account)
-    return AccountRead.model_validate(account).model_copy(update={"balance": account.initial_balance})
+    return AccountRead.model_validate(account).model_copy(
+        update={
+            "balance": account.initial_balance,
+            **institution_fields(
+                account.institution,
+                account.regional_entity,
+            ),
+        }
+    )
 
 
 @router.get("/categories", response_model=list[CategoryRead])
