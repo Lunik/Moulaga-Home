@@ -8,6 +8,8 @@ module performs a tiny, safe, idempotent reconciliation:
 * new tables are created by ``create_all``;
 * missing columns on pre-existing tables are added with ``ALTER TABLE ... ADD
   COLUMN`` (a non-destructive SQLite operation);
+* constrained tables are rebuilt transactionally when an existing column must
+  become nullable;
 * a timestamped copy of the database file is taken *before* any structural
   change so an upgrade can never lose data.
 
@@ -29,7 +31,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Columns that may be missing on databases created before this schema version.
 # Values are the SQLite column definitions used by ``ALTER TABLE ADD COLUMN``.
@@ -108,6 +110,30 @@ def _apply_columns(conn: Connection, pending: dict[str, dict[str, str]]) -> None
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
+def _real_estate_current_value_is_required(conn: Connection) -> bool:
+    if not _table_exists(conn, "real_estate_assets"):
+        return False
+    rows = conn.execute(text("PRAGMA table_info(real_estate_assets)")).all()
+    return any(row[1] == "current_value" and bool(row[3]) for row in rows)
+
+
+def _make_real_estate_current_value_nullable(conn: Connection) -> None:
+    table = Base.metadata.tables["real_estate_assets"]
+    legacy_table = "real_estate_assets_v9"
+    columns = ", ".join(column.name for column in table.columns)
+
+    conn.execute(text(f"ALTER TABLE real_estate_assets RENAME TO {legacy_table}"))
+    conn.execute(text("DROP INDEX IF EXISTS ix_real_estate_assets_debt_id"))
+    table.create(conn)
+    conn.execute(
+        text(
+            f"INSERT INTO real_estate_assets ({columns}) "
+            f"SELECT {columns} FROM {legacy_table}"
+        )
+    )
+    conn.execute(text(f"DROP TABLE {legacy_table}"))
+
+
 def _backup(db_path: Path, from_version: int) -> None:
     stamp = datetime.now().strftime("%Y%m%d%H%M%S")
     backup = db_path.with_name(f"{db_path.stem}.backup-{stamp}-v{from_version}.db")
@@ -128,15 +154,22 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         version = await conn.scalar(text("PRAGMA user_version"))
         pending = await conn.run_sync(_pending_columns)
         missing_tables = await conn.run_sync(_missing_tables)
+        requires_real_estate_rebuild = await conn.run_sync(
+            _real_estate_current_value_is_required
+        )
 
-    if (pending or missing_tables) and pre_existing and db_path is not None:
+    if (
+        pending or missing_tables or requires_real_estate_rebuild
+    ) and pre_existing and db_path is not None:
         _backup(db_path, int(version or 0))
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_apply_columns, pending)
+        if requires_real_estate_rebuild:
+            await conn.run_sync(_make_real_estate_current_value_nullable)
         await conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
         await conn.execute(text("PRAGMA optimize"))
 
-    if pending or missing_tables:
+    if pending or missing_tables or requires_real_estate_rebuild:
         logger.info("Schema mis a jour vers la version %s", SCHEMA_VERSION)

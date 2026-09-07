@@ -618,17 +618,27 @@ async def _seed(
     await session.flush()
 
     # --- Real estate ------------------------------------------------------- #
-    session.add(
-        RealEstateAsset(
-            name="Appartement demo",
-            property_type="primary_residence",
-            address="12 rue des Exemples, 75000 Paris",
-            acquired_on=date(2021, 5, 15),
-            purchase_price=money("280000.00"),
-            current_value=money("310000.00"),
-            ownership_share=Decimal("100.00"),
-            debt_id=mortgage.id,
-        )
+    session.add_all(
+        [
+            RealEstateAsset(
+                name="Appartement demo",
+                property_type="primary_residence",
+                address="12 rue des Exemples, 75000 Paris",
+                acquired_on=date(2021, 5, 15),
+                purchase_price=money("280000.00"),
+                current_value=money("310000.00"),
+                ownership_share=Decimal("100.00"),
+                debt_id=mortgage.id,
+            ),
+            RealEstateAsset(
+                name="Terrain demo",
+                property_type="land",
+                acquired_on=date(2024, 3, 10),
+                purchase_price=money("45000.00"),
+                current_value=None,
+                ownership_share=Decimal("50.00"),
+            ),
+        ]
     )
 
     # --- Holdings + contributions ----------------------------------------- #
@@ -654,8 +664,8 @@ async def _seed(
     # Rising cost basis and market value so /portfolio/performance can render a
     # real gain/value history rather than a contributions-only series.
     portfolio_snapshot_count = 0
-    base_cost = Decimal("281800.00")
-    base_value = Decimal("311850.00")
+    base_cost = Decimal("304300.00")
+    base_value = Decimal("334350.00")
     for index, month in enumerate(months):
         cost_basis = money(base_cost + Decimal(index) * Decimal("200.00"))
         market_value = money(base_value + Decimal(index) * Decimal("260.00"))
@@ -771,7 +781,7 @@ async def _seed(
         recurring=3,
         changes=1,
         debts=4,
-        real_estate_assets=1,
+        real_estate_assets=2,
         holdings=2,
         contributions=contribution_count,
         households=1,

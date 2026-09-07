@@ -37,6 +37,7 @@ import {
   FormInput,
   FormSelect,
   Icon,
+  Modal,
   Panel,
   ProgressBar,
   StatusBadge,
@@ -613,7 +614,7 @@ function HoldingForm({
 
 function RealEstatePanel({ assets, debts }: { assets: RealEstateAsset[]; debts: Debt[] }) {
   const queryClient = useQueryClient()
-  const [showForm, setShowForm] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingAsset, setEditingAsset] = useState<RealEstateAsset | null>(null)
   const [search, setSearch] = useState('')
   const [propertyType, setPropertyType] = useState('all')
@@ -642,8 +643,8 @@ function RealEstatePanel({ assets, debts }: { assets: RealEstateAsset[]; debts: 
       queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
     ])
   }
-  const closeForm = () => {
-    setShowForm(false)
+  const closeModal = () => {
+    setShowCreateModal(false)
     setEditingAsset(null)
   }
 
@@ -656,21 +657,21 @@ function RealEstatePanel({ assets, debts }: { assets: RealEstateAsset[]; debts: 
           type="button"
           onClick={() => {
             setEditingAsset(null)
-            setShowForm((current) => !current)
+            setShowCreateModal(true)
           }}
         >
           <Icon name="plus" /> Ajouter un bien
         </button>
       </section>
-      {(showForm || editingAsset) && (
-        <RealEstateForm
+      {(showCreateModal || editingAsset) && (
+        <RealEstateModal
           asset={editingAsset ?? undefined}
           debts={availableDebts}
           key={editingAsset?.id ?? 'new-property'}
-          onCancel={closeForm}
+          onClose={closeModal}
           onSaved={async () => {
             await refresh()
-            closeForm()
+            closeModal()
           }}
         />
       )}
@@ -719,7 +720,7 @@ function RealEstatePanel({ assets, debts }: { assets: RealEstateAsset[]; debts: 
                 key={asset.id}
                 onChanged={refresh}
                 onEdit={() => {
-                  setShowForm(false)
+                  setShowCreateModal(false)
                   setEditingAsset(asset)
                 }}
               />
@@ -765,11 +766,15 @@ function RealEstateRow({
         </small>
       </span>
       <span className="property-value">
-        <small>Valeur détenue</small>
+        <small>{asset.current_value === null ? 'Valeur détenue au prix d’achat' : 'Valeur détenue'}</small>
         <strong>{money(asset.owned_value)}</strong>
-        <small className={Number(asset.gain) >= 0 ? 'positive' : 'negative'}>
-          {signedMoney(asset.gain)} · {gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
-        </small>
+        {asset.current_value === null ? (
+          <small>Valeur actuelle non renseignée</small>
+        ) : (
+          <small className={Number(asset.gain) >= 0 ? 'positive' : 'negative'}>
+            {signedMoney(asset.gain)} · {gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+          </small>
+        )}
       </span>
       <span className="property-equity">
         <small>Valeur nette</small>
@@ -794,15 +799,15 @@ function RealEstateRow({
   )
 }
 
-function RealEstateForm({
+function RealEstateModal({
   asset,
   debts,
-  onCancel,
+  onClose,
   onSaved,
 }: {
   asset?: RealEstateAsset
   debts: Debt[]
-  onCancel: () => void
+  onClose: () => void
   onSaved: () => Promise<void>
 }) {
   const [name, setName] = useState(asset?.name ?? '')
@@ -821,7 +826,7 @@ function RealEstateForm({
         address,
         acquired_on: acquiredOn || null,
         purchase_price: purchasePrice,
-        current_value: currentValue,
+        current_value: currentValue || null,
         ownership_share: ownershipShare,
         debt_id: debtId ? Number(debtId) : null,
       }
@@ -831,13 +836,23 @@ function RealEstateForm({
     },
     onSuccess: onSaved,
   })
+  const formId = asset ? `real-estate-edit-${asset.id}` : 'real-estate-create'
 
   return (
-    <Panel
+    <Modal
       title={asset ? 'Modifier le bien' : 'Nouveau bien immobilier'}
-      subtitle="Les montants et l’adresse restent exclusivement dans votre base locale."
+      description="Les montants et l’adresse restent exclusivement dans votre base locale."
+      onClose={onClose}
+      actions={(
+        <>
+          <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
+            {mutation.isPending ? 'Enregistrement…' : asset ? 'Enregistrer' : 'Ajouter'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
     >
-      <form className="feature-form" onSubmit={(event: FormEvent) => {
+      <form className="modal-form" id={formId} onSubmit={(event: FormEvent) => {
         event.preventDefault()
         mutation.mutate()
       }}>
@@ -863,8 +878,8 @@ function RealEstateForm({
         <Field label="Prix d’achat">
           <FormInput type="number" min="0" step="0.01" value={purchasePrice} onChange={(event) => setPurchasePrice(event.target.value)} required />
         </Field>
-        <Field label="Valeur actuelle">
-          <FormInput type="number" min="0" step="0.01" value={currentValue} onChange={(event) => setCurrentValue(event.target.value)} required />
+        <Field label="Valeur actuelle (facultatif)" hint="Sans estimation, le prix d’achat est retenu dans les totaux.">
+          <FormInput type="number" min="0" step="0.01" value={currentValue} onChange={(event) => setCurrentValue(event.target.value)} />
         </Field>
         <Field label="Quote-part (%)">
           <FormInput type="number" min="0.01" max="100" step="0.01" value={ownershipShare} onChange={(event) => setOwnershipShare(event.target.value)} required />
@@ -877,15 +892,9 @@ function RealEstateForm({
             ))}
           </FormSelect>
         </Field>
-        <div className="form-buttons">
-          <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
-          <button className="primary-button" type="submit" disabled={mutation.isPending}>
-            {mutation.isPending ? 'Enregistrement…' : asset ? 'Enregistrer' : 'Ajouter'}
-          </button>
-        </div>
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
-      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </Panel>
+    </Modal>
   )
 }
 
