@@ -196,6 +196,7 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         assert pea["balance"] == "2634.00"
         assert peg["type"] == "peg"
         assert peg["institution"] == "Amundi"
+        assert peg["initial_balance"] == "0.00"
         assert peg["balance"] == "7800.00"
         assert percol["type"] == "percol"
         assert percol["institution"] == "Amundi"
@@ -329,12 +330,13 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         year, month = latest_period.split("-")
         quick_import = client.post(
             f"/api/accounts/{peg['id']}/snapshots/import",
-            json={"content": f"Date\tMontant\n28/{month}/{year}\t7 800,00 €"},
+            json={"content": f"Date\tMontant\n28/{month}/{year}\t7 850,00 €"},
         )
         assert quick_import.status_code == 200
         assert quick_import.json()["imported_count"] == 1
         assert quick_import.json()["updated_count"] == 1
-        assert quick_import.json()["snapshots"][0]["balance"] == "7800.00"
+        assert quick_import.json()["snapshots"][0]["balance"] == "7850.00"
+        assert client.get(f"/api/accounts/{peg['id']}").json()["balance"] == "7850.00"
 
         savings_snapshots = client.get(
             f"/api/accounts/{savings['id']}/snapshots"

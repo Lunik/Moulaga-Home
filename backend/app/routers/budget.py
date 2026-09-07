@@ -4,12 +4,13 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..account_access import require_account
+from ..account_balances import account_balances
 from ..category_budgeting import (
     ParentBudgetTooSmall,
     ensure_ancestor_budgets,
@@ -47,7 +48,7 @@ async def list_accounts(
     if not include_archived:
         statement = statement.where(Account.archived.is_(False))
     rows = (await session.execute(statement)).scalars().all()
-    balances = await _account_balances(session, through=as_of)
+    balances = await account_balances(session, through=as_of)
     transaction_counts = await _account_transaction_counts(session)
     return [
         AccountRead.model_validate(account).model_copy(
@@ -202,12 +203,7 @@ async def overview(
 ) -> Overview:
     today = as_of or local_today()
     month_start = _month_start(today)
-    account_total = await session.scalar(select(func.coalesce(func.sum(Account.initial_balance), 0)))
-    transaction_total = await session.scalar(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.booked_at <= today
-        )
-    )
+    balances = await account_balances(session, through=today)
     income = await session.scalar(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
             Transaction.booked_at >= month_start,
@@ -239,7 +235,7 @@ async def overview(
     expenses_abs = abs(Decimal(expenses or 0))
     budget_total = root_budget_total(categories)
     return Overview(
-        balance=money(Decimal(account_total or 0) + Decimal(transaction_total or 0)),
+        balance=money(sum(balances.values(), Decimal("0.00"))),
         income_current_month=money(income),
         expenses_current_month=money(expenses_abs),
         net_current_month=money(Decimal(income or 0) + Decimal(expenses or 0)),
@@ -385,25 +381,6 @@ def _transaction_read(transaction: Transaction) -> TransactionRead:
 async def _require_category(session: AsyncSession, category_id: int) -> None:
     if await session.get(Category, category_id) is None:
         raise HTTPException(status_code=404, detail="Categorie introuvable")
-
-
-async def _account_balances(
-    session: AsyncSession, through: date | None = None
-) -> dict[int, Decimal]:
-    transaction_join = Transaction.account_id == Account.id
-    if through is not None:
-        transaction_join = and_(
-            transaction_join,
-            Transaction.booked_at <= through,
-        )
-    rows = (
-        await session.execute(
-            select(Account.id, Account.initial_balance + func.coalesce(func.sum(Transaction.amount), 0))
-            .outerjoin(Transaction, transaction_join)
-            .group_by(Account.id)
-        )
-    ).all()
-    return {row[0]: money(row[1]) for row in rows}
 
 
 async def _account_transaction_counts(session: AsyncSession) -> dict[int, int]:

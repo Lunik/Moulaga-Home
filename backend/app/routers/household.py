@@ -12,11 +12,12 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..account_access import require_account
+from ..account_balances import account_balance
 from ..common import money, require_actor
 from ..db import get_session
 from ..models import (
@@ -26,7 +27,6 @@ from ..models import (
     Household,
     HouseholdMember,
     SharedAccountLink,
-    Transaction,
 )
 from ..schemas import (
     GoalContributionCreate,
@@ -77,15 +77,6 @@ async def _require_household(session: AsyncSession, household_id: int) -> Househ
     return household
 
 
-async def _account_balance(session: AsyncSession, account: Account) -> Decimal:
-    total = await session.scalar(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.account_id == account.id
-        )
-    )
-    return money(Decimal(account.initial_balance) + Decimal(total or 0))
-
-
 async def _shared_link_read(session: AsyncSession, link: SharedAccountLink) -> SharedLinkRead:
     account = await session.get(Account, link.account_id)
     return SharedLinkRead(
@@ -94,7 +85,7 @@ async def _shared_link_read(session: AsyncSession, link: SharedAccountLink) -> S
         account_id=link.account_id,
         permission=link.permission,
         account_name=account.name if account else "",
-        balance=await _account_balance(session, account) if account else Decimal("0.00"),
+        balance=await account_balance(session, account) if account else Decimal("0.00"),
     )
 
 

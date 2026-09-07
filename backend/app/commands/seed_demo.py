@@ -233,7 +233,7 @@ async def _seed(
     )
     peg = Account(
         name="PEG Amundi demo", type="peg", currency="EUR",
-        initial_balance=money("7800.00"), institution="Amundi", color="#d71920",
+        initial_balance=money("0.00"), institution="Amundi", color="#d71920",
         account_number="DEMO-PEG-001",
     )
     percol = Account(

@@ -1575,14 +1575,14 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
   const [type, setType] = useState(account.type)
   const [institution, setInstitution] = useState(account.institution ?? '')
   const [accountNumber, setAccountNumber] = useState(account.account_number ?? '')
-  const [initialBalance, setInitialBalance] = useState(account.initial_balance)
+  const [balance, setBalance] = useState(account.balance)
   const mutation = useMutation({
     mutationFn: () => apiPatch<Account>(`/accounts/${account.id}`, {
       name,
       type,
       institution: institution || null,
       account_number: accountNumber || null,
-      initial_balance: initialBalance,
+      ...(balance !== account.balance ? { balance } : {}),
       ...(type === 'savings' && account.type !== 'savings' ? {
         savings_product: savingsProducts[0].name,
         annual_interest_rate: savingsProducts[0].rate,
@@ -1592,7 +1592,10 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
     onSuccess: onSaved,
   })
   return (
-    <Panel title="Modifier le compte">
+    <Panel
+      title="Modifier le compte"
+      subtitle="Toute modification du solde enregistre un relevé pour le mois en cours."
+    >
       <form className="inline-form" onSubmit={(event: FormEvent) => {
         event.preventDefault()
         mutation.mutate()
@@ -1617,7 +1620,7 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
             ))}
           </FormSelect>
         </Field>
-        <Field label="Solde initial"><FormInput type="number" step="0.01" value={initialBalance} onChange={(event) => setInitialBalance(event.target.value)} required /></Field>
+        <Field label="Solde actuel"><FormInput type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} required /></Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
           <button className="primary-button" type="submit" disabled={mutation.isPending}>Enregistrer</button>

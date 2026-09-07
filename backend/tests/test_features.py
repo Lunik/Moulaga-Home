@@ -593,6 +593,40 @@ def test_account_snapshot_tsv_import_upserts_existing_months(client):
         snapshot["period"]: snapshot["balance"]
         for snapshot in client.get(f"/api/accounts/{account_id}/snapshots").json()
     } == {"2026-01": "1234.56", "2026-02": "-42.50"}
+    assert client.get("/api/accounts").json()[0]["balance"] == "-42.50"
+    assert client.get(f"/api/accounts/{account_id}").json()["balance"] == "-42.50"
+    assert client.get("/api/overview").json()["balance"] == "-42.50"
+
+
+def test_account_balance_update_creates_current_month_snapshot(client, monkeypatch):
+    import app.routers.accounts as accounts_router
+
+    monkeypatch.setattr(accounts_router, "local_today", lambda: date(2026, 4, 18))
+    account_id = _account_id(client)
+
+    updated = client.patch(
+        f"/api/accounts/{account_id}",
+        json={"balance": "275.25"},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["balance"] == "275.25"
+    assert updated.json()["initial_balance"] == "0.00"
+    snapshots = client.get(f"/api/accounts/{account_id}/snapshots").json()
+    assert [(snapshot["period"], snapshot["balance"]) for snapshot in snapshots] == [
+        ("2026-04", "275.25")
+    ]
+
+    updated_again = client.patch(
+        f"/api/accounts/{account_id}",
+        json={"balance": "280.00"},
+    )
+    assert updated_again.status_code == 200
+    assert updated_again.json()["balance"] == "280.00"
+    refreshed = client.get(f"/api/accounts/{account_id}/snapshots").json()
+    assert len(refreshed) == 1
+    assert refreshed[0]["id"] == snapshots[0]["id"]
+    assert refreshed[0]["balance"] == "280.00"
 
 
 @pytest.mark.parametrize(

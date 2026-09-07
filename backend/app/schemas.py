@@ -73,6 +73,7 @@ class AccountUpdate(BaseModel):
     type: str | None = Field(default=None, min_length=1, max_length=32)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     initial_balance: Decimal | None = Field(default=None, **_MONEY)
+    balance: Decimal | None = Field(default=None, **_MONEY)
     institution: str | None = Field(default=None, max_length=120)
     account_number: str | None = Field(default=None, max_length=120)
     color: str | None = Field(default=None, pattern=HEX_COLOR)
@@ -103,7 +104,7 @@ class AccountUpdate(BaseModel):
         cleaned = value.strip()
         return cleaned or None
 
-    @field_validator("initial_balance", "color", "archived")
+    @field_validator("initial_balance", "balance", "color", "archived")
     @classmethod
     def reject_null(
         cls, value: Decimal | str | bool | None
@@ -111,6 +112,14 @@ class AccountUpdate(BaseModel):
         if value is None:
             raise ValueError("Ce champ ne peut pas etre nul")
         return value
+
+    @model_validator(mode="after")
+    def reject_ambiguous_balance_update(self) -> AccountUpdate:
+        if self.initial_balance is not None and self.balance is not None:
+            raise ValueError(
+                "Le solde initial et le solde actuel ne peuvent pas etre modifies ensemble"
+            )
+        return self
 
 
 class BalanceSnapshotRead(BaseModel):
