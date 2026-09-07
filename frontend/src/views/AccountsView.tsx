@@ -98,6 +98,14 @@ const accountTypeOptions = [
   { value: 'cash', label: 'Espèces' },
   { value: 'wallet', label: 'Wallet crypto' },
 ] as const
+const accountTypeFilterOrder = [
+  'checking',
+  'savings',
+  'pea',
+  'life_insurance',
+  'peg',
+  'percol',
+]
 const positionAccountTypes = new Set([
   // Kept so accounts created before the generic type was removed remain usable.
   'investment',
@@ -195,7 +203,11 @@ export function AccountsView({
     (sum, account) => sum + account.transaction_count,
     0,
   )
-  const types = [...new Set(accounts.map((account) => account.type))]
+  const availableTypes = new Set(accounts.map((account) => account.type))
+  const types = [
+    ...accountTypeFilterOrder.filter((type) => availableTypes.has(type)),
+    ...[...availableTypes].filter((type) => !accountTypeFilterOrder.includes(type)),
+  ]
   const accountGroups = Object.entries(
     visibleAccounts.reduce<Record<string, Account[]>>((groups, account) => {
       const institution = account.institution?.trim() || 'Établissement non renseigné'
@@ -247,6 +259,17 @@ export function AccountsView({
       </section>
 
       <div className="account-filter-groups">
+        <FormSelect
+          className="account-type-filter-select"
+          aria-label="Filtrer par type de compte"
+          value={typeFilter}
+          onChange={(event) => setTypeFilter(event.target.value)}
+        >
+          <option value="all">Tous les types</option>
+          {types.map((type) => (
+            <option key={type} value={type}>{accountType(type)}</option>
+          ))}
+        </FormSelect>
         <nav className="filter-tabs" aria-label="Types de comptes">
           <button className={typeFilter === 'all' ? 'active' : ''} type="button" onClick={() => setTypeFilter('all')}>Tous les types</button>
           {types.map((type) => (
