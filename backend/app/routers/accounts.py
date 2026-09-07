@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..account_access import ensure_account_writable, require_account
+from ..account_balances import account_balance
 from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import local_today, money
 from ..db import get_session
@@ -35,10 +36,13 @@ from ..schemas import (
     AccountUpdate,
     BalanceSnapshotAttachmentRead,
     BalanceSnapshotCreate,
+    BalanceSnapshotImportRequest,
+    BalanceSnapshotImportResult,
     BalanceSnapshotRead,
     BalanceSnapshotUpdate,
     InstitutionHistoryPoint,
 )
+from ..snapshot_import import SnapshotImportError, parse_snapshot_tsv
 
 router = APIRouter(tags=["accounts"])
 
@@ -48,12 +52,26 @@ async def _require_account(session: AsyncSession, account_id: int) -> Account:
 
 
 async def _balance(session: AsyncSession, account: Account) -> Decimal:
-    total = await session.scalar(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.account_id == account.id
+    return await account_balance(session, account)
+
+
+async def _set_snapshot_balance(
+    session: AsyncSession,
+    account_id: int,
+    period: str,
+    balance: Decimal,
+) -> BalanceSnapshot:
+    snapshot = await session.scalar(
+        select(BalanceSnapshot).where(
+            BalanceSnapshot.account_id == account_id,
+            BalanceSnapshot.period == period,
         )
     )
-    return money(account.initial_balance + Decimal(total or 0))
+    if snapshot is None:
+        snapshot = BalanceSnapshot(account_id=account_id, period=period)
+        session.add(snapshot)
+    snapshot.balance = money(balance)
+    return snapshot
 
 
 async def _account_read(session: AsyncSession, account: Account) -> AccountRead:
@@ -189,11 +207,21 @@ async def update_account(
     account = await _require_account(session, account_id)
     ensure_account_writable(account)
     data = payload.model_dump(exclude_unset=True)
+    balance = data.pop("balance", None)
+    if balance is None and "initial_balance" in data:
+        balance = data["initial_balance"]
     requested_type = data.get("type")
     if requested_type in DEPRECATED_ACCOUNT_TYPES and requested_type != account.type:
         raise HTTPException(status_code=422, detail="Ce type de compte n'est plus disponible")
     for field, value in data.items():
         setattr(account, field, value)
+    if balance is not None:
+        await _set_snapshot_balance(
+            session,
+            account.id,
+            local_today().strftime("%Y-%m"),
+            balance,
+        )
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -258,24 +286,34 @@ async def archive_account(
                 status_code=409,
                 detail="Seul un solde positif peut etre transfere avant archivage",
             )
+        destination_balance = await _balance(session, destination)
+        today = local_today()
         transfer_group = uuid4().hex
         session.add_all(
             [
                 Transaction(
-                    booked_at=local_today(),
+                    booked_at=today,
                     description=f"Transfert vers {destination.name}",
                     amount=money(-balance),
                     account_id=account.id,
                     transfer_group=transfer_group,
                 ),
                 Transaction(
-                    booked_at=local_today(),
+                    booked_at=today,
                     description=f"Transfert depuis {account.name}",
                     amount=money(balance),
                     account_id=destination.id,
                     transfer_group=transfer_group,
                 ),
             ]
+        )
+        period = today.strftime("%Y-%m")
+        await _set_snapshot_balance(session, account.id, period, Decimal("0.00"))
+        await _set_snapshot_balance(
+            session,
+            destination.id,
+            period,
+            destination_balance + balance,
         )
     account.archived = archived
     await session.commit()
@@ -342,18 +380,83 @@ async def upsert_snapshot(
     """Create or overwrite the snapshot for a period (idempotent)."""
     account = await _require_account(session, account_id)
     ensure_account_writable(account)
-    existing = await session.scalar(
-        select(BalanceSnapshot).where(
-            BalanceSnapshot.account_id == account_id,
-            BalanceSnapshot.period == payload.period,
-        )
+    existing = await _set_snapshot_balance(
+        session,
+        account_id,
+        payload.period,
+        payload.balance,
     )
-    if existing is None:
-        existing = BalanceSnapshot(account_id=account_id, period=payload.period)
-        session.add(existing)
-    existing.balance = money(payload.balance)
     await session.commit()
     return _snapshot_read(await _require_snapshot(session, account_id, existing.id))
+
+
+@router.post(
+    "/accounts/{account_id}/snapshots/import",
+    response_model=BalanceSnapshotImportResult,
+)
+async def import_snapshots(
+    account_id: int,
+    payload: BalanceSnapshotImportRequest,
+    session: AsyncSession = Depends(get_session),
+) -> BalanceSnapshotImportResult:
+    account = await _require_account(session, account_id)
+    ensure_account_writable(account)
+    try:
+        rows = parse_snapshot_tsv(payload.content)
+    except SnapshotImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    periods = {row.period for row in rows}
+    existing_by_period = {
+        snapshot.period: snapshot
+        for snapshot in (
+            await session.execute(
+                select(BalanceSnapshot).where(
+                    BalanceSnapshot.account_id == account_id,
+                )
+            )
+        ).scalars().all()
+        if snapshot.period in periods
+    }
+    created_count = 0
+    updated_count = 0
+    for row in rows:
+        snapshot = existing_by_period.get(row.period)
+        if snapshot is None:
+            snapshot = BalanceSnapshot(account_id=account_id, period=row.period)
+            session.add(snapshot)
+            created_count += 1
+        else:
+            updated_count += 1
+        snapshot.balance = money(row.balance)
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Un relevé existe déjà pour l'une des périodes importées.",
+        ) from exc
+
+    imported = (
+        await session.execute(
+            select(BalanceSnapshot)
+            .options(selectinload(BalanceSnapshot.attachments))
+            .where(BalanceSnapshot.account_id == account_id)
+            .order_by(BalanceSnapshot.period)
+        )
+    ).scalars().all()
+    return BalanceSnapshotImportResult(
+        imported_count=len(rows),
+        created_count=created_count,
+        updated_count=updated_count,
+        snapshots=[
+            _snapshot_read(snapshot)
+            for snapshot in imported
+            if snapshot.period in periods
+        ],
+    )
 
 
 @router.patch(

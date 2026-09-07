@@ -18,6 +18,7 @@ import type {
   AccountDetail,
   AccountInstitutionHistoryPoint,
   AccountSnapshot,
+  AccountSnapshotImportResult,
   Category,
   Holding,
   Transaction,
@@ -32,6 +33,9 @@ import {
   CategorizationSummary,
   EmptyState,
   Field,
+  FormInput,
+  FormSelect,
+  FormTextarea,
   Icon,
   InstitutionLogo,
   Modal,
@@ -50,6 +54,7 @@ import {
 
 const institutions = [
   'ABN AMRO',
+  'Amundi',
   'Banca Intesa Sanpaolo',
   'Banco Santander',
   'Bank of Ireland',
@@ -86,6 +91,8 @@ const accountTypeOptions = [
   { value: 'checking', label: 'Compte courant' },
   { value: 'savings', label: 'Épargne' },
   { value: 'pea', label: 'PEA' },
+  { value: 'peg', label: 'PEG' },
+  { value: 'percol', label: 'PER/PERCOL' },
   { value: 'securities', label: 'Compte-titres' },
   { value: 'life_insurance', label: 'Assurance-vie' },
   { value: 'cash', label: 'Espèces' },
@@ -95,6 +102,8 @@ const positionAccountTypes = new Set([
   // Kept so accounts created before the generic type was removed remain usable.
   'investment',
   'pea',
+  'peg',
+  'percol',
   'securities',
   'life_insurance',
   'wallet',
@@ -469,6 +478,7 @@ export function AccountDetailView({
   })
   const [showTransaction, setShowTransaction] = useState(false)
   const [showSnapshot, setShowSnapshot] = useState(false)
+  const [showSnapshotImport, setShowSnapshotImport] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
   const [showArchiveModal, setShowArchiveModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -659,7 +669,7 @@ export function AccountDetailView({
           {balance > 0 && transferTargets.length > 0 && (
             <div className="archive-transfer">
               <Field label="Transférer les fonds vers">
-                <select
+                <FormSelect
                   value={transferTargetId}
                   onChange={(event) => setTransferTargetId(event.target.value)}
                 >
@@ -668,7 +678,7 @@ export function AccountDetailView({
                       {target.name} · {money(target.balance)}
                     </option>
                   ))}
-                </select>
+                </FormSelect>
               </Field>
               <button
                 className="primary-button"
@@ -716,6 +726,23 @@ export function AccountDetailView({
             onSaved={async () => {
               await refreshDetail()
               setShowSnapshot(false)
+            }}
+          />
+        </Modal>
+      )}
+
+      {showSnapshotImport && !readOnly && (
+        <Modal
+          title="Import rapide des relevés"
+          description="Collez deux colonnes TSV : la date, puis le solde du compte."
+          onClose={() => setShowSnapshotImport(false)}
+        >
+          <SnapshotImportForm
+            accountId={account.data.id}
+            onCancel={() => setShowSnapshotImport(false)}
+            onSaved={async () => {
+              await refreshDetail()
+              setShowSnapshotImport(false)
             }}
           />
         </Modal>
@@ -811,13 +838,22 @@ export function AccountDetailView({
         title="Relevés mensuels"
         subtitle={`${snapshots.data?.length ?? 0} relevé${snapshots.data?.length === 1 ? '' : 's'}`}
         action={!readOnly ? (
-          <button
-            className="primary-button small-button"
-            type="button"
-            onClick={() => setShowSnapshot(true)}
-          >
-            <Icon name="calendar" /> Ajouter un relevé
-          </button>
+          <div className="header-actions">
+            <button
+              className="secondary-button small-button"
+              type="button"
+              onClick={() => setShowSnapshotImport(true)}
+            >
+              <Icon name="database" /> Import rapide
+            </button>
+            <button
+              className="primary-button small-button"
+              type="button"
+              onClick={() => setShowSnapshot(true)}
+            >
+              <Icon name="calendar" /> Ajouter un relevé
+            </button>
+          </div>
         ) : undefined}
       >
         {(snapshots.data ?? []).length > 0 ? (
@@ -954,14 +990,14 @@ function SnapshotRow({
   if (editing) {
     return (
       <div className="statement-row editing">
-        <input
+        <FormInput
           aria-label="Période du relevé"
           type="month"
           value={period}
           onChange={(event) => setPeriod(event.target.value)}
           required
         />
-        <input
+        <FormInput
           aria-label="Solde du relevé"
           type="number"
           step="0.01"
@@ -1184,24 +1220,24 @@ function TransactionEditModal({
       >
         <AmountDirectionToggle value={direction} onChange={setDirection} />
         <Field label="Date">
-          <input type="date" value={bookedAt} onChange={(event) => setBookedAt(event.target.value)} required />
+          <FormInput type="date" value={bookedAt} onChange={(event) => setBookedAt(event.target.value)} required />
         </Field>
         <Field label="Libellé">
-          <input value={description} onChange={(event) => setDescription(event.target.value)} required />
+          <FormInput value={description} onChange={(event) => setDescription(event.target.value)} required />
         </Field>
         <Field label="Montant">
-          <input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
+          <FormInput type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
         </Field>
         <Field label="Catégorie">
-          <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+          <FormSelect value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
             <option value="">Sans catégorie</option>
             {categories.map((category) => (
               <option key={category.id} value={category.id}>{category.name}</option>
             ))}
-          </select>
+          </FormSelect>
         </Field>
         <Field label="Note">
-          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} />
+          <FormTextarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} />
         </Field>
         {update.error && <p className="form-error">{errorMessage(update.error)}</p>}
       </form>
@@ -1385,7 +1421,7 @@ function SavingsConfigurator({
             }}
           >
             <Field label="Produit">
-              <select
+              <FormSelect
                 value={product}
                 onChange={(event) => {
                   const selected = savingsProducts.find(
@@ -1400,11 +1436,11 @@ function SavingsConfigurator({
                 {savingsProducts.map((item) => (
                   <option key={item.name} value={item.name}>{item.name}</option>
                 ))}
-              </select>
+              </FormSelect>
             </Field>
             <Field label="Taux annuel">
               <div className="input-with-suffix">
-                <input
+                <FormInput
                   type="number"
                   min="0"
                   max="100"
@@ -1417,7 +1453,7 @@ function SavingsConfigurator({
               </div>
             </Field>
             <Field label="Plafond légal">
-              <input
+              <FormInput
                 type="number"
                 min="0"
                 step="0.01"
@@ -1506,10 +1542,10 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
         event.preventDefault()
         mutation.mutate()
       }}>
-        <Field label="Nom"><input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required /></Field>
+        <Field label="Nom"><FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required /></Field>
         <InstitutionField institution={institution} onChange={setInstitution} />
         <Field label="Numéro / identifiant du compte">
-          <input
+          <FormInput
             value={accountNumber}
             onChange={(event) => setAccountNumber(event.target.value)}
             maxLength={120}
@@ -1517,13 +1553,13 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
           />
         </Field>
         <Field label="Type">
-          <select value={type} onChange={(event) => setType(event.target.value)}>
+          <FormSelect value={type} onChange={(event) => setType(event.target.value)}>
             {accountTypeOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
-          </select>
+          </FormSelect>
         </Field>
-        <Field label="Solde initial"><input type="number" step="0.01" value={initialBalance} onChange={(event) => setInitialBalance(event.target.value)} required /></Field>
+        <Field label="Solde initial"><FormInput type="number" step="0.01" value={initialBalance} onChange={(event) => setInitialBalance(event.target.value)} required /></Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
           <button className="primary-button" type="submit" disabled={mutation.isPending}>Créer</button>
@@ -1539,14 +1575,14 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
   const [type, setType] = useState(account.type)
   const [institution, setInstitution] = useState(account.institution ?? '')
   const [accountNumber, setAccountNumber] = useState(account.account_number ?? '')
-  const [initialBalance, setInitialBalance] = useState(account.initial_balance)
+  const [balance, setBalance] = useState(account.balance)
   const mutation = useMutation({
     mutationFn: () => apiPatch<Account>(`/accounts/${account.id}`, {
       name,
       type,
       institution: institution || null,
       account_number: accountNumber || null,
-      initial_balance: initialBalance,
+      ...(balance !== account.balance ? { balance } : {}),
       ...(type === 'savings' && account.type !== 'savings' ? {
         savings_product: savingsProducts[0].name,
         annual_interest_rate: savingsProducts[0].rate,
@@ -1556,15 +1592,18 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
     onSuccess: onSaved,
   })
   return (
-    <Panel title="Modifier le compte">
+    <Panel
+      title="Modifier le compte"
+      subtitle="Toute modification du solde enregistre un relevé pour le mois en cours."
+    >
       <form className="inline-form" onSubmit={(event: FormEvent) => {
         event.preventDefault()
         mutation.mutate()
       }}>
-        <Field label="Nom"><input value={name} onChange={(event) => setName(event.target.value)} required /></Field>
+        <Field label="Nom"><FormInput value={name} onChange={(event) => setName(event.target.value)} required /></Field>
         <InstitutionField institution={institution} onChange={setInstitution} />
         <Field label="Numéro / identifiant du compte">
-          <input
+          <FormInput
             value={accountNumber}
             onChange={(event) => setAccountNumber(event.target.value)}
             maxLength={120}
@@ -1572,16 +1611,16 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
           />
         </Field>
         <Field label="Type">
-          <select value={type} onChange={(event) => setType(event.target.value)}>
+          <FormSelect value={type} onChange={(event) => setType(event.target.value)}>
             {!accountTypeOptions.some((option) => option.value === type) && (
               <option value={type}>{accountType(type)}</option>
             )}
             {accountTypeOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
-          </select>
+          </FormSelect>
         </Field>
-        <Field label="Solde initial"><input type="number" step="0.01" value={initialBalance} onChange={(event) => setInitialBalance(event.target.value)} required /></Field>
+        <Field label="Solde actuel"><FormInput type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} required /></Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
           <button className="primary-button" type="submit" disabled={mutation.isPending}>Enregistrer</button>
@@ -1605,7 +1644,7 @@ function InstitutionField({
   return (
     <>
       <Field label="Établissement">
-        <select
+        <FormSelect
           aria-label="Établissement"
           value={selection}
           onChange={(event) => {
@@ -1617,11 +1656,11 @@ function InstitutionField({
           <option value="">Non renseigné</option>
           {institutions.map((item) => <option key={item} value={item}>{item}</option>)}
           <option value="other">Autre…</option>
-        </select>
+        </FormSelect>
       </Field>
       {isOther && (
         <Field label="Autre établissement">
-          <input
+          <FormInput
             aria-label="Autre établissement"
             value={institution}
             onChange={(event) => onChange(event.target.value)}
@@ -1668,14 +1707,14 @@ function AccountTransactionForm({
         event.preventDefault()
         mutation.mutate()
       }}>
-        <Field label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></Field>
-        <Field label="Libellé"><input value={description} onChange={(event) => setDescription(event.target.value)} required /></Field>
-        <Field label="Montant"><input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
+        <Field label="Date"><FormInput type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></Field>
+        <Field label="Libellé"><FormInput value={description} onChange={(event) => setDescription(event.target.value)} required /></Field>
+        <Field label="Montant"><FormInput type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
         <Field label="Catégorie">
-          <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+          <FormSelect value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
             <option value="">Sans catégorie</option>
             {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-          </select>
+          </FormSelect>
         </Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
@@ -1699,10 +1738,63 @@ function SnapshotForm({ account, onCancel, onSaved }: { account: Account; onCanc
       event.preventDefault()
       mutation.mutate()
     }}>
-      <input type="date" value={date} onChange={(event) => setDate(event.target.value)} required />
-      <input type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} required />
+      <FormInput type="date" value={date} onChange={(event) => setDate(event.target.value)} required />
+      <FormInput type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} required />
       <button className="primary-button small-button" type="submit" disabled={mutation.isPending}>Enregistrer</button>
       <button className="text-button" type="button" onClick={onCancel}>Annuler</button>
+      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
+    </form>
+  )
+}
+
+function SnapshotImportForm({
+  accountId,
+  onCancel,
+  onSaved,
+}: {
+  accountId: number
+  onCancel: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [content, setContent] = useState('')
+  const mutation = useMutation({
+    mutationFn: () => apiPost<AccountSnapshotImportResult>(
+      `/accounts/${accountId}/snapshots/import`,
+      { content },
+    ),
+    onSuccess: onSaved,
+  })
+  return (
+    <form className="snapshot-import-form" onSubmit={(event) => {
+      event.preventDefault()
+      mutation.mutate()
+    }}>
+      <div className="snapshot-import-format">
+        <strong>Format TSV</strong>
+        <code>DD/MM/YYYY ↹ montant</code>
+      </div>
+      <Field label="Données à importer">
+        <FormTextarea
+          aria-label="Données TSV des relevés"
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          placeholder={'31/01/2026\t1 250,40 €\n28/02/2026\t1 310,20 €'}
+          rows={8}
+          spellCheck={false}
+          required
+        />
+      </Field>
+      <p className="modal-hint">
+        L’en-tête « Date ↹ Montant » est facultative. Une seule ligne est acceptée par mois.
+        Le suffixe € est accepté. Les mois déjà enregistrés seront remplacés. En cas d’erreur,
+        aucune ligne ne sera importée.
+      </p>
+      <div className="form-buttons">
+        <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
+        <button className="primary-button" type="submit" disabled={!content.trim() || mutation.isPending}>
+          {mutation.isPending ? 'Import…' : 'Importer'}
+        </button>
+      </div>
       {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
     </form>
   )

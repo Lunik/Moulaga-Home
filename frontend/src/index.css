@@ -472,6 +472,38 @@ textarea:focus-visible {
   gap: 0.9rem;
 }
 
+.snapshot-import-form {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.snapshot-import-form textarea {
+  min-height: 12rem;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+.snapshot-import-form .form-buttons {
+  justify-content: flex-end;
+}
+
+.snapshot-import-format {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface-soft);
+}
+
+.snapshot-import-format code {
+  color: var(--muted);
+}
+
 .balance-hero,
 .panel,
 .account-card,
@@ -649,6 +681,12 @@ textarea:focus-visible {
 
 .dashboard-data-list > :is(div, button) > strong:last-child {
   white-space: nowrap;
+}
+
+.dashboard-account-list {
+  max-height: 22.2rem;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 
 .dashboard-scope-note {
@@ -3876,6 +3914,7 @@ html[data-theme="light"] .sidebar {
 html[data-theme="light"] .module-tabs button.active,
 html[data-theme="light"] .field input,
 html[data-theme="light"] .field select,
+html[data-theme="light"] .field textarea,
 html[data-theme="light"] .feature-form input,
 html[data-theme="light"] .feature-form select,
 html[data-theme="light"] .section-intro select,

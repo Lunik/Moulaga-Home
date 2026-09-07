@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import { forwardRef, useEffect } from 'react'
+import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from 'react'
 
 import type { MerchantIdentity } from './api/types'
 
@@ -337,6 +337,33 @@ export function directedAmount(value: string, direction: TransactionDirection): 
   return String(direction === 'deposit' ? absolute : -absolute)
 }
 
+const passwordManagerIgnoreAttributes = {
+  autoComplete: 'off',
+  'data-1p-ignore': 'true',
+  'data-bwignore': 'true',
+  'data-form-type': 'other',
+  'data-lpignore': 'true',
+  'data-protonpass-ignore': 'true',
+} as const
+
+export const FormInput = forwardRef<HTMLInputElement, ComponentPropsWithoutRef<'input'>>(
+  function FormInput(props, ref) {
+    return <input {...props} {...passwordManagerIgnoreAttributes} ref={ref} />
+  },
+)
+
+export const FormSelect = forwardRef<HTMLSelectElement, ComponentPropsWithoutRef<'select'>>(
+  function FormSelect(props, ref) {
+    return <select {...props} {...passwordManagerIgnoreAttributes} ref={ref} />
+  },
+)
+
+export const FormTextarea = forwardRef<HTMLTextAreaElement, ComponentPropsWithoutRef<'textarea'>>(
+  function FormTextarea(props, ref) {
+    return <textarea {...props} {...passwordManagerIgnoreAttributes} ref={ref} />
+  },
+)
+
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="field">
@@ -433,6 +460,7 @@ export function MerchantAvatar({
 
 const institutionBrands: Record<string, { mark: string; background: string; color?: string }> = {
   'ABN AMRO': { mark: 'ABN', background: '#009b77' },
+  Amundi: { mark: 'A', background: '#d71920' },
   'Banca Intesa Sanpaolo': { mark: 'ISP', background: '#007a53' },
   'Banco Santander': { mark: 'S', background: '#ec0000' },
   'Bank of Ireland': { mark: 'BOI', background: '#006a4d' },

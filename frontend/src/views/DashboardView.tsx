@@ -128,6 +128,10 @@ export function DashboardView({
   }
 
   const activeAccounts = accountItems.filter((account) => !account.archived)
+  const dashboardAccounts = [...activeAccounts].sort((left, right) => {
+    const balanceDifference = Number(right.balance) - Number(left.balance)
+    return balanceDifference || left.name.localeCompare(right.name, 'fr')
+  })
   const archivedAccountCount = accountItems.length - activeAccounts.length
   const allocation = activeAccounts
     .filter((account) => Number(account.balance) > 0)
@@ -383,8 +387,8 @@ export function DashboardView({
           )}
         >
           {activeAccounts.length > 0 ? (
-            <div className="data-list dashboard-data-list">
-              {activeAccounts.slice(0, 6).map((account) => (
+            <div className="data-list dashboard-data-list dashboard-account-list">
+              {dashboardAccounts.map((account) => (
                 <button type="button" key={account.id} onClick={() => navigate({ name: 'account', accountId: account.id })}>
                   <InstitutionLogo institution={account.institution} />
                   <span><strong>{account.name}</strong><small>{account.institution || account.type}</small></span>

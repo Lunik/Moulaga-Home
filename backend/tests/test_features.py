@@ -549,6 +549,112 @@ def test_account_snapshot_generation(client):
     }
 
 
+def test_account_snapshot_tsv_import_upserts_existing_months(client):
+    account_id = _account_id(client)
+    client.put(
+        f"/api/accounts/{account_id}/snapshots",
+        json={"period": "2026-01", "balance": "100.00"},
+    )
+
+    response = client.post(
+        f"/api/accounts/{account_id}/snapshots/import",
+        json={
+            "content": (
+                "\ufeffDate\tMontant\r\n"
+                "31/01/2026\t1\u202f234,56 €\r\n"
+                "28/02/2026\t-42.5€"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "imported_count": 2,
+        "created_count": 1,
+        "updated_count": 1,
+        "snapshots": [
+            {
+                "id": response.json()["snapshots"][0]["id"],
+                "account_id": account_id,
+                "period": "2026-01",
+                "balance": "1234.56",
+                "attachment_count": 0,
+            },
+            {
+                "id": response.json()["snapshots"][1]["id"],
+                "account_id": account_id,
+                "period": "2026-02",
+                "balance": "-42.50",
+                "attachment_count": 0,
+            },
+        ],
+    }
+    assert {
+        snapshot["period"]: snapshot["balance"]
+        for snapshot in client.get(f"/api/accounts/{account_id}/snapshots").json()
+    } == {"2026-01": "1234.56", "2026-02": "-42.50"}
+    assert client.get("/api/accounts").json()[0]["balance"] == "-42.50"
+    assert client.get(f"/api/accounts/{account_id}").json()["balance"] == "-42.50"
+    assert client.get("/api/overview").json()["balance"] == "-42.50"
+
+
+def test_account_balance_update_creates_current_month_snapshot(client, monkeypatch):
+    import app.routers.accounts as accounts_router
+
+    monkeypatch.setattr(accounts_router, "local_today", lambda: date(2026, 4, 18))
+    account_id = _account_id(client)
+
+    updated = client.patch(
+        f"/api/accounts/{account_id}",
+        json={"balance": "275.25"},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["balance"] == "275.25"
+    assert updated.json()["initial_balance"] == "0.00"
+    snapshots = client.get(f"/api/accounts/{account_id}/snapshots").json()
+    assert [(snapshot["period"], snapshot["balance"]) for snapshot in snapshots] == [
+        ("2026-04", "275.25")
+    ]
+
+    updated_again = client.patch(
+        f"/api/accounts/{account_id}",
+        json={"balance": "280.00"},
+    )
+    assert updated_again.status_code == 200
+    assert updated_again.json()["balance"] == "280.00"
+    refreshed = client.get(f"/api/accounts/{account_id}/snapshots").json()
+    assert len(refreshed) == 1
+    assert refreshed[0]["id"] == snapshots[0]["id"]
+    assert refreshed[0]["balance"] == "280.00"
+
+
+@pytest.mark.parametrize(
+    ("content", "detail"),
+    [
+        ("31/03/2026 300,00", "deux colonnes"),
+        ("2026-03-31\t300,00", "DD/MM/YYYY"),
+        ("31/03/2026\t300 EUR", "montant"),
+        (
+            "01/03/2026\t300,00\n31/03/2026\t310,00",
+            "déjà présent à la ligne 1",
+        ),
+    ],
+)
+def test_account_snapshot_tsv_import_rejects_invalid_rows_atomically(
+    client, content, detail
+):
+    account_id = _account_id(client)
+    response = client.post(
+        f"/api/accounts/{account_id}/snapshots/import",
+        json={"content": content},
+    )
+
+    assert response.status_code == 422
+    assert detail in response.json()["detail"]
+    assert client.get(f"/api/accounts/{account_id}/snapshots").json() == []
+
+
 def test_institution_history_groups_snapshots_and_respects_filters(client):
     checking_id = _account_id(client)
     client.patch(
@@ -1050,6 +1156,10 @@ def test_archived_account_is_read_only_across_linked_resources(client):
             f"/api/accounts/{account_id}/snapshots",
             json={"period": "2026-02", "balance": "15.00"},
         ),
+        client.post(
+            f"/api/accounts/{account_id}/snapshots/import",
+            json={"content": "28/02/2026\t15,00"},
+        ),
         client.patch(
             f"/api/accounts/{account_id}/snapshots/{snapshot['id']}",
             json={"balance": "20.00"},
@@ -1099,6 +1209,8 @@ def test_archived_account_is_read_only_across_linked_resources(client):
     [
         ("wallet", "Wallet crypto synthetique"),
         ("life_insurance", "Assurance vie synthetique"),
+        ("peg", "PEG synthetique"),
+        ("percol", "PER PERCOL synthetique"),
     ],
 )
 def test_investment_account_types_are_persisted(client, account_type, name):

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
 import type { AppSettings, MerchantIdentity } from '../api/types'
-import { Icon, Panel, errorMessage, formatDate } from '../ui'
+import { FormInput, FormSelect, Icon, Panel, errorMessage, formatDate } from '../ui'
 
 export function SettingsView() {
   const queryClient = useQueryClient()
@@ -114,7 +114,7 @@ function BudgetCycleSettings({
       }}>
         <label>
           <span>Jour de début du cycle</span>
-          <input type="number" min="1" max="28" value={day} onChange={(event) => setDay(event.target.value)} required />
+          <FormInput type="number" min="1" max="28" value={day} onChange={(event) => setDay(event.target.value)} required />
         </label>
         <button className="primary-button" type="submit" disabled={saving}>Enregistrer</button>
       </form>
@@ -198,10 +198,10 @@ function MerchantForm({
       event.preventDefault()
       mutation.mutate()
     }}>
-      <input aria-label="Libellé" placeholder="Libellé local" value={label} onChange={(event) => setLabel(event.target.value)} required />
-      <input aria-label="Motif" placeholder="Motif à reconnaître" value={pattern} onChange={(event) => setPattern(event.target.value)} required />
-      <input aria-label="Monogramme" placeholder="ABC" maxLength={4} value={monogram} onChange={(event) => setMonogram(event.target.value)} />
-      <input className="color-input" aria-label="Couleur" type="color" value={color} onChange={(event) => setColor(event.target.value)} />
+      <FormInput aria-label="Libellé" placeholder="Libellé local" value={label} onChange={(event) => setLabel(event.target.value)} required />
+      <FormInput aria-label="Motif" placeholder="Motif à reconnaître" value={pattern} onChange={(event) => setPattern(event.target.value)} required />
+      <FormInput aria-label="Monogramme" placeholder="ABC" maxLength={4} value={monogram} onChange={(event) => setMonogram(event.target.value)} />
+      <FormInput className="color-input" aria-label="Couleur" type="color" value={color} onChange={(event) => setColor(event.target.value)} />
       <button className="primary-button small-button" type="submit">Créer</button>
       <button className="text-button" type="button" onClick={onCancel}>Annuler</button>
       {mutation.error && <span className="form-error">{errorMessage(mutation.error)}</span>}
@@ -253,7 +253,7 @@ function AiSettings({
       <div className={`ai-options ${settings.private_categorization_enabled ? '' : 'disabled'}`}>
         <label className="field">
           <span>Comportement des suggestions</span>
-          <select
+          <FormSelect
             disabled={!settings.private_categorization_enabled}
             value={settings.private_categorization_mode}
             onChange={(event) => onSave({ private_categorization_mode: event.target.value as AppSettings['private_categorization_mode'] })}
@@ -261,14 +261,14 @@ function AiSettings({
             <option value="suggest">Toujours proposer</option>
             <option value="auto">Appliquer si le moteur est sûr</option>
             <option value="off">Désactivé</option>
-          </select>
+          </FormSelect>
         </label>
         <label className="range-field">
           <span>
             <strong>Seuil de confiance</strong>
             <output>{Math.round(settings.private_categorization_confidence * 100)}%</output>
           </span>
-          <input
+          <FormInput
             type="range"
             min="0.5"
             max="1"
@@ -335,7 +335,7 @@ function ToggleRow({
         <strong>{label}</strong>
         <small>{detail}</small>
       </span>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <FormInput type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
       <span className="toggle-visual"><Icon name="check" /></span>
     </label>
   )

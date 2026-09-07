@@ -6,10 +6,11 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..account_access import require_account
+from ..account_balances import account_balances
 from ..common import local_today, money
 from ..db import get_session
 from ..models import (
@@ -20,7 +21,6 @@ from ..models import (
     Holding,
     PortfolioSnapshot,
     RealEstateAsset,
-    Transaction,
 )
 from ..schemas import (
     AllocationSlice,
@@ -556,25 +556,13 @@ async def _current_net_worth_components(
     through: date,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, set[int]]:
     investment_accounts = await _investment_account_ids(session)
-    account_rows = (
-        await session.execute(
-            select(
-                Account.id,
-                Account.initial_balance + func.coalesce(func.sum(Transaction.amount), 0),
-            )
-            .outerjoin(
-                Transaction,
-                and_(
-                    Transaction.account_id == Account.id,
-                    Transaction.booked_at <= through,
-                ),
-            )
-            .group_by(Account.id)
-        )
-    ).all()
+    balances = await account_balances(session, through=through)
     cash = sum(
-        (Decimal(balance or 0) for account_id, balance in account_rows
-         if account_id not in investment_accounts),
+        (
+            balance
+            for account_id, balance in balances.items()
+            if account_id not in investment_accounts
+        ),
         Decimal("0"),
     )
 
