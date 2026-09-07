@@ -208,6 +208,8 @@ async def _seed(
     transport = categories[("Transport", "expense")]
     transport.monthly_budget = None
 
+    # Keep enough active accounts with varied balances to exercise dashboard
+    # scrolling and descending balance sorting.
     # --- Accounts --------------------------------------------------------- #
     checking = await session.scalar(select(Account).where(Account.name == "Compte courant"))
     if checking is None:

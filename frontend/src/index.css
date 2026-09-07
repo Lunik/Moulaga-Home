@@ -683,6 +683,12 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.dashboard-account-list {
+  max-height: 22.2rem;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
 .dashboard-scope-note {
   display: block;
   margin-top: 0.7rem;
