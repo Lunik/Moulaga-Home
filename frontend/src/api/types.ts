@@ -34,6 +34,13 @@ export interface AccountSnapshot {
   attachment_count: number
 }
 
+export interface AccountSnapshotImportResult {
+  imported_count: number
+  created_count: number
+  updated_count: number
+  snapshots: AccountSnapshot[]
+}
+
 export interface AccountHistoryPoint {
   period: string
   balance: Money

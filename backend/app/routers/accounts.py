@@ -35,10 +35,13 @@ from ..schemas import (
     AccountUpdate,
     BalanceSnapshotAttachmentRead,
     BalanceSnapshotCreate,
+    BalanceSnapshotImportRequest,
+    BalanceSnapshotImportResult,
     BalanceSnapshotRead,
     BalanceSnapshotUpdate,
     InstitutionHistoryPoint,
 )
+from ..snapshot_import import SnapshotImportError, parse_snapshot_tsv
 
 router = APIRouter(tags=["accounts"])
 
@@ -354,6 +357,75 @@ async def upsert_snapshot(
     existing.balance = money(payload.balance)
     await session.commit()
     return _snapshot_read(await _require_snapshot(session, account_id, existing.id))
+
+
+@router.post(
+    "/accounts/{account_id}/snapshots/import",
+    response_model=BalanceSnapshotImportResult,
+)
+async def import_snapshots(
+    account_id: int,
+    payload: BalanceSnapshotImportRequest,
+    session: AsyncSession = Depends(get_session),
+) -> BalanceSnapshotImportResult:
+    account = await _require_account(session, account_id)
+    ensure_account_writable(account)
+    try:
+        rows = parse_snapshot_tsv(payload.content)
+    except SnapshotImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    periods = {row.period for row in rows}
+    existing_by_period = {
+        snapshot.period: snapshot
+        for snapshot in (
+            await session.execute(
+                select(BalanceSnapshot).where(
+                    BalanceSnapshot.account_id == account_id,
+                )
+            )
+        ).scalars().all()
+        if snapshot.period in periods
+    }
+    created_count = 0
+    updated_count = 0
+    for row in rows:
+        snapshot = existing_by_period.get(row.period)
+        if snapshot is None:
+            snapshot = BalanceSnapshot(account_id=account_id, period=row.period)
+            session.add(snapshot)
+            created_count += 1
+        else:
+            updated_count += 1
+        snapshot.balance = money(row.balance)
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Un relevé existe déjà pour l'une des périodes importées.",
+        ) from exc
+
+    imported = (
+        await session.execute(
+            select(BalanceSnapshot)
+            .options(selectinload(BalanceSnapshot.attachments))
+            .where(BalanceSnapshot.account_id == account_id)
+            .order_by(BalanceSnapshot.period)
+        )
+    ).scalars().all()
+    return BalanceSnapshotImportResult(
+        imported_count=len(rows),
+        created_count=created_count,
+        updated_count=updated_count,
+        snapshots=[
+            _snapshot_read(snapshot)
+            for snapshot in imported
+            if snapshot.period in periods
+        ],
+    )
 
 
 @router.patch(

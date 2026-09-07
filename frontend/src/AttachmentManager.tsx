@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiDelete, apiGet, apiUpload } from './api/client'
 import type { StoredAttachment } from './api/types'
-import { Icon, errorMessage } from './ui'
+import { FormInput, Icon, errorMessage } from './ui'
 
 export type AttachmentOwner =
   | { kind: 'transaction'; transactionId: number }
@@ -75,7 +75,7 @@ export function AttachmentManager({
               upload.mutate()
             }}
           >
-            <input
+            <FormInput
               key={inputKey}
               aria-label="Choisir une pièce jointe"
               type="file"

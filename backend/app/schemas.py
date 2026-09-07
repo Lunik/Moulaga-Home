@@ -123,6 +123,17 @@ class BalanceSnapshotRead(BaseModel):
     attachment_count: int = 0
 
 
+class BalanceSnapshotImportRequest(BaseModel):
+    content: str = Field(max_length=100_000)
+
+
+class BalanceSnapshotImportResult(BaseModel):
+    imported_count: int
+    created_count: int
+    updated_count: int
+    snapshots: list[BalanceSnapshotRead]
+
+
 class BalanceSnapshotAttachmentRead(BaseModel):
     id: int
     snapshot_id: int

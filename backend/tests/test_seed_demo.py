@@ -20,9 +20,9 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
     importlib.reload(seed)
 
     result = asyncio.run(seed.seed_demo())
-    assert result.accounts == 8
+    assert result.accounts == 10
     assert result.transactions > 100
-    assert result.snapshots == 25
+    assert result.snapshots == 33
     assert result.debts == 4
     assert result.real_estate_assets == 1
     assert result.holdings == 2
@@ -34,11 +34,17 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
 
     with TestClient(main.create_app()) as client:
         accounts = client.get("/api/accounts").json()
-        assert len(accounts) == 7
+        assert len(accounts) == 9
         savings = next(account for account in accounts if account["type"] == "savings")
         pea = next(account for account in accounts if account["name"] == "PEA demo")
         assert pea["type"] == "pea"
         assert pea["institution"] == "Boursobank"
+        assert next(
+            account for account in accounts if account["name"] == "PEG Amundi demo"
+        )["type"] == "peg"
+        assert next(
+            account for account in accounts if account["name"] == "PER/PERCOL Amundi demo"
+        )["type"] == "percol"
         assert next(
             account for account in accounts if account["name"] == "Assurance vie Boursobank demo"
         )["type"] == "life_insurance"
@@ -149,8 +155,8 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         all_accounts = client.get(
             "/api/accounts", params={"include_archived": True}
         ).json()
-        assert len(active_accounts) == 7
-        assert len(all_accounts) == 8
+        assert len(active_accounts) == 9
+        assert len(all_accounts) == 10
 
         checking = next(
             account for account in all_accounts if account["name"] == "Compte courant demo"
@@ -159,6 +165,10 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
             account for account in all_accounts if account["name"] == "Livret epargne demo"
         )
         pea = next(account for account in all_accounts if account["name"] == "PEA demo")
+        peg = next(account for account in all_accounts if account["name"] == "PEG Amundi demo")
+        percol = next(
+            account for account in all_accounts if account["name"] == "PER/PERCOL Amundi demo"
+        )
         boursobank_checking = next(
             account
             for account in all_accounts
@@ -184,6 +194,12 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         assert savings["legal_cap"] == "22950.00"
         assert pea["institution"] == "Boursobank"
         assert pea["balance"] == "2634.00"
+        assert peg["type"] == "peg"
+        assert peg["institution"] == "Amundi"
+        assert peg["balance"] == "7800.00"
+        assert percol["type"] == "percol"
+        assert percol["institution"] == "Amundi"
+        assert percol["balance"] == "11200.00"
         assert boursobank_checking["type"] == "checking"
         assert boursobank_checking["institution"] == "Boursobank"
         assert boursobank_checking["balance"] == "2750.00"
@@ -282,7 +298,7 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         assert boursobank_flow["outflow"] == "330.00"
         assert boursobank_flow["net"] == "170.00"
 
-        for account in (boursobank_checking, life_insurance, pea, crypto_wallet):
+        for account in (boursobank_checking, life_insurance, pea, peg, percol, crypto_wallet):
             assert len(
                 client.get(f"/api/accounts/{account['id']}/snapshots").json()
             ) == 4
@@ -292,7 +308,7 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         ).json()
         assert {
             point["institution"] for point in institution_history
-        } == {"BNP Paribas", "Boursobank", "Revolut"}
+        } == {"Amundi", "BNP Paribas", "Boursobank", "Revolut"}
         assert sum(
             point["institution"] == "Boursobank"
             for point in institution_history
@@ -304,6 +320,21 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
             if point["period"] == latest_period
             and point["institution"] == "Boursobank"
         ) == "23884.00"
+        assert next(
+            point["balance"]
+            for point in institution_history
+            if point["period"] == latest_period
+            and point["institution"] == "Amundi"
+        ) == "19000.00"
+        year, month = latest_period.split("-")
+        quick_import = client.post(
+            f"/api/accounts/{peg['id']}/snapshots/import",
+            json={"content": f"Date\tMontant\n28/{month}/{year}\t7 800,00 €"},
+        )
+        assert quick_import.status_code == 200
+        assert quick_import.json()["imported_count"] == 1
+        assert quick_import.json()["updated_count"] == 1
+        assert quick_import.json()["snapshots"][0]["balance"] == "7800.00"
 
         savings_snapshots = client.get(
             f"/api/accounts/{savings['id']}/snapshots"

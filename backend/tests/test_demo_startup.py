@@ -55,7 +55,7 @@ def test_entrypoint_resets_while_demo_variable_is_enabled_then_preserves(tmp_pat
     first_start = _start_container_entrypoint(tmp_path, "true")
     database = tmp_path / "moulaga.db"
     assert "Mode demo actif" in first_start.stdout
-    assert len(_account_names(database)) == 8
+    assert len(_account_names(database)) == 10
 
     with sqlite3.connect(database) as connection:
         connection.execute(

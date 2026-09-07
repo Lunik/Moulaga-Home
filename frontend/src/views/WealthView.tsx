@@ -34,6 +34,8 @@ import {
   BetaBadge,
   EmptyState,
   Field,
+  FormInput,
+  FormSelect,
   Icon,
   Panel,
   ProgressBar,
@@ -373,16 +375,16 @@ function ContributionForm({ accounts, holdings }: { accounts: Account[]; holding
       event.preventDefault()
       mutation.mutate()
     }}>
-      <select aria-label="Compte" value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+      <FormSelect aria-label="Compte" value={accountId} onChange={(event) => setAccountId(event.target.value)}>
         <option value="">Tous les comptes</option>
         {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-      </select>
-      <select aria-label="Actif" value={holdingId} onChange={(event) => setHoldingId(event.target.value)} required>
+      </FormSelect>
+      <FormSelect aria-label="Actif" value={holdingId} onChange={(event) => setHoldingId(event.target.value)} required>
         <option value="">Choisir un actif</option>
         {availableHoldings.map((holding) => <option key={holding.id} value={holding.id}>{holding.name}</option>)}
-      </select>
-      <input aria-label="Date" type="date" value={bookedAt} onChange={(event) => setBookedAt(event.target.value)} />
-      <input aria-label="Montant" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
+      </FormSelect>
+      <FormInput aria-label="Date" type="date" value={bookedAt} onChange={(event) => setBookedAt(event.target.value)} />
+      <FormInput aria-label="Montant" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
       <button className="primary-button icon-button" type="submit" aria-label="Enregistrer" disabled={availableHoldings.length === 0}><Icon name="check" /></button>
       <button className="text-button icon-button" type="button" aria-label="Annuler" onClick={() => setOpen(false)}><Icon name="close" /></button>
       {mutation.error && <span className="form-error">{errorMessage(mutation.error)}</span>}
@@ -434,9 +436,9 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
         <div className="filter-row">
           <label className="search-field">
             <Icon name="search" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un titre ou un symbole" />
+            <FormInput value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un titre ou un symbole" />
           </label>
-          <select value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
+          <FormSelect value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
             <option value="all">Tous les actifs</option>
             <option value="cash">Liquidités</option>
             <option value="savings">Épargne</option>
@@ -445,7 +447,7 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
             <option value="crypto">Crypto</option>
             <option value="real_estate">Immobilier</option>
             <option value="other">Autres</option>
-          </select>
+          </FormSelect>
         </div>
         {filtered.length > 0 ? (
           <div className="holding-list">
@@ -501,7 +503,7 @@ function HoldingRow({ accounts, holding }: { accounts: Account[]; holding: Holdi
           event.preventDefault()
           update.mutate()
         }}>
-          <input aria-label="Prix actuel" type="number" min="0" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} />
+          <FormInput aria-label="Prix actuel" type="number" min="0" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} />
           <button className="icon-action positive" type="submit" aria-label="Enregistrer"><Icon name="check" /></button>
           <button className="icon-action" type="button" aria-label="Annuler" onClick={() => setEditing(false)}><Icon name="close" /></button>
         </form>
@@ -567,18 +569,18 @@ function HoldingForm({
         mutation.mutate()
       }}>
         <Field label="Compte">
-          <select value={accountId} onChange={(event) => setAccountId(event.target.value)} required>
+          <FormSelect value={accountId} onChange={(event) => setAccountId(event.target.value)} required>
             {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-          </select>
+          </FormSelect>
         </Field>
         <Field label="Symbole">
-          <input value={symbol} onChange={(event) => setSymbol(event.target.value)} maxLength={20} required />
+          <FormInput value={symbol} onChange={(event) => setSymbol(event.target.value)} maxLength={20} required />
         </Field>
         <Field label="Nom">
-          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
+          <FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
         </Field>
         <Field label="Classe">
-          <select value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
+          <FormSelect value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
             <option value="equity">Action</option>
             <option value="fund">Fonds</option>
             <option value="crypto">Crypto</option>
@@ -586,16 +588,16 @@ function HoldingForm({
             <option value="cash">Liquidités</option>
             <option value="real_estate">Immobilier</option>
             <option value="other">Autre</option>
-          </select>
+          </FormSelect>
         </Field>
         <Field label="Quantité">
-          <input type="number" min="0" step="0.000001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
+          <FormInput type="number" min="0" step="0.000001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
         </Field>
         <Field label="Prix de revient">
-          <input type="number" min="0" step="0.01" value={averageCost} onChange={(event) => setAverageCost(event.target.value)} required />
+          <FormInput type="number" min="0" step="0.01" value={averageCost} onChange={(event) => setAverageCost(event.target.value)} required />
         </Field>
         <Field label="Prix actuel">
-          <input type="number" min="0" step="0.01" value={currentPrice} onChange={(event) => setCurrentPrice(event.target.value)} required />
+          <FormInput type="number" min="0" step="0.01" value={currentPrice} onChange={(event) => setCurrentPrice(event.target.value)} required />
         </Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
@@ -693,13 +695,13 @@ function RealEstatePanel({ assets, debts }: { assets: RealEstateAsset[]; debts: 
         <div className="filter-row">
           <label className="search-field">
             <Icon name="search" />
-            <input
+            <FormInput
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Rechercher un bien ou une adresse"
             />
           </label>
-          <select value={propertyType} onChange={(event) => setPropertyType(event.target.value)}>
+          <FormSelect value={propertyType} onChange={(event) => setPropertyType(event.target.value)}>
             <option value="all">Tous les biens</option>
             <option value="primary_residence">Résidence principale</option>
             <option value="secondary_residence">Résidence secondaire</option>
@@ -707,7 +709,7 @@ function RealEstatePanel({ assets, debts }: { assets: RealEstateAsset[]; debts: 
             <option value="commercial">Local commercial</option>
             <option value="land">Terrain</option>
             <option value="other">Autre</option>
-          </select>
+          </FormSelect>
         </div>
         {filtered.length > 0 ? (
           <div className="real-estate-list">
@@ -840,40 +842,40 @@ function RealEstateForm({
         mutation.mutate()
       }}>
         <Field label="Nom">
-          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
+          <FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
         </Field>
         <Field label="Type de bien">
-          <select value={propertyType} onChange={(event) => setPropertyType(event.target.value)}>
+          <FormSelect value={propertyType} onChange={(event) => setPropertyType(event.target.value)}>
             <option value="primary_residence">Résidence principale</option>
             <option value="secondary_residence">Résidence secondaire</option>
             <option value="rental">Locatif</option>
             <option value="commercial">Local commercial</option>
             <option value="land">Terrain</option>
             <option value="other">Autre</option>
-          </select>
+          </FormSelect>
         </Field>
         <Field label="Adresse">
-          <input value={address} onChange={(event) => setAddress(event.target.value)} maxLength={200} placeholder="Facultatif" />
+          <FormInput value={address} onChange={(event) => setAddress(event.target.value)} maxLength={200} placeholder="Facultatif" />
         </Field>
         <Field label="Date d’acquisition">
-          <input type="date" value={acquiredOn} onChange={(event) => setAcquiredOn(event.target.value)} />
+          <FormInput type="date" value={acquiredOn} onChange={(event) => setAcquiredOn(event.target.value)} />
         </Field>
         <Field label="Prix d’achat">
-          <input type="number" min="0" step="0.01" value={purchasePrice} onChange={(event) => setPurchasePrice(event.target.value)} required />
+          <FormInput type="number" min="0" step="0.01" value={purchasePrice} onChange={(event) => setPurchasePrice(event.target.value)} required />
         </Field>
         <Field label="Valeur actuelle">
-          <input type="number" min="0" step="0.01" value={currentValue} onChange={(event) => setCurrentValue(event.target.value)} required />
+          <FormInput type="number" min="0" step="0.01" value={currentValue} onChange={(event) => setCurrentValue(event.target.value)} required />
         </Field>
         <Field label="Quote-part (%)">
-          <input type="number" min="0.01" max="100" step="0.01" value={ownershipShare} onChange={(event) => setOwnershipShare(event.target.value)} required />
+          <FormInput type="number" min="0.01" max="100" step="0.01" value={ownershipShare} onChange={(event) => setOwnershipShare(event.target.value)} required />
         </Field>
         <Field label="Emprunt associé">
-          <select value={debtId} onChange={(event) => setDebtId(event.target.value)}>
+          <FormSelect value={debtId} onChange={(event) => setDebtId(event.target.value)}>
             <option value="">Aucun emprunt</option>
             {debts.map((debt) => (
               <option key={debt.id} value={debt.id}>{debt.name} · {money(debt.balance)}</option>
             ))}
-          </select>
+          </FormSelect>
         </Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
@@ -962,7 +964,7 @@ function DebtRow({ debt }: { debt: Debt }) {
             event.preventDefault()
             update.mutate()
           }}>
-            <input aria-label="Capital restant" type="number" min="0" step="0.01" value={remaining} onChange={(event) => setRemaining(event.target.value)} />
+            <FormInput aria-label="Capital restant" type="number" min="0" step="0.01" value={remaining} onChange={(event) => setRemaining(event.target.value)} />
             <button className="icon-action positive" type="submit"><Icon name="check" /></button>
             <button className="icon-action" type="button" onClick={() => setEditing(false)}><Icon name="close" /></button>
           </form>
@@ -1019,22 +1021,22 @@ function DebtForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => 
         mutation.mutate()
       }}>
         <Field label="Nom">
-          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
+          <FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
         </Field>
         <Field label="Capital initial">
-          <input type="number" min="0" step="0.01" value={initialAmount} onChange={(event) => setInitialAmount(event.target.value)} required />
+          <FormInput type="number" min="0" step="0.01" value={initialAmount} onChange={(event) => setInitialAmount(event.target.value)} required />
         </Field>
         <Field label="Capital restant">
-          <input type="number" min="0" step="0.01" value={remainingAmount} onChange={(event) => setRemainingAmount(event.target.value)} required />
+          <FormInput type="number" min="0" step="0.01" value={remainingAmount} onChange={(event) => setRemainingAmount(event.target.value)} required />
         </Field>
         <Field label="Mensualité">
-          <input type="number" min="0" step="0.01" value={monthlyPayment} onChange={(event) => setMonthlyPayment(event.target.value)} required />
+          <FormInput type="number" min="0" step="0.01" value={monthlyPayment} onChange={(event) => setMonthlyPayment(event.target.value)} required />
         </Field>
         <Field label="Taux annuel (%)">
-          <input type="number" min="0" step="0.01" value={interestRate} onChange={(event) => setInterestRate(event.target.value)} required />
+          <FormInput type="number" min="0" step="0.01" value={interestRate} onChange={(event) => setInterestRate(event.target.value)} required />
         </Field>
         <Field label="Échéance">
-          <input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+          <FormInput type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
         </Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>

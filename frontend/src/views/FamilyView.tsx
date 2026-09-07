@@ -13,6 +13,8 @@ import type {
 import {
   EmptyState,
   Field,
+  FormInput,
+  FormSelect,
   Icon,
   InstitutionLogo,
   Panel,
@@ -77,12 +79,12 @@ export function FamilyView({ accounts }: { accounts: Account[] }) {
         </div>
         <div className="header-actions">
           {(households.data?.length ?? 0) > 1 && (
-            <select value={activeHouseholdId ?? ''} onChange={(event) => setSelectedHouseholdId(Number(event.target.value))}>
+            <FormSelect value={activeHouseholdId ?? ''} onChange={(event) => setSelectedHouseholdId(Number(event.target.value))}>
               {households.data?.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}
-            </select>
+            </FormSelect>
           )}
           {members.length > 0 && (
-            <select
+            <FormSelect
               aria-label="Profil actif"
               value={activeActor?.id ?? ''}
               onChange={(event) => setSelectedActorId(Number(event.target.value))}
@@ -90,7 +92,7 @@ export function FamilyView({ accounts }: { accounts: Account[] }) {
               {members.map((member) => (
                 <option key={member.id} value={member.id}>{member.name} · {roleLabel(member.role)}</option>
               ))}
-            </select>
+            </FormSelect>
           )}
           <button className="secondary-button" type="button" onClick={() => setShowHouseholdForm((current) => !current)}>
             <Icon name="plus" /> Nouveau foyer
@@ -243,10 +245,10 @@ function HouseholdForm({
         mutation.mutate()
       }}>
         <Field label="Nom du foyer">
-          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
+          <FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
         </Field>
         <Field label="Nom du profil propriétaire">
-          <input value={ownerName} onChange={(event) => setOwnerName(event.target.value)} maxLength={120} required />
+          <FormInput value={ownerName} onChange={(event) => setOwnerName(event.target.value)} maxLength={120} required />
         </Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
@@ -287,12 +289,12 @@ function MemberForm({
       event.preventDefault()
       mutation.mutate()
     }}>
-      <input aria-label="Nom du membre" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
-      <select aria-label="Rôle" value={role} onChange={(event) => setRole(event.target.value as 'admin' | 'member' | 'viewer')}>
+      <FormInput aria-label="Nom du membre" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
+      <FormSelect aria-label="Rôle" value={role} onChange={(event) => setRole(event.target.value as 'admin' | 'member' | 'viewer')}>
         <option value="admin">Administrateur</option>
         <option value="member">Membre</option>
         <option value="viewer">Lecture</option>
-      </select>
+      </FormSelect>
       <button className="primary-button icon-button" type="submit" aria-label="Ajouter"><Icon name="check" /></button>
       <button className="text-button icon-button" type="button" aria-label="Annuler" onClick={() => setOpen(false)}><Icon name="close" /></button>
       {mutation.error && <span className="form-error">{errorMessage(mutation.error)}</span>}
@@ -329,9 +331,9 @@ function ShareAccountForm({
       event.preventDefault()
       mutation.mutate()
     }}>
-      <select aria-label="Compte à partager" value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+      <FormSelect aria-label="Compte à partager" value={accountId} onChange={(event) => setAccountId(event.target.value)}>
         {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-      </select>
+      </FormSelect>
       <button className="primary-button icon-button" type="submit" aria-label="Partager" disabled={accounts.length === 0}><Icon name="check" /></button>
       <button className="text-button icon-button" type="button" aria-label="Annuler" onClick={() => setOpen(false)}><Icon name="close" /></button>
       {mutation.error && <span className="form-error">{errorMessage(mutation.error)}</span>}
@@ -369,8 +371,8 @@ function GoalForm({
       event.preventDefault()
       mutation.mutate()
     }}>
-      <input aria-label="Nom de l'objectif" value={name} onChange={(event) => setName(event.target.value)} required />
-      <input aria-label="Montant cible" type="number" min="0.01" step="0.01" value={target} onChange={(event) => setTarget(event.target.value)} required />
+      <FormInput aria-label="Nom de l'objectif" value={name} onChange={(event) => setName(event.target.value)} required />
+      <FormInput aria-label="Montant cible" type="number" min="0.01" step="0.01" value={target} onChange={(event) => setTarget(event.target.value)} required />
       <button className="primary-button icon-button" type="submit" aria-label="Créer"><Icon name="check" /></button>
       <button className="text-button icon-button" type="button" aria-label="Annuler" onClick={() => setOpen(false)}><Icon name="close" /></button>
       {mutation.error && <span className="form-error">{errorMessage(mutation.error)}</span>}
@@ -436,7 +438,7 @@ function GoalCard({
           event.preventDefault()
           mutation.mutate()
         }}>
-          <input type="number" min="0.01" step="0.01" placeholder="Contribution" value={amount} onChange={(event) => setAmount(event.target.value)} required />
+          <FormInput type="number" min="0.01" step="0.01" placeholder="Contribution" value={amount} onChange={(event) => setAmount(event.target.value)} required />
           <button className="primary-button small-button" type="submit">Contribuer</button>
         </form>
       )}

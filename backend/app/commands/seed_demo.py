@@ -60,6 +60,7 @@ from ..models import (
     Transaction,
     TransactionAttachment,
 )
+from ..snapshot_import import parse_snapshot_tsv
 
 DEFAULT_DATA_DIR = Path("/data")
 
@@ -230,6 +231,16 @@ async def _seed(
         initial_balance=money("2634.00"), institution="Boursobank", color="#7c3aed",
         account_number="DEMO-PEA-001",
     )
+    peg = Account(
+        name="PEG Amundi demo", type="peg", currency="EUR",
+        initial_balance=money("7800.00"), institution="Amundi", color="#d71920",
+        account_number="DEMO-PEG-001",
+    )
+    percol = Account(
+        name="PER/PERCOL Amundi demo", type="percol", currency="EUR",
+        initial_balance=money("11200.00"), institution="Amundi", color="#9f1239",
+        account_number="DEMO-PERCOL-001",
+    )
     boursobank_checking = Account(
         name="Compte courant Boursobank demo", type="checking", currency="EUR",
         initial_balance=money("2150.00"), institution="Boursobank", color="#d9f99d",
@@ -259,6 +270,8 @@ async def _seed(
         [
             savings,
             invest,
+            peg,
+            percol,
             boursobank_checking,
             life_insurance,
             crypto_wallet,
@@ -431,6 +444,10 @@ async def _seed(
         (invest, ("2100.00", "2300.00", "2450.00", "2634.00")),
         (crypto_wallet, ("3600.00", "4100.00", "3850.00", "4200.00")),
     ]
+    quick_import_snapshot_series = [
+        (peg, ("6 500,00 €", "6 900,00 €", "7 350,00 €", "7 800,00 €")),
+        (percol, ("9 200,00 €", "9 800,00 €", "10 400,00 €", "11 200,00 €")),
+    ]
     snapshot_count = 0
     latest_savings_snapshot: BalanceSnapshot | None = None
     for index, month in enumerate(months):
@@ -470,6 +487,22 @@ async def _seed(
         )
         latest_savings_snapshot = savings_snapshot
         snapshot_count += 3 + len(additional_snapshots)
+
+    for account, balances in quick_import_snapshot_series:
+        content = "Date\tMontant\n" + "\n".join(
+            f"{month.replace(day=28).strftime('%d/%m/%Y')}\t{balances[index]}"
+            for index, month in enumerate(months)
+        )
+        imported_rows = parse_snapshot_tsv(content)
+        session.add_all(
+            BalanceSnapshot(
+                account_id=account.id,
+                period=row.period,
+                balance=row.balance,
+            )
+            for row in imported_rows
+        )
+        snapshot_count += len(imported_rows)
 
     archived_snapshot = BalanceSnapshot(
         account_id=archived.id,
@@ -708,7 +741,7 @@ async def _seed(
 
     total_categories = await session.scalar(select(func.count()).select_from(Category))
     return SeedResult(
-        accounts=8,
+        accounts=10,
         transactions=transaction_count,
         snapshots=snapshot_count,
         categories=int(total_categories or 0),

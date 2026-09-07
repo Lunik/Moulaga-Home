@@ -36,6 +36,9 @@ import {
   CategorizationSummary,
   EmptyState,
   Field,
+  FormInput,
+  FormSelect,
+  FormTextarea,
   Icon,
   MerchantAvatar,
   MetricCard,
@@ -606,37 +609,37 @@ function RecurringSeriesModal({
         mutation.mutate()
       }}>
         <AmountDirectionToggle value={direction} onChange={setDirection} />
-        <Field label="Nom"><input value={name} onChange={(event) => setName(event.target.value)} required /></Field>
+        <Field label="Nom"><FormInput value={name} onChange={(event) => setName(event.target.value)} required /></Field>
         <Field label="Compte">
-          <select value={selectedAccountId} onChange={(event) => setAccountId(event.target.value)} required>
+          <FormSelect value={selectedAccountId} onChange={(event) => setAccountId(event.target.value)} required>
             {selectableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-          </select>
+          </FormSelect>
         </Field>
         <Field label="Catégorie">
-          <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+          <FormSelect value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
             <option value="">Sans catégorie</option>
             {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-          </select>
+          </FormSelect>
         </Field>
         <Field label={variable ? 'Montant estimé' : 'Montant'}>
-          <input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
+          <FormInput type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
         </Field>
         <Field label="Fréquence">
-          <select value={frequency} onChange={(event) => setFrequency(event.target.value as RecurringSeries['frequency'])}>
+          <FormSelect value={frequency} onChange={(event) => setFrequency(event.target.value as RecurringSeries['frequency'])}>
             <option value="weekly">Hebdomadaire</option>
             <option value="monthly">Mensuelle</option>
             <option value="quarterly">Trimestrielle</option>
             <option value="yearly">Annuelle</option>
-          </select>
+          </FormSelect>
         </Field>
-        <Field label="Prochaine échéance"><input type="date" value={nextDueDate} onChange={(event) => setNextDueDate(event.target.value)} required /></Field>
+        <Field label="Prochaine échéance"><FormInput type="date" value={nextDueDate} onChange={(event) => setNextDueDate(event.target.value)} required /></Field>
         {item && (
           <Field label="Statut">
-            <select value={status} onChange={(event) => setStatus(event.target.value as RecurringSeries['status'])}>
+            <FormSelect value={status} onChange={(event) => setStatus(event.target.value as RecurringSeries['status'])}>
               <option value="active">Active</option>
               <option value="paused">En pause</option>
               <option value="ended">Terminée</option>
-            </select>
+            </FormSelect>
           </Field>
         )}
         <label className="toggle-row recurring-variable-toggle">
@@ -644,7 +647,7 @@ function RecurringSeriesModal({
             <strong>Montant variable</strong>
             <small>Utiliser ce montant comme estimation lorsque les prélèvements fluctuent.</small>
           </span>
-          <input type="checkbox" checked={variable} onChange={(event) => setVariable(event.target.checked)} />
+          <FormInput type="checkbox" checked={variable} onChange={(event) => setVariable(event.target.checked)} />
           <span className="toggle-visual" aria-hidden="true"><Icon name="check" /></span>
         </label>
         {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
@@ -694,7 +697,7 @@ function RecurringDetectionModal({
             const selected = selectedKeys.includes(proposal.proposal_key)
             return (
               <label className={`detection-proposal${selected ? ' selected' : ''}`} key={proposal.proposal_key}>
-                <input
+                <FormInput
                   type="checkbox"
                   checked={selected}
                   disabled={isPending}
@@ -864,10 +867,10 @@ function CategorizationCard({
       </div>
       <div className="categorization-actions">
         <Field label="Catégorie">
-          <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+          <FormSelect value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
             <option value="">Choisir une catégorie</option>
             {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-          </select>
+          </FormSelect>
         </Field>
         <label className={`categorization-rule-toggle${createRule ? ' active' : ''}`}>
           <span className="categorization-toggle-icon"><Icon name="rules" /></span>
@@ -875,7 +878,7 @@ function CategorizationCard({
             <strong>Créer une règle</strong>
             <small>Pour ce libellé</small>
           </span>
-          <input type="checkbox" checked={createRule} onChange={(event) => setCreateRule(event.target.checked)} />
+          <FormInput type="checkbox" checked={createRule} onChange={(event) => setCreateRule(event.target.checked)} />
           <span className="toggle-visual" aria-hidden="true" />
         </label>
         <button
@@ -1006,23 +1009,23 @@ function RuleModal({
       mutation.mutate()
       }}>
       <Field label="Nom de la règle">
-        <input value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
+        <FormInput value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
       </Field>
       <div className="rule-modal-grid">
         <Field label="Type de correspondance">
-          <select value={matchType} onChange={(event) => setMatchType(event.target.value as CategorizationRule['match_type'])}>
+          <FormSelect value={matchType} onChange={(event) => setMatchType(event.target.value as CategorizationRule['match_type'])}>
             <option value="beneficiary">Bénéficiaire / libellé</option>
             <option value="keyword">Mot-clé</option>
-          </select>
+          </FormSelect>
         </Field>
         <Field label="Catégorie cible">
-          <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)} required>
+          <FormSelect value={categoryId} onChange={(event) => setCategoryId(event.target.value)} required>
             <option value="">Choisir une catégorie</option>
             {availableCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-          </select>
+          </FormSelect>
         </Field>
         <Field label="Priorité">
-          <input type="number" min="0" max="10000" value={priority} onChange={(event) => setPriority(event.target.value)} required />
+          <FormInput type="number" min="0" max="10000" value={priority} onChange={(event) => setPriority(event.target.value)} required />
         </Field>
       </div>
       <div className="rule-patterns-editor">
@@ -1044,7 +1047,7 @@ function RuleModal({
           {patterns.map((pattern, index) => (
             <div className="rule-pattern-input" key={index}>
               <Field label={`Motif ${index + 1}`}>
-                <input
+                <FormInput
                   value={pattern}
                   maxLength={200}
                   placeholder={matchType === 'keyword' ? 'Ex. SUPERMARCHÉ' : 'Ex. Nom du bénéficiaire'}
@@ -1075,7 +1078,7 @@ function RuleModal({
           <strong>Règle active</strong>
           <small>Les règles désactivées restent enregistrées sans être appliquées.</small>
         </span>
-        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+        <FormInput type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
         <span className="toggle-visual" aria-hidden="true" />
       </label>
       {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
@@ -1212,15 +1215,15 @@ function TransactionLedger({
             <span>Rechercher</span>
             <span className="search-field">
               <Icon name="search" />
-              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Libellé ou note" />
+              <FormInput type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Libellé ou note" />
             </span>
           </label>
           <Field label="Catégorie">
-            <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+            <FormSelect value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
               <option value="all">Toutes les catégories</option>
               <option value="none">Sans catégorie</option>
               {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-            </select>
+            </FormSelect>
           </Field>
         </div>
         <div className="data-table-wrap">
@@ -1414,24 +1417,24 @@ function LedgerTransactionModal({
       }}>
         <AmountDirectionToggle value={direction} onChange={setDirection} />
         <div className="transaction-modal-grid">
-          <Field label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></Field>
+          <Field label="Date"><FormInput type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></Field>
           <Field label="Compte">
-            <select value={accountId} onChange={(event) => setAccountId(event.target.value)} required>
+            <FormSelect value={accountId} onChange={(event) => setAccountId(event.target.value)} required>
               {selectableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-            </select>
+            </FormSelect>
           </Field>
           <div className="transaction-modal-wide">
-            <Field label="Libellé"><input value={description} onChange={(event) => setDescription(event.target.value)} required autoFocus /></Field>
+            <Field label="Libellé"><FormInput value={description} onChange={(event) => setDescription(event.target.value)} required autoFocus /></Field>
           </div>
-          <Field label="Montant"><input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
+          <Field label="Montant"><FormInput type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
           <Field label="Catégorie">
-            <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+            <FormSelect value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
               <option value="">Sans catégorie</option>
               {selectableCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-            </select>
+            </FormSelect>
           </Field>
           <div className="transaction-modal-wide">
-            <Field label="Note"><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} /></Field>
+            <Field label="Note"><FormTextarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} /></Field>
           </div>
         </div>
         {!transaction && (
@@ -1442,7 +1445,7 @@ function LedgerTransactionModal({
               <small>Facultative · stockage local · 25 Mio maximum</small>
             </span>
             <label className="secondary-button small-button">
-              <input
+              <FormInput
                 aria-label="Choisir une pièce jointe"
                 type="file"
                 onChange={(event) => setAttachment(event.target.files?.[0] ?? null)}
@@ -1879,26 +1882,26 @@ function CategoryEditorModal({
         mutation.mutate()
       }}>
         <Field label="Nom">
-          <input value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
+          <FormInput value={name} onChange={(event) => setName(event.target.value)} required autoFocus />
         </Field>
         {!category && (
           <Field label="Type">
-            <select value={kind} onChange={(event) => setKind(event.target.value as Category['kind'])}>
+            <FormSelect value={kind} onChange={(event) => setKind(event.target.value as Category['kind'])}>
               <option value="expense">Dépense</option>
               <option value="income">Revenu</option>
-            </select>
+            </FormSelect>
           </Field>
         )}
         <Field label="Catégorie parente">
-          <select value={parentId} onChange={(event) => setParentId(event.target.value)}>
+          <FormSelect value={parentId} onChange={(event) => setParentId(event.target.value)}>
             <option value="">Sans parent · catégorie principale</option>
             {parentOptions.map((parent) => (
               <option key={parent.id} value={parent.id}>{parent.name}</option>
             ))}
-          </select>
+          </FormSelect>
         </Field>
         <Field label="Couleur">
-          <input className="color-input category-modal-color" type="color" value={color} onChange={(event) => setColor(event.target.value)} />
+          <FormInput className="color-input category-modal-color" type="color" value={color} onChange={(event) => setColor(event.target.value)} />
         </Field>
         {showBudgetFields && (
           <>
@@ -1912,7 +1915,7 @@ function CategoryEditorModal({
             </div>
             {!unlimited && (
               <Field label="Plafond mensuel">
-                <input
+                <FormInput
                   type="number"
                   min={childrenBudget > 0 ? childrenBudget : '0.01'}
                   step="0.01"
@@ -2043,17 +2046,17 @@ function CategoryRemovalModal({
             <strong>Réaffecter avant suppression définitive</strong>
             <small>Déplace les transactions, règles et séries vers une autre catégorie puis supprime celle-ci sans possibilité de restauration.</small>
           </span>
-          <input type="checkbox" checked={reassign} onChange={(event) => setReassign(event.target.checked)} />
+          <FormInput type="checkbox" checked={reassign} onChange={(event) => setReassign(event.target.checked)} />
           <span className="toggle-visual" aria-hidden="true" />
         </label>
       )}
       {reassign && (
         <Field label="Réaffecter vers">
-          <select value={replacementCategoryId} onChange={(event) => setReplacementCategoryId(event.target.value)}>
+          <FormSelect value={replacementCategoryId} onChange={(event) => setReplacementCategoryId(event.target.value)}>
             {destinations.map((destination) => (
               <option key={destination.id} value={destination.id}>{destination.name}</option>
             ))}
-          </select>
+          </FormSelect>
         </Field>
       )}
       {(usage.error || archiveOrDelete.error || reassignAndDelete.error) && (
