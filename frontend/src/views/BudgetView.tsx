@@ -19,6 +19,7 @@ import type {
   CategorizationSuggestion,
   Category,
   CategoryRemovalResult,
+  Debt,
   Envelope,
   MerchantIdentity,
   RecurringChange,
@@ -26,11 +27,14 @@ import type {
   RecurringDetectionResult,
   RecurringForecastItem,
   RecurringSeries,
+  RecurringType,
+  RealEstateAsset,
   SpendingNode,
   Transaction,
   TransactionCount,
 } from '../api/types'
-import type { BudgetTab, Route } from '../routing'
+import { routeHash, type BudgetTab, type Route } from '../routing'
+import { ScheduleImportModal } from '../ScheduleImportModal'
 import {
   AmountDirectionToggle,
   CategorizationSummary,
@@ -40,6 +44,7 @@ import {
   FormSelect,
   FormTextarea,
   Icon,
+  LinkedEntityLink,
   MerchantAvatar,
   MetricCard,
   Modal,
@@ -51,10 +56,12 @@ import {
   formatDate,
   formatMonth,
   initials,
+  linkedEntityTargetId,
   localDateInputValue,
   money,
   shortMonth,
   signedMoney,
+  useLinkedEntityFocus,
   type TransactionDirection,
 } from '../ui'
 
@@ -69,6 +76,7 @@ const budgetTabs: Array<{ id: BudgetTab; label: string; icon: Parameters<typeof 
 
 export function BudgetView({
   tab,
+  focusId,
   accounts,
   categories,
   merchants,
@@ -78,6 +86,7 @@ export function BudgetView({
   onRefresh,
 }: {
   tab: BudgetTab
+  focusId?: number
   accounts: Account[]
   categories: Category[]
   merchants: MerchantIdentity[]
@@ -119,7 +128,13 @@ export function BudgetView({
 
       {tab === 'overview' && <BudgetOverviewPanel navigate={navigate} />}
       {tab === 'cashflow' && <CashflowPanel categories={categories} />}
-      {tab === 'recurring' && <RecurringPanel accounts={accounts} categories={categories} />}
+      {tab === 'recurring' && (
+        <RecurringPanel
+          accounts={accounts}
+          categories={categories}
+          focusId={focusId}
+        />
+      )}
       {tab === 'envelopes' && <EnvelopesPanel categories={categories} onRefresh={onRefresh} />}
       {tab === 'categorize' && (
         isOnline ? (
@@ -305,10 +320,19 @@ function CashflowPanel({ categories }: { categories: Category[] }) {
   )
 }
 
-function RecurringPanel({ accounts, categories }: { accounts: Account[]; categories: Category[] }) {
+function RecurringPanel({
+  accounts,
+  categories,
+  focusId,
+}: {
+  accounts: Account[]
+  categories: Category[]
+  focusId?: number
+}) {
   const queryClient = useQueryClient()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [seriesToEdit, setSeriesToEdit] = useState<RecurringSeries | null>(null)
+  const [seriesForSchedule, setSeriesForSchedule] = useState<RecurringSeries | null>(null)
   const [showDetectionModal, setShowDetectionModal] = useState(false)
   const [detectionProposals, setDetectionProposals] = useState<RecurringDetectionProposal[]>([])
   const [selectedProposalKeys, setSelectedProposalKeys] = useState<string[]>([])
@@ -324,6 +348,15 @@ function RecurringPanel({ accounts, categories }: { accounts: Account[]; categor
     queryKey: ['recurring-changes'],
     queryFn: () => apiGet<RecurringChange[]>('/recurring/changes'),
   })
+  const debts = useQuery({
+    queryKey: ['debts'],
+    queryFn: () => apiGet<Debt[]>('/debts'),
+  })
+  const realEstate = useQuery({
+    queryKey: ['real-estate'],
+    queryFn: () => apiGet<RealEstateAsset[]>('/real-estate'),
+  })
+  useLinkedEntityFocus('recurring', focusId, (series.data?.length ?? 0) > 0)
   const refreshRecurring = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
@@ -348,7 +381,13 @@ function RecurringPanel({ accounts, categories }: { accounts: Account[]; categor
       setShowDetectionModal(false)
     },
   })
-  const errors = [series.error, forecast.error, changes.error].filter(Boolean)
+  const errors = [
+    series.error,
+    forecast.error,
+    changes.error,
+    debts.error,
+    realEstate.error,
+  ].filter(Boolean)
 
   return (
     <>
@@ -395,6 +434,21 @@ function RecurringPanel({ accounts, categories }: { accounts: Account[]; categor
           }}
         />
       )}
+      {seriesForSchedule && (
+        <ScheduleImportModal
+          title={`Échéancier · ${seriesForSchedule.label}`}
+          description="Collez deux colonnes TSV : la date, puis le montant de l’assurance crédit."
+          endpoint={`/recurring/${seriesForSchedule.id}/schedule/import`}
+          amountLabel="cotisation"
+          ariaLabel={`Échéancier TSV de ${seriesForSchedule.label}`}
+          placeholder={'05/10/2026\t34,80 €\n05/11/2026\t34,55 €'}
+          onClose={() => setSeriesForSchedule(null)}
+          onSaved={async () => {
+            await refreshRecurring()
+            setSeriesForSchedule(null)
+          }}
+        />
+      )}
       {showDetectionModal && (
         <RecurringDetectionModal
           error={confirmDetection.error}
@@ -426,9 +480,17 @@ function RecurringPanel({ accounts, categories }: { accounts: Account[]; categor
           <div className="recurring-list">
             {series.data?.map((item) => (
               <RecurringRow
+                assets={(realEstate.data ?? []).filter((asset) => (
+                  (debts.data ?? []).some(
+                    (debt) => debt.id === asset.debt_id && debt.recurring_series_id === item.id,
+                  )
+                ))}
+                debts={(debts.data ?? []).filter((debt) => debt.recurring_series_id === item.id)}
+                focused={focusId === item.id}
                 item={item}
                 key={item.id}
                 onEdit={() => setSeriesToEdit(item)}
+                onImportSchedule={() => setSeriesForSchedule(item)}
                 onSaved={refreshRecurring}
               />
             ))}
@@ -485,12 +547,20 @@ function RecurringChanges({
 }
 
 function RecurringRow({
+  assets,
+  debts,
+  focused,
   item,
   onEdit,
+  onImportSchedule,
   onSaved,
 }: {
+  assets: RealEstateAsset[]
+  debts: Debt[]
+  focused: boolean
   item: RecurringSeries
   onEdit: () => void
+  onImportSchedule: () => void
   onSaved: () => Promise<void>
 }) {
   const update = useMutation({
@@ -503,19 +573,69 @@ function RecurringRow({
     onSuccess: onSaved,
   })
   return (
-    <article>
+    <article
+      className={focused ? 'linked-entity-target' : undefined}
+      id={linkedEntityTargetId('recurring', item.id)}
+      tabIndex={focused ? -1 : undefined}
+    >
       <span className="transaction-avatar">{initials(item.label)}</span>
       <span className="recurring-copy">
         <span>
           <strong>{item.label}</strong>
           <StatusBadge tone={statusTone(item.status)}>{statusLabel(item.status)}</StatusBadge>
+          <StatusBadge>{recurringTypeLabel(item.recurring_type, item.custom_type)}</StatusBadge>
           {item.amount_type === 'variable' && <StatusBadge>Montant variable</StatusBadge>}
         </span>
         <small>{frequencyLabel(item.frequency)} · prochaine le {formatDate(item.next_due)}</small>
+        {(item.credit_insurance_rate !== null || item.schedule_count > 0) && (
+          <small>
+            {item.credit_insurance_rate !== null && (
+              <>Taux assurance {Number(item.credit_insurance_rate).toLocaleString('fr-FR', { maximumFractionDigits: 3 })}%</>
+            )}
+            {item.credit_insurance_rate !== null && item.schedule_count > 0 && ' · '}
+            {item.schedule_count > 0 && (
+              <>{item.schedule_count} échéance{item.schedule_count === 1 ? '' : 's'} importée{item.schedule_count === 1 ? '' : 's'}</>
+            )}
+          </small>
+        )}
         <small>Détection locale · {Math.round(item.confidence * 100)}% de confiance</small>
+        {(debts.length > 0 || assets.length > 0) && (
+          <span className="linked-entities recurring-links">
+            {debts.map((debt) => (
+              <LinkedEntityLink
+                href={routeHash({ name: 'wealth', tab: 'debts', focusId: debt.id })}
+                icon="debt"
+                key={debt.id}
+                label={`Dette : ${debt.name}`}
+              />
+            ))}
+            {assets.map((asset) => (
+              <LinkedEntityLink
+                href={routeHash({
+                  name: 'wealth',
+                  tab: 'real-estate',
+                  focusId: asset.id,
+                })}
+                icon="home"
+                key={asset.id}
+                label={`Bien : ${asset.name}`}
+              />
+            ))}
+          </span>
+        )}
       </span>
       <strong className={Number(item.amount ?? 0) >= 0 ? 'positive' : ''}>{signedMoney(item.amount ?? 0)}</strong>
       <div className="row-actions">
+        {item.recurring_type === 'credit_insurance' && (
+          <button
+            className="secondary-button small-button"
+            type="button"
+            aria-label="Importer l’échéancier"
+            onClick={onImportSchedule}
+          >
+            <Icon name="database" /> Échéancier
+          </button>
+        )}
         <button className="icon-action" type="button" aria-label="Modifier" onClick={onEdit}>
           <Icon name="edit" />
         </button>
@@ -557,10 +677,17 @@ function RecurringSeriesModal({
 }) {
   const selectableAccounts = accounts.filter((account) => !account.archived || account.id === item?.account_id)
   const [name, setName] = useState(item?.label ?? '')
+  const [recurringType, setRecurringType] = useState<RecurringType>(
+    item?.recurring_type ?? 'subscription',
+  )
+  const [customType, setCustomType] = useState(item?.custom_type ?? '')
+  const [creditInsuranceRate, setCreditInsuranceRate] = useState(
+    item?.credit_insurance_rate ?? '',
+  )
   const [accountId, setAccountId] = useState(String(item?.account_id ?? selectableAccounts[0]?.id ?? ''))
   const [categoryId, setCategoryId] = useState(String(item?.category_id ?? ''))
   const [direction, setDirection] = useState<TransactionDirection>(
-    Number(item?.amount ?? 0) >= 0 ? 'deposit' : 'withdrawal',
+    item ? (Number(item.amount ?? 0) >= 0 ? 'deposit' : 'withdrawal') : 'withdrawal',
   )
   const [amount, setAmount] = useState(item?.amount ? String(Math.abs(Number(item.amount))) : '')
   const [frequency, setFrequency] = useState<RecurringSeries['frequency']>(item?.frequency ?? 'monthly')
@@ -579,6 +706,11 @@ function RecurringSeriesModal({
         next_due: nextDueDate,
         amount_type: variable ? 'variable' : 'fixed',
         status,
+        recurring_type: recurringType,
+        custom_type: recurringType === 'other' ? customType : null,
+        credit_insurance_rate: recurringType === 'credit_insurance'
+          ? creditInsuranceRate || null
+          : null,
       }
       return item
         ? apiPatch<RecurringSeries>(`/recurring/${item.id}`, payload)
@@ -610,6 +742,51 @@ function RecurringSeriesModal({
       }}>
         <AmountDirectionToggle value={direction} onChange={setDirection} />
         <Field label="Nom"><FormInput value={name} onChange={(event) => setName(event.target.value)} required /></Field>
+        <Field label="Type">
+          <FormSelect
+            value={recurringType}
+            onChange={(event) => setRecurringType(event.target.value as RecurringType)}
+          >
+            <option value="subscription">Abonnement</option>
+            <option value="rent">Loyer</option>
+            <option value="energy">Énergie</option>
+            <option value="telecom">Télécom</option>
+            <option value="auto_insurance">Assurance auto</option>
+            <option value="home_insurance">Assurance habitation</option>
+            <option value="health_insurance">Assurance santé</option>
+            <option value="credit_insurance">Assurance crédit</option>
+            <option value="loan_payment">Remboursement de crédit</option>
+            <option value="tax">Impôt ou taxe</option>
+            <option value="salary">Salaire ou revenu</option>
+            <option value="transfer">Virement récurrent</option>
+            <option value="other">Autre</option>
+            {item?.recurring_type === 'uncategorized' && (
+              <option value="uncategorized">Non classé</option>
+            )}
+          </FormSelect>
+        </Field>
+        {recurringType === 'other' && (
+          <Field label="Type personnalisé">
+            <FormInput
+              value={customType}
+              onChange={(event) => setCustomType(event.target.value)}
+              maxLength={120}
+              required
+            />
+          </Field>
+        )}
+        {recurringType === 'credit_insurance' && (
+          <Field label="Taux d’assurance (%)">
+            <FormInput
+              type="number"
+              min="0"
+              max="100"
+              step="0.001"
+              value={creditInsuranceRate}
+              onChange={(event) => setCreditInsuranceRate(event.target.value)}
+            />
+          </Field>
+        )}
         <Field label="Compte">
           <FormSelect value={selectedAccountId} onChange={(event) => setAccountId(event.target.value)} required>
             {selectableAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
@@ -2540,4 +2717,23 @@ function statusLabel(status: RecurringSeries['status']): string {
 
 function frequencyLabel(frequency: RecurringSeries['frequency']): string {
   return { weekly: 'Hebdomadaire', monthly: 'Mensuel', quarterly: 'Trimestriel', yearly: 'Annuel' }[frequency]
+}
+
+function recurringTypeLabel(type: RecurringType, customType: string | null): string {
+  const labels: Record<Exclude<RecurringType, 'other'>, string> = {
+    uncategorized: 'Non classé',
+    subscription: 'Abonnement',
+    rent: 'Loyer',
+    energy: 'Énergie',
+    telecom: 'Télécom',
+    auto_insurance: 'Assurance auto',
+    home_insurance: 'Assurance habitation',
+    health_insurance: 'Assurance santé',
+    credit_insurance: 'Assurance crédit',
+    loan_payment: 'Remboursement de crédit',
+    tax: 'Impôt ou taxe',
+    salary: 'Salaire ou revenu',
+    transfer: 'Virement récurrent',
+  }
+  return type === 'other' ? customType || 'Autre' : labels[type]
 }

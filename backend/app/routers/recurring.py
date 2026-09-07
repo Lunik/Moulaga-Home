@@ -14,13 +14,22 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..account_access import require_account
 from ..common import add_month, money
+from ..dated_amount_import import DatedAmountImportError, parse_dated_amount_tsv
 from ..db import get_session
-from ..models import Account, Category, RecurringChange, RecurringSeries, Transaction
+from ..models import (
+    Account,
+    Category,
+    RecurringChange,
+    RecurringScheduleEntry,
+    RecurringSeries,
+    Transaction,
+)
 from ..schemas import (
     DetectionProposal,
     DetectionSelection,
@@ -29,7 +38,10 @@ from ..schemas import (
     RecurringChangeRead,
     RecurringCreate,
     RecurringRead,
+    RecurringScheduleImportResult,
+    RecurringScheduleRead,
     RecurringUpdate,
+    ScheduleImportRequest,
 )
 
 router = APIRouter(tags=["recurring"])
@@ -90,6 +102,11 @@ async def _category_name(session: AsyncSession, category_id: int | None) -> str 
 
 
 async def _series_read(session: AsyncSession, series: RecurringSeries) -> RecurringRead:
+    schedule_count = await session.scalar(
+        select(func.count())
+        .select_from(RecurringScheduleEntry)
+        .where(RecurringScheduleEntry.series_id == series.id)
+    )
     return RecurringRead(
         id=series.id,
         label=series.label,
@@ -100,9 +117,13 @@ async def _series_read(session: AsyncSession, series: RecurringSeries) -> Recurr
         amount=series.amount,
         amount_type=series.amount_type,
         status=series.status,
+        recurring_type=series.recurring_type,
+        custom_type=series.custom_type,
+        credit_insurance_rate=series.credit_insurance_rate,
         confidence=series.confidence,
         account_name=await _account_name(session, series.account_id),
         category_name=await _category_name(session, series.category_id),
+        schedule_count=int(schedule_count or 0),
     )
 
 
@@ -135,6 +156,15 @@ async def list_series(session: AsyncSession = Depends(get_session)) -> list[Recu
     categories = {
         cat.id: cat.name for cat in (await session.execute(select(Category))).scalars().all()
     }
+    schedule_counts = {
+        series_id: count
+        for series_id, count in (
+            await session.execute(
+                select(RecurringScheduleEntry.series_id, func.count())
+                .group_by(RecurringScheduleEntry.series_id)
+            )
+        ).all()
+    }
     return [
         RecurringRead(
             id=row.id,
@@ -146,9 +176,13 @@ async def list_series(session: AsyncSession = Depends(get_session)) -> list[Recu
             amount=row.amount,
             amount_type=row.amount_type,
             status=row.status,
+            recurring_type=row.recurring_type,
+            custom_type=row.custom_type,
+            credit_insurance_rate=row.credit_insurance_rate,
             confidence=row.confidence,
             account_name=accounts.get(row.account_id, ""),
             category_name=categories.get(row.category_id) if row.category_id else None,
+            schedule_count=int(schedule_counts.get(row.id, 0)),
         )
         for row in rows
     ]
@@ -180,16 +214,52 @@ async def update_series(
         raise HTTPException(status_code=404, detail="Serie introuvable")
     await require_account(session, series.account_id, writable=True)
     data = payload.model_dump(exclude_unset=True)
-    if series.match_key is None:
-        series.match_key = _normalize_key(series.label, series.account_id)
+    for required_field in (
+        "label",
+        "account_id",
+        "frequency",
+        "next_due",
+        "amount_type",
+        "status",
+        "recurring_type",
+    ):
+        if required_field in data and data[required_field] is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Le champ {required_field} ne peut pas être nul",
+            )
+    if series.match_key is None or "label" in data:
+        series.match_key = _normalize_key(
+            data.get("label", series.label),
+            data.get("account_id", series.account_id),
+        )
     if "account_id" in data:
-        if data["account_id"] is None:
-            raise HTTPException(status_code=422, detail="Compte requis")
         await _require_account(session, data["account_id"])
         if data["account_id"] != series.account_id:
             series.match_key = _normalize_key(data.get("label", series.label), data["account_id"])
     if data.get("category_id") is not None:
         await _require_category(session, data["category_id"])
+    recurring_type = data.get("recurring_type", series.recurring_type)
+    custom_type = data.get("custom_type", series.custom_type)
+    rate = data.get("credit_insurance_rate", series.credit_insurance_rate)
+    if recurring_type == "other" and not custom_type and (
+        "recurring_type" in data or "custom_type" in data
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Le type libre est requis lorsque le type « Autre » est sélectionné",
+        )
+    if recurring_type != "credit_insurance" and rate is not None and (
+        "credit_insurance_rate" in data
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Le taux est réservé aux assurances crédit",
+        )
+    if recurring_type != "other" and "recurring_type" in data:
+        data["custom_type"] = None
+    if recurring_type != "credit_insurance" and "recurring_type" in data:
+        data["credit_insurance_rate"] = None
     for field, value in data.items():
         setattr(series, field, value)
     await session.commit()
@@ -205,6 +275,122 @@ async def delete_series(series_id: int, session: AsyncSession = Depends(get_sess
     await require_account(session, series.account_id, writable=True)
     await session.delete(series)
     await session.commit()
+
+
+async def _require_series(
+    session: AsyncSession,
+    series_id: int,
+) -> RecurringSeries:
+    series = await session.get(RecurringSeries, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="Série introuvable")
+    return series
+
+
+@router.get(
+    "/recurring/{series_id}/schedule",
+    response_model=list[RecurringScheduleRead],
+)
+async def list_recurring_schedule(
+    series_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[RecurringScheduleEntry]:
+    await _require_series(session, series_id)
+    return list(
+        (
+            await session.execute(
+                select(RecurringScheduleEntry)
+                .where(RecurringScheduleEntry.series_id == series_id)
+                .order_by(RecurringScheduleEntry.due_date)
+            )
+        ).scalars().all()
+    )
+
+
+@router.post(
+    "/recurring/{series_id}/schedule/import",
+    response_model=RecurringScheduleImportResult,
+)
+async def import_recurring_schedule(
+    series_id: int,
+    payload: ScheduleImportRequest,
+    session: AsyncSession = Depends(get_session),
+) -> RecurringScheduleImportResult:
+    series = await _require_series(session, series_id)
+    await _require_account(session, series.account_id)
+    if series.recurring_type != "credit_insurance":
+        raise HTTPException(
+            status_code=422,
+            detail="L'import d'un échéancier est réservé aux assurances crédit",
+        )
+    try:
+        rows = parse_dated_amount_tsv(
+            payload.content,
+            amount_headers=frozenset({"montant", "cotisation", "prime"}),
+        )
+    except DatedAmountImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    zero_or_negative = next((row for row in rows if row.amount == 0), None)
+    if zero_or_negative is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Ligne {zero_or_negative.source_line} : la cotisation doit être non nulle.",
+        )
+
+    dates = {row.due_date for row in rows}
+    existing_by_date = {
+        entry.due_date: entry
+        for entry in (
+            await session.execute(
+                select(RecurringScheduleEntry).where(
+                    RecurringScheduleEntry.series_id == series_id,
+                    RecurringScheduleEntry.due_date.in_(dates),
+                )
+            )
+        ).scalars().all()
+    }
+    direction = Decimal("-1") if series.amount is None or Decimal(series.amount) < 0 else Decimal("1")
+    created_count = 0
+    updated_count = 0
+    for row in rows:
+        entry = existing_by_date.get(row.due_date)
+        if entry is None:
+            entry = RecurringScheduleEntry(series_id=series_id, due_date=row.due_date)
+            session.add(entry)
+            created_count += 1
+        else:
+            updated_count += 1
+        entry.amount = money(abs(row.amount) * direction)
+
+    try:
+        await session.flush()
+        next_entry = await session.scalar(
+            select(RecurringScheduleEntry)
+            .where(
+                RecurringScheduleEntry.series_id == series_id,
+                RecurringScheduleEntry.due_date >= date.today(),
+            )
+            .order_by(RecurringScheduleEntry.due_date)
+            .limit(1)
+        )
+        if next_entry is not None:
+            series.next_due = next_entry.due_date
+            series.amount = money(next_entry.amount)
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Une échéance existe déjà pour l'une des dates importées.",
+        ) from exc
+
+    entries = await list_recurring_schedule(series_id, session)
+    return RecurringScheduleImportResult(
+        imported_count=len(rows),
+        created_count=created_count,
+        updated_count=updated_count,
+        entries=[RecurringScheduleRead.model_validate(entry) for entry in entries],
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -227,8 +413,33 @@ async def forecast(
     categories = {
         cat.id: cat.name for cat in (await session.execute(select(Category))).scalars().all()
     }
+    schedules: dict[int, list[RecurringScheduleEntry]] = {}
+    for entry in (
+        await session.execute(
+            select(RecurringScheduleEntry).order_by(RecurringScheduleEntry.due_date)
+        )
+    ).scalars().all():
+        schedules.setdefault(entry.series_id, []).append(entry)
     points: list[ForecastPoint] = []
     for item in series:
+        imported_schedule = schedules.get(item.id, [])
+        if item.recurring_type == "credit_insurance" and imported_schedule:
+            points.extend(
+                ForecastPoint(
+                    series_id=item.id,
+                    label=item.label,
+                    due_date=entry.due_date,
+                    amount=money(entry.amount),
+                    account_name=accounts.get(item.account_id, ""),
+                    category_name=categories.get(item.category_id)
+                    if item.category_id
+                    else None,
+                    status=item.status,
+                )
+                for entry in imported_schedule
+                if date.today() <= entry.due_date <= horizon
+            )
+            continue
         due = item.next_due
         guard = 0
         while due <= horizon and guard < 500:

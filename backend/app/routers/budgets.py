@@ -16,7 +16,14 @@ from ..category_budgeting import (
 )
 from ..common import cycle_bounds, get_preferences, money
 from ..db import get_session
-from ..models import Account, Category, Contribution, RecurringSeries, Transaction
+from ..models import (
+    Account,
+    Category,
+    Contribution,
+    RecurringScheduleEntry,
+    RecurringSeries,
+    Transaction,
+)
 from ..schemas import (
     BudgetCycleOverview,
     CashflowFlow,
@@ -99,7 +106,12 @@ async def cycle_overview(
                 Transaction.category_id.in_(covered_category_ids),
             )
         )
-    # Upcoming recurring items whose next occurrence falls inside the cycle.
+    # Imported credit-insurance schedules replace the generated next occurrence.
+    has_imported_schedule = (
+        select(RecurringScheduleEntry.id)
+        .where(RecurringScheduleEntry.series_id == RecurringSeries.id)
+        .exists()
+    )
     recurring_rows = (
         await session.execute(
             select(RecurringSeries.amount).where(
@@ -107,13 +119,33 @@ async def cycle_overview(
                 RecurringSeries.next_due >= start,
                 RecurringSeries.next_due <= end,
                 RecurringSeries.amount.is_not(None),
+                ~(
+                    (RecurringSeries.recurring_type == "credit_insurance")
+                    & has_imported_schedule
+                ),
             )
         )
     ).all()
+    scheduled_rows = (
+        await session.execute(
+            select(RecurringScheduleEntry.amount)
+            .join(
+                RecurringSeries,
+                RecurringScheduleEntry.series_id == RecurringSeries.id,
+            )
+            .where(
+                RecurringSeries.status == "active",
+                RecurringSeries.recurring_type == "credit_insurance",
+                RecurringScheduleEntry.due_date >= start,
+                RecurringScheduleEntry.due_date <= end,
+            )
+        )
+    ).all()
+    upcoming_rows = [*recurring_rows, *scheduled_rows]
     upcoming_recurring_amount = sum(
-        (Decimal(row[0]) for row in recurring_rows), Decimal("0")
+        (Decimal(row[0]) for row in upcoming_rows), Decimal("0")
     )
-    upcoming_recurring_count = len(recurring_rows)
+    upcoming_recurring_count = len(upcoming_rows)
     # Savings contributions recorded in-cycle (kept separate from expense flows).
     savings = await session.scalar(
         select(func.coalesce(func.sum(Contribution.amount), 0)).where(

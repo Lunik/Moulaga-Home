@@ -215,6 +215,22 @@ export interface CategorizationInboxItem {
   account_id: number
 }
 
+export type RecurringType =
+  | 'uncategorized'
+  | 'subscription'
+  | 'rent'
+  | 'energy'
+  | 'telecom'
+  | 'auto_insurance'
+  | 'home_insurance'
+  | 'health_insurance'
+  | 'credit_insurance'
+  | 'loan_payment'
+  | 'tax'
+  | 'salary'
+  | 'transfer'
+  | 'other'
+
 export interface RecurringSeries {
   id: number
   label: string
@@ -227,7 +243,11 @@ export interface RecurringSeries {
   next_due: string
   amount_type: 'fixed' | 'variable'
   status: 'active' | 'paused' | 'ended'
+  recurring_type: RecurringType
+  custom_type: string | null
+  credit_insurance_rate: string | null
   confidence: number
+  schedule_count: number
 }
 
 export interface RecurringDetectionProposal {
@@ -274,16 +294,36 @@ export interface RecurringChange {
 export interface Debt {
   id: number
   name: string
+  debt_type: 'consumer_credit' | 'mortgage' | 'other'
   principal: Money
   balance: Money
   interest_rate: string | null
   minimum_payment: Money | null
   account_id: number | null
+  recurring_series_id: number | null
+  recurring_series_name: string | null
   paid: Money
   progress: number
   due_date?: string | null
   color?: string
   archived?: boolean
+  schedule_count: number
+  next_schedule_date: string | null
+  next_schedule_balance: Money | null
+}
+
+export interface DebtScheduleEntry {
+  id: number
+  debt_id: number
+  due_date: string
+  remaining_balance: Money
+}
+
+export interface RecurringScheduleEntry {
+  id: number
+  series_id: number
+  due_date: string
+  amount: Money
 }
 
 export interface RealEstateAsset {

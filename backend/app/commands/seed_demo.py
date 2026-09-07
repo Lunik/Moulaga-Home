@@ -46,6 +46,7 @@ from ..models import (
     Category,
     Contribution,
     Debt,
+    DebtScheduleEntry,
     Goal,
     GoalContribution,
     Holding,
@@ -55,6 +56,7 @@ from ..models import (
     PortfolioSnapshot,
     RealEstateAsset,
     RecurringChange,
+    RecurringScheduleEntry,
     RecurringSeries,
     SharedAccountLink,
     Transaction,
@@ -79,6 +81,8 @@ class SeedResult:
     recurring: int
     changes: int
     debts: int
+    debt_schedule_entries: int
+    recurring_schedule_entries: int
     real_estate_assets: int
     holdings: int
     contributions: int
@@ -554,7 +558,7 @@ async def _seed(
     rent_series = RecurringSeries(
         label="Loyer", account_id=checking.id, category_id=logement.id, frequency="monthly",
         next_due=add_month(months[-1], 1).replace(day=3), amount=money("-750.00"),
-        amount_type="fixed", status="active", confidence=money("0.95"),
+        amount_type="fixed", status="active", recurring_type="rent", confidence=money("0.95"),
     )
     session.add(rent_series)
     await session.flush()
@@ -568,6 +572,7 @@ async def _seed(
             amount=money("-14.90"),
             amount_type="fixed",
             status="active",
+            recurring_type="subscription",
             confidence=money("1.00"),
         )
     )
@@ -581,8 +586,63 @@ async def _seed(
             amount=money("-95.00"),
             amount_type="variable",
             status="active",
+            recurring_type="energy",
             confidence=money("0.85"),
         )
+    )
+    loan_series = RecurringSeries(
+        label="Mensualite pret immobilier",
+        account_id=checking.id,
+        category_id=logement.id,
+        frequency="monthly",
+        next_due=add_month(anchor, 1).replace(day=15),
+        amount=money("-920.00"),
+        amount_type="fixed",
+        status="active",
+        recurring_type="loan_payment",
+        confidence=money("1.00"),
+    )
+    credit_insurance_series = RecurringSeries(
+        label="Assurance emprunteur",
+        account_id=checking.id,
+        category_id=logement.id,
+        frequency="monthly",
+        next_due=add_month(anchor, 1).replace(day=5),
+        amount=money("-34.80"),
+        amount_type="variable",
+        status="active",
+        recurring_type="credit_insurance",
+        credit_insurance_rate=Decimal("0.320"),
+        confidence=money("1.00"),
+    )
+    custom_series = RecurringSeries(
+        label="Cotisation associative",
+        account_id=checking.id,
+        category_id=loisirs.id,
+        frequency="yearly",
+        next_due=add_month(anchor, 2).replace(day=12),
+        amount=money("-45.00"),
+        amount_type="fixed",
+        status="active",
+        recurring_type="other",
+        custom_type="Cotisation associative",
+        confidence=money("1.00"),
+    )
+    session.add_all([loan_series, credit_insurance_series, custom_series])
+    await session.flush()
+    session.add_all(
+        [
+            RecurringScheduleEntry(
+                series_id=credit_insurance_series.id,
+                due_date=add_month(anchor, offset).replace(day=5),
+                amount=money(amount),
+            )
+            for offset, amount in (
+                (1, "-34.80"),
+                (2, "-34.55"),
+                (3, "-34.30"),
+            )
+        ]
     )
     session.add(
         RecurringChange(
@@ -595,10 +655,12 @@ async def _seed(
     # --- Debts ------------------------------------------------------------- #
     mortgage = Debt(
         name="Pret immobilier demo",
+        debt_type="mortgage",
         principal=money("210000.00"),
         balance=money("178000.00"),
         interest_rate=Decimal("2.10"),
         minimum_payment=money("920.00"),
+        recurring_series_id=loan_series.id,
         due_date=date(2042, 5, 15),
         color="#7c3aed",
         archived=False,
@@ -606,19 +668,36 @@ async def _seed(
     session.add_all(
         [
             mortgage,
-            Debt(name="Pret auto", principal=money("15000.00"), balance=money("8200.00"),
+            Debt(name="Pret auto", debt_type="consumer_credit",
+                 principal=money("15000.00"), balance=money("8200.00"),
                  interest_rate=Decimal("2.90"), minimum_payment=money("250.00"),
                  account_id=checking.id, due_date=add_month(anchor, 1).replace(day=5),
                  color="#ef4444", archived=False),
-            Debt(name="Pret etudiant", principal=money("6000.00"), balance=money("1500.00"),
+            Debt(name="Pret etudiant", debt_type="other",
+                 principal=money("6000.00"), balance=money("1500.00"),
                  interest_rate=Decimal("1.20"), minimum_payment=money("80.00"),
                  due_date=add_month(anchor, 2).replace(day=15), color="#f97316", archived=False),
-            Debt(name="Ancien pret solde", principal=money("2000.00"), balance=money("0.00"),
+            Debt(name="Ancien pret solde", debt_type="other",
+                 principal=money("2000.00"), balance=money("0.00"),
                  interest_rate=Decimal("0.00"), minimum_payment=money("0.00"),
                  color="#94a3b8", archived=True),
         ]
     )
     await session.flush()
+    session.add_all(
+        [
+            DebtScheduleEntry(
+                debt_id=mortgage.id,
+                due_date=add_month(anchor, offset).replace(day=15),
+                remaining_balance=money(balance),
+            )
+            for offset, balance in (
+                (1, "177250.00"),
+                (2, "176495.00"),
+                (3, "175735.00"),
+            )
+        ]
+    )
 
     # --- Real estate ------------------------------------------------------- #
     session.add_all(
@@ -799,9 +878,11 @@ async def _seed(
         snapshots=snapshot_count,
         categories=int(total_categories or 0),
         rules=2,
-        recurring=3,
+        recurring=6,
         changes=1,
         debts=4,
+        debt_schedule_entries=3,
+        recurring_schedule_entries=3,
         real_estate_assets=2,
         holdings=3,
         contributions=contribution_count,

@@ -426,6 +426,47 @@ export function StatusBadge({
   return <span className={`status-badge ${tone}`}>{children}</span>
 }
 
+export type LinkedEntityKind = 'real-estate' | 'debt' | 'recurring'
+
+export function linkedEntityTargetId(kind: LinkedEntityKind, id: number): string {
+  return `linked-${kind}-${id}`
+}
+
+export function useLinkedEntityFocus(
+  kind: LinkedEntityKind,
+  focusId: number | undefined,
+  ready: boolean,
+) {
+  useEffect(() => {
+    if (!focusId || !ready) return
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(linkedEntityTargetId(kind, focusId))
+      if (!target) return
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      target.focus({ preventScroll: true })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [focusId, kind, ready])
+}
+
+export function LinkedEntityLink({
+  href,
+  icon,
+  label,
+}: {
+  href: string
+  icon: IconName
+  label: string
+}) {
+  return (
+    <a className="linked-entity-link" href={href}>
+      <Icon name={icon} />
+      <span>{label}</span>
+      <Icon name="arrow" />
+    </a>
+  )
+}
+
 export function BetaBadge() {
   return (
     <span

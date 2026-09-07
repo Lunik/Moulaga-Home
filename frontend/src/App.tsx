@@ -147,6 +147,7 @@ export default function App() {
             {route.name === 'budget' && (
               <BudgetView
                 tab={route.tab}
+                focusId={route.focusId}
                 accounts={accounts.data ?? []}
                 categories={categories.data ?? []}
                 merchants={settings.data?.local_merchant_identities ? merchants.data ?? [] : []}
@@ -156,7 +157,14 @@ export default function App() {
                 onRefresh={refreshCore}
               />
             )}
-            {route.name === 'wealth' && <WealthView tab={route.tab} accounts={accounts.data ?? []} navigate={navigate} />}
+            {route.name === 'wealth' && (
+              <WealthView
+                tab={route.tab}
+                focusId={route.focusId}
+                accounts={accounts.data ?? []}
+                navigate={navigate}
+              />
+            )}
             {route.name === 'family' && <FamilyView accounts={accounts.data ?? []} />}
             {route.name === 'settings' && <SettingsView />}
           </Suspense>

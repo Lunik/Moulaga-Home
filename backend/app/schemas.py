@@ -545,6 +545,11 @@ class SuggestionResult(BaseModel):
 # Recurring series
 # --------------------------------------------------------------------------- #
 _FREQ = "^(weekly|monthly|quarterly|yearly)$"
+_RECURRING_TYPE = (
+    "^(uncategorized|subscription|rent|energy|telecom|auto_insurance|"
+    "home_insurance|health_insurance|credit_insurance|loan_payment|tax|"
+    "salary|transfer|other)$"
+)
 
 
 class RecurringCreate(BaseModel):
@@ -556,12 +561,33 @@ class RecurringCreate(BaseModel):
     amount: Decimal | None = Field(default=None, **_MONEY)
     amount_type: str = Field(default="fixed", pattern="^(fixed|variable)$")
     status: str = Field(default="active", pattern="^(active|paused|ended)$")
+    recurring_type: str = Field(default="uncategorized", pattern=_RECURRING_TYPE)
+    custom_type: str | None = Field(default=None, max_length=120)
+    credit_insurance_rate: Decimal | None = Field(
+        default=None, ge=0, le=100, max_digits=6, decimal_places=3
+    )
     confidence: Decimal = Field(default=Decimal("1.00"), ge=0, le=1)
 
     @field_validator("label")
     @classmethod
     def strip_label(cls, value: str) -> str:
         return _strip_required(value)
+
+    @field_validator("custom_type")
+    @classmethod
+    def strip_custom_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def validate_type_details(self) -> RecurringCreate:
+        if self.recurring_type == "other" and self.custom_type is None:
+            raise ValueError("Le type libre est requis lorsque le type « Autre » est sélectionné")
+        if self.recurring_type != "credit_insurance" and self.credit_insurance_rate is not None:
+            raise ValueError("Le taux est réservé aux assurances crédit")
+        return self
 
 
 class RecurringUpdate(BaseModel):
@@ -573,12 +599,25 @@ class RecurringUpdate(BaseModel):
     amount: Decimal | None = Field(default=None, **_MONEY)
     amount_type: str | None = Field(default=None, pattern="^(fixed|variable)$")
     status: str | None = Field(default=None, pattern="^(active|paused|ended)$")
+    recurring_type: str | None = Field(default=None, pattern=_RECURRING_TYPE)
+    custom_type: str | None = Field(default=None, max_length=120)
+    credit_insurance_rate: Decimal | None = Field(
+        default=None, ge=0, le=100, max_digits=6, decimal_places=3
+    )
     confidence: Decimal | None = Field(default=None, ge=0, le=1)
 
     @field_validator("label")
     @classmethod
     def strip_optional_label(cls, value: str | None) -> str | None:
         return _strip_required(value) if value is not None else None
+
+    @field_validator("custom_type")
+    @classmethod
+    def strip_optional_custom_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class RecurringRead(BaseModel):
@@ -593,9 +632,33 @@ class RecurringRead(BaseModel):
     amount: Decimal | None
     amount_type: str
     status: str
+    recurring_type: str
+    custom_type: str | None
+    credit_insurance_rate: Decimal | None
     confidence: Decimal
     account_name: str = ""
     category_name: str | None = None
+    schedule_count: int = 0
+
+
+class ScheduleImportRequest(BaseModel):
+    content: str = Field(max_length=100_000)
+
+
+class RecurringScheduleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    series_id: int
+    due_date: date
+    amount: Decimal
+
+
+class RecurringScheduleImportResult(BaseModel):
+    imported_count: int
+    created_count: int
+    updated_count: int
+    entries: list[RecurringScheduleRead]
 
 
 class DetectionProposal(BaseModel):
@@ -650,13 +713,18 @@ class DetectResult(BaseModel):
 # --------------------------------------------------------------------------- #
 # Wealth: debts, real estate, holdings, contributions, net worth
 # --------------------------------------------------------------------------- #
+_DEBT_TYPE = "^(consumer_credit|mortgage|other)$"
+
+
 class DebtCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    debt_type: str = Field(default="other", pattern=_DEBT_TYPE)
     principal: Decimal = Field(ge=0, **_MONEY)
     balance: Decimal = Field(ge=0, **_MONEY)
     interest_rate: Decimal | None = Field(default=None, ge=0, max_digits=5, decimal_places=2)
     minimum_payment: Decimal | None = Field(default=None, ge=0, **_MONEY)
     account_id: int | None = None
+    recurring_series_id: int | None = None
     due_date: date | None = None
     color: str = Field(default="#ef4444", pattern=HEX_COLOR)
 
@@ -668,14 +736,21 @@ class DebtCreate(BaseModel):
 
 class DebtUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
+    debt_type: str | None = Field(default=None, pattern=_DEBT_TYPE)
     principal: Decimal | None = Field(default=None, ge=0, **_MONEY)
     balance: Decimal | None = Field(default=None, ge=0, **_MONEY)
     interest_rate: Decimal | None = Field(default=None, ge=0, max_digits=5, decimal_places=2)
     minimum_payment: Decimal | None = Field(default=None, ge=0, **_MONEY)
     account_id: int | None = None
+    recurring_series_id: int | None = None
     due_date: date | None = None
     color: str | None = Field(default=None, pattern=HEX_COLOR)
     archived: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def strip_optional_name(cls, value: str | None) -> str | None:
+        return _strip_required(value) if value is not None else None
 
 
 class DebtRead(BaseModel):
@@ -683,16 +758,38 @@ class DebtRead(BaseModel):
 
     id: int
     name: str
+    debt_type: str
     principal: Decimal
     balance: Decimal
     interest_rate: Decimal | None
     minimum_payment: Decimal | None
     account_id: int | None
+    recurring_series_id: int | None
+    recurring_series_name: str | None = None
     due_date: date | None
     color: str
     archived: bool
     paid: Decimal
     progress: Decimal
+    schedule_count: int = 0
+    next_schedule_date: date | None = None
+    next_schedule_balance: Decimal | None = None
+
+
+class DebtScheduleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    debt_id: int
+    due_date: date
+    remaining_balance: Decimal
+
+
+class DebtScheduleImportResult(BaseModel):
+    imported_count: int
+    created_count: int
+    updated_count: int
+    entries: list[DebtScheduleRead]
 
 
 _PROPERTY_TYPE = (

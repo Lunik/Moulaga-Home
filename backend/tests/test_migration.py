@@ -144,7 +144,7 @@ def test_schema_version_is_stamped_and_idempotent(tmp_path, monkeypatch):
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     finally:
         connection.close()
-    assert version >= 11
+    assert version >= 12
 
     # Re-opening a current database performs no backup (nothing pending).
     with TestClient(main.create_app()):
@@ -245,7 +245,7 @@ def test_missing_table_is_recreated_after_safety_backup(tmp_path, monkeypatch):
         connection.close()
 
     assert table is not None
-    assert version >= 11
+    assert version >= 12
     assert list(tmp_path.glob("moulaga.backup-*.db"))
 
 
@@ -290,6 +290,101 @@ def test_legacy_rule_is_exposed_as_a_single_pattern_after_upgrade(tmp_path, monk
     finally:
         connection.close()
     assert "patterns_json" in columns
+    assert list(tmp_path.glob("moulaga.backup-*.db"))
+
+
+def test_recurring_and_debt_schema_upgrade_preserves_existing_rows(tmp_path, monkeypatch):
+    db_path = tmp_path / "moulaga.db"
+    _seed_legacy_db(db_path)
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE recurring_series (
+                id INTEGER PRIMARY KEY,
+                label VARCHAR(200) NOT NULL,
+                account_id INTEGER NOT NULL REFERENCES accounts(id),
+                category_id INTEGER REFERENCES categories(id),
+                frequency VARCHAR(16) NOT NULL DEFAULT 'monthly',
+                next_due DATE NOT NULL,
+                amount NUMERIC(12, 2),
+                amount_type VARCHAR(16) NOT NULL DEFAULT 'fixed',
+                status VARCHAR(16) NOT NULL DEFAULT 'active',
+                confidence NUMERIC(3, 2) NOT NULL DEFAULT '1.00',
+                match_key VARCHAR(64),
+                created_at DATETIME
+            );
+            CREATE TABLE debts (
+                id INTEGER PRIMARY KEY,
+                name VARCHAR(120) NOT NULL,
+                principal NUMERIC(12, 2) NOT NULL DEFAULT '0.00',
+                balance NUMERIC(12, 2) NOT NULL DEFAULT '0.00',
+                interest_rate NUMERIC(5, 2),
+                minimum_payment NUMERIC(12, 2),
+                account_id INTEGER REFERENCES accounts(id),
+                due_date DATE,
+                color VARCHAR(16) NOT NULL DEFAULT '#ef4444',
+                archived BOOLEAN NOT NULL DEFAULT 0,
+                created_at DATETIME
+            );
+            INSERT INTO recurring_series (
+                id, label, account_id, frequency, next_due, amount,
+                amount_type, status, confidence
+            ) VALUES (
+                1, 'Serie historique', 1, 'monthly', '2026-10-01',
+                '-25.00', 'fixed', 'active', '1.00'
+            );
+            INSERT INTO debts (
+                id, name, principal, balance, minimum_payment, account_id,
+                due_date, color, archived
+            ) VALUES (
+                1, 'Dette historique', '1000.00', '750.00', '50.00', 1,
+                '2028-01-01', '#ef4444', 0
+            );
+            PRAGMA user_version = 9;
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        recurring = client.get("/api/recurring").json()
+        assert recurring[0]["label"] == "Serie historique"
+        assert recurring[0]["recurring_type"] == "uncategorized"
+        assert recurring[0]["schedule_count"] == 0
+        debts = client.get("/api/debts").json()
+        assert debts[0]["name"] == "Dette historique"
+        assert debts[0]["debt_type"] == "other"
+        assert debts[0]["recurring_series_id"] is None
+        assert debts[0]["schedule_count"] == 0
+
+    connection = sqlite3.connect(db_path)
+    try:
+        recurring_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(recurring_series)")
+        }
+        debt_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(debts)")
+        }
+        schedule_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name IN ('recurring_schedule_entries', 'debt_schedule_entries')"
+            )
+        }
+    finally:
+        connection.close()
+
+    assert {
+        "recurring_type",
+        "custom_type",
+        "credit_insurance_rate",
+    } <= recurring_columns
+    assert {"debt_type", "recurring_series_id"} <= debt_columns
+    assert schedule_tables == {"recurring_schedule_entries", "debt_schedule_entries"}
     assert list(tmp_path.glob("moulaga.backup-*.db"))
 
 

@@ -24,6 +24,8 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
     assert result.transactions > 100
     assert result.snapshots == 309
     assert result.debts == 4
+    assert result.debt_schedule_entries == 3
+    assert result.recurring_schedule_entries == 3
     assert result.real_estate_assets == 2
     assert result.holdings == 3
     assert result.households == 1
@@ -56,7 +58,13 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         )["type"] == "wallet"
         assert savings["savings_product"] == "Livret A"
         assert savings["legal_cap"] == "22950.00"
-        assert client.get("/api/debts").json()
+        debts = client.get("/api/debts").json()
+        mortgage = next(debt for debt in debts if debt["debt_type"] == "mortgage")
+        assert mortgage["recurring_series_name"] == "Mensualite pret immobilier"
+        assert mortgage["schedule_count"] == 3
+        assert mortgage["next_schedule_date"]
+        assert mortgage["next_schedule_balance"]
+        assert len(client.get(f"/api/debts/{mortgage['id']}/schedule").json()) == 3
         real_estate = client.get("/api/real-estate").json()
         assert len(real_estate) == 2
         apartment = next(asset for asset in real_estate if asset["name"] == "Appartement demo")
@@ -78,8 +86,20 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         rules = client.get("/api/rules").json()
         assert any(len(rule["patterns"]) >= 3 for rule in rules)
         recurring = client.get("/api/recurring").json()
-        assert len(recurring) == 3
+        assert len(recurring) == 6
         assert any(series["amount_type"] == "variable" for series in recurring)
+        insurance = next(
+            series for series in recurring if series["recurring_type"] == "credit_insurance"
+        )
+        assert insurance["credit_insurance_rate"] == "0.320"
+        assert insurance["schedule_count"] == 3
+        assert len(
+            client.get(f"/api/recurring/{insurance['id']}/schedule").json()
+        ) == 3
+        assert any(
+            series["recurring_type"] == "other" and series["custom_type"]
+            for series in recurring
+        )
         assert client.get("/api/recurring/detect").json()
         envelopes = client.get("/api/budget/envelopes").json()
         unlimited = next(envelope for envelope in envelopes if envelope["category_name"] == "Transport")

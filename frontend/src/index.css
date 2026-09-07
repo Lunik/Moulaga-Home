@@ -357,6 +357,60 @@ textarea:focus-visible {
   font-size: 0.82rem;
 }
 
+.linked-entities {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.linked-entity-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 1.8rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid rgb(111 131 255 / 28%);
+  border-radius: 999px;
+  background: rgb(49 74 200 / 12%);
+  color: var(--text);
+  font-size: 0.68rem;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.linked-entity-link:hover {
+  border-color: rgb(111 131 255 / 55%);
+  background: rgb(49 74 200 / 22%);
+}
+
+.linked-entity-link:focus-visible {
+  outline: 2px solid #6f83ff;
+  outline-offset: 2px;
+}
+
+.linked-entity-link .app-icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: #8fa0ff;
+}
+
+.linked-entity-link .app-icon:last-child {
+  width: 0.7rem;
+  height: 0.7rem;
+  color: var(--muted);
+}
+
+.linked-entity-target {
+  scroll-margin-block: 6rem;
+  outline: 2px solid rgb(111 131 255 / 85%);
+  outline-offset: 3px;
+  background: rgb(49 74 200 / 10%) !important;
+  box-shadow: 0 0 0.9rem rgb(49 74 200 / 20%);
+}
+
 .view-stack {
   display: flex;
   flex-direction: column;
@@ -470,6 +524,18 @@ textarea:focus-visible {
 .modal-form {
   display: grid;
   gap: 0.9rem;
+}
+
+.modal-card:has(.debt-modal-form) {
+  width: min(44rem, 100%);
+}
+
+.debt-modal-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.debt-modal-wide {
+  grid-column: 1 / -1;
 }
 
 .snapshot-import-form {
@@ -2633,6 +2699,10 @@ textarea:focus-visible {
   text-align: right;
 }
 
+.property-links {
+  justify-content: flex-end;
+}
+
 .property-value strong,
 .property-equity strong {
   margin: 0.2rem 0;
@@ -2691,6 +2761,7 @@ textarea:focus-visible {
 
 .debt-head span {
   gap: 0.55rem;
+  flex-wrap: wrap;
 }
 
 .debt-head i {
@@ -2701,10 +2772,15 @@ textarea:focus-visible {
 
 .debt-meta {
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 1rem;
   margin-top: 0.55rem;
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.debt-links {
+  margin-top: 0;
 }
 
 .compact-debts {
@@ -4223,6 +4299,7 @@ html[data-theme="light"] .status-badge {
   .transaction-toolbar,
   .transaction-modal-grid,
   .holding-modal-grid,
+  .debt-modal-form,
   .feature-form,
   .filter-row {
     grid-template-columns: minmax(0, 1fr);
@@ -4321,6 +4398,10 @@ html[data-theme="light"] .status-badge {
   .real-estate-list .property-equity {
     grid-column: 2 / -1;
     text-align: left;
+  }
+
+  .property-links {
+    justify-content: flex-start;
   }
 
   .real-estate-list article > .row-actions {

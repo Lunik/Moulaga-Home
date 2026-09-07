@@ -7,7 +7,7 @@ All data below is synthetic and contains no real banking information.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from conftest import load_app
@@ -1543,6 +1543,8 @@ def test_recurring_series_can_be_fully_updated(client):
             "amount": "-42.50",
             "amount_type": "variable",
             "status": "paused",
+            "recurring_type": "other",
+            "custom_type": "Service spécialisé",
         },
     )
 
@@ -1557,6 +1559,112 @@ def test_recurring_series_can_be_fully_updated(client):
     assert updated["amount"] == "-42.50"
     assert updated["amount_type"] == "variable"
     assert updated["status"] == "paused"
+    assert updated["recurring_type"] == "other"
+    assert updated["custom_type"] == "Service spécialisé"
+
+
+def test_credit_insurance_schedule_import_drives_forecast(client):
+    account_id = _account_id(client)
+    first_due = date.today() + timedelta(days=10)
+    second_due = date.today() + timedelta(days=70)
+    series = client.post(
+        "/api/recurring",
+        json={
+            "label": "Assurance emprunteur",
+            "account_id": account_id,
+            "frequency": "monthly",
+            "next_due": first_due.isoformat(),
+            "amount": "-35.00",
+            "amount_type": "variable",
+            "recurring_type": "credit_insurance",
+            "credit_insurance_rate": "0.320",
+        },
+    ).json()
+
+    imported = client.post(
+        f"/api/recurring/{series['id']}/schedule/import",
+        json={
+            "content": (
+                "Date\tCotisation\n"
+                f"{first_due.strftime('%d/%m/%Y')}\t34,80 €\n"
+                f"{second_due.strftime('%d/%m/%Y')}\t34,55 €"
+            )
+        },
+    )
+
+    assert imported.status_code == 200
+    assert imported.json()["created_count"] == 2
+    assert [entry["amount"] for entry in imported.json()["entries"]] == [
+        "-34.80",
+        "-34.55",
+    ]
+    refreshed = next(
+        item for item in client.get("/api/recurring").json() if item["id"] == series["id"]
+    )
+    assert refreshed["credit_insurance_rate"] == "0.320"
+    assert refreshed["schedule_count"] == 2
+    assert refreshed["next_due"] == first_due.isoformat()
+    assert refreshed["amount"] == "-34.80"
+
+    reimported = client.post(
+        f"/api/recurring/{series['id']}/schedule/import",
+        json={"content": f"{second_due.strftime('%d/%m/%Y')}\t33,95 €"},
+    )
+    assert reimported.status_code == 200
+    assert reimported.json()["created_count"] == 0
+    assert reimported.json()["updated_count"] == 1
+    refreshed = next(
+        item for item in client.get("/api/recurring").json() if item["id"] == series["id"]
+    )
+    assert refreshed["next_due"] == first_due.isoformat()
+    assert refreshed["amount"] == "-34.80"
+
+    forecast = client.get("/api/recurring/forecast", params={"months": 3}).json()
+    insurance_points = [point for point in forecast if point["series_id"] == series["id"]]
+    assert [(point["due_date"], point["amount"]) for point in insurance_points] == [
+        (first_due.isoformat(), "-34.80"),
+        (second_due.isoformat(), "-33.95"),
+    ]
+    overview = client.get(
+        "/api/budget/overview",
+        params={"on": first_due.isoformat()},
+    ).json()
+    assert overview["upcoming_recurring_count"] == 1
+    assert overview["upcoming_recurring_amount"] == "-34.80"
+
+    invalid = client.post(
+        f"/api/recurring/{series['id']}/schedule/import",
+        json={"content": "date invalide\t10,00"},
+    )
+    assert invalid.status_code == 422
+    assert len(client.get(f"/api/recurring/{series['id']}/schedule").json()) == 2
+
+    regular = client.post(
+        "/api/recurring",
+        json={
+            "label": "Abonnement",
+            "account_id": account_id,
+            "frequency": "monthly",
+            "next_due": first_due.isoformat(),
+            "amount": "-10.00",
+            "recurring_type": "subscription",
+        },
+    ).json()
+    assert client.post(
+        f"/api/recurring/{regular['id']}/schedule/import",
+        json={"content": f"{first_due.strftime('%d/%m/%Y')}\t10,00"},
+    ).status_code == 422
+    assert client.post(
+        "/api/recurring",
+        json={
+            "label": "Type libre incomplet",
+            "account_id": account_id,
+            "frequency": "monthly",
+            "next_due": first_due.isoformat(),
+            "amount": "-10.00",
+            "recurring_type": "other",
+        },
+    ).status_code == 422
 
 
 # --------------------------------------------------------------------------- #
@@ -1668,6 +1776,124 @@ def test_holdings_require_supported_accounts_and_allow_full_update(client):
         item["id"] == holding["id"]
         for item in life_insurance_holdings
     )
+
+
+def test_debt_full_update_association_and_schedule_import(client):
+    account_id = _account_id(client)
+    due = date.today() + timedelta(days=20)
+    series = client.post(
+        "/api/recurring",
+        json={
+            "label": "Mensualité crédit",
+            "account_id": account_id,
+            "frequency": "monthly",
+            "next_due": due.isoformat(),
+            "amount": "-850.00",
+            "recurring_type": "loan_payment",
+        },
+    ).json()
+    debt = client.post(
+        "/api/debts",
+        json={
+            "name": "Prêt immobilier synthétique",
+            "debt_type": "mortgage",
+            "principal": "200000.00",
+            "balance": "175000.00",
+            "interest_rate": "2.10",
+            "minimum_payment": "850.00",
+            "account_id": account_id,
+            "recurring_series_id": series["id"],
+            "due_date": "2042-05-15",
+            "color": "#7c3aed",
+        },
+    )
+    assert debt.status_code == 201
+    assert debt.json()["recurring_series_name"] == "Mensualité crédit"
+
+    first_due = date.today() + timedelta(days=30)
+    second_due = date.today() + timedelta(days=60)
+    imported = client.post(
+        f"/api/debts/{debt.json()['id']}/schedule/import",
+        json={
+            "content": (
+                "Date\tCapital restant dû\n"
+                f"{first_due.strftime('%d/%m/%Y')}\t174 250,00 €\n"
+                f"{second_due.strftime('%d/%m/%Y')}\t173 495,25 €"
+            )
+        },
+    )
+    assert imported.status_code == 200
+    assert imported.json()["created_count"] == 2
+    assert [entry["remaining_balance"] for entry in imported.json()["entries"]] == [
+        "174250.00",
+        "173495.25",
+    ]
+    listed_debt = next(
+        item for item in client.get("/api/debts").json() if item["id"] == debt.json()["id"]
+    )
+    assert listed_debt["schedule_count"] == 2
+    assert listed_debt["next_schedule_date"] == first_due.isoformat()
+    assert listed_debt["next_schedule_balance"] == "174250.00"
+
+    reimported = client.post(
+        f"/api/debts/{debt.json()['id']}/schedule/import",
+        json={"content": f"{first_due.strftime('%d/%m/%Y')}\t174 100,00 €"},
+    )
+    assert reimported.status_code == 200
+    assert reimported.json()["created_count"] == 0
+    assert reimported.json()["updated_count"] == 1
+    assert reimported.json()["entries"][0]["remaining_balance"] == "174100.00"
+
+    updated = client.patch(
+        f"/api/debts/{debt.json()['id']}",
+        json={
+            "name": "Crédit habitat mis à jour",
+            "debt_type": "consumer_credit",
+            "principal": "190000.00",
+            "balance": "170000.00",
+            "interest_rate": None,
+            "minimum_payment": "825.00",
+            "account_id": None,
+            "recurring_series_id": None,
+            "due_date": "2041-12-31",
+            "color": "#ef4444",
+            "archived": True,
+        },
+    )
+    assert updated.status_code == 200
+    expected_fields = {
+        "name": "Crédit habitat mis à jour",
+        "debt_type": "consumer_credit",
+        "principal": "190000.00",
+        "balance": "170000.00",
+        "interest_rate": None,
+        "minimum_payment": "825.00",
+        "account_id": None,
+        "recurring_series_id": None,
+        "recurring_series_name": None,
+        "due_date": "2041-12-31",
+        "color": "#ef4444",
+        "archived": True,
+        "schedule_count": 2,
+    }
+    assert {
+        field: updated.json()[field]
+        for field in expected_fields
+    } == expected_fields
+
+    other = client.post(
+        "/api/debts",
+        json={
+            "name": "Dette diverse",
+            "debt_type": "other",
+            "principal": "100.00",
+            "balance": "50.00",
+        },
+    ).json()
+    assert client.post(
+        f"/api/debts/{other['id']}/schedule/import",
+        json={"content": f"{first_due.strftime('%d/%m/%Y')}\t40,00"},
+    ).status_code == 422
 
 
 def test_holdings_portfolio_and_networth_no_double_count(client):

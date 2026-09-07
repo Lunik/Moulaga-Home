@@ -7,20 +7,24 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..account_access import require_account, require_holding_account
 from ..account_balances import account_balances
 from ..common import local_today, money
+from ..dated_amount_import import DatedAmountImportError, parse_dated_amount_tsv
 from ..db import get_session
 from ..models import (
     Account,
     BalanceSnapshot,
     Contribution,
     Debt,
+    DebtScheduleEntry,
     Holding,
     PortfolioSnapshot,
     RealEstateAsset,
+    RecurringSeries,
 )
 from ..schemas import (
     AllocationSlice,
@@ -29,6 +33,8 @@ from ..schemas import (
     ContributionRead,
     DebtCreate,
     DebtRead,
+    DebtScheduleImportResult,
+    DebtScheduleRead,
     DebtUpdate,
     HoldingCreate,
     HoldingRead,
@@ -42,6 +48,7 @@ from ..schemas import (
     RealEstateCreate,
     RealEstateRead,
     RealEstateUpdate,
+    ScheduleImportRequest,
 )
 
 router = APIRouter(tags=["wealth"])
@@ -50,7 +57,16 @@ router = APIRouter(tags=["wealth"])
 # --------------------------------------------------------------------------- #
 # Debts
 # --------------------------------------------------------------------------- #
-def _debt_read(debt: Debt) -> DebtRead:
+_SCHEDULED_DEBT_TYPES = frozenset({"consumer_credit", "mortgage"})
+
+
+def _debt_read(
+    debt: Debt,
+    *,
+    recurring_series_name: str | None = None,
+    schedule_count: int = 0,
+    next_schedule: DebtScheduleEntry | None = None,
+) -> DebtRead:
     principal = Decimal(debt.principal)
     balance = Decimal(debt.balance)
     paid = money(principal - balance)
@@ -58,68 +74,261 @@ def _debt_read(debt: Debt) -> DebtRead:
     return DebtRead(
         id=debt.id,
         name=debt.name,
+        debt_type=debt.debt_type,
         principal=money(principal),
         balance=money(balance),
         interest_rate=debt.interest_rate,
         minimum_payment=debt.minimum_payment,
         account_id=debt.account_id,
+        recurring_series_id=debt.recurring_series_id,
+        recurring_series_name=recurring_series_name,
         due_date=debt.due_date,
         color=debt.color,
         archived=debt.archived,
         paid=paid,
         progress=progress,
+        schedule_count=schedule_count,
+        next_schedule_date=next_schedule.due_date if next_schedule else None,
+        next_schedule_balance=next_schedule.remaining_balance if next_schedule else None,
+    )
+
+
+async def _require_debt(session: AsyncSession, debt_id: int) -> Debt:
+    debt = await session.get(Debt, debt_id)
+    if debt is None:
+        raise HTTPException(status_code=404, detail="Dette introuvable")
+    return debt
+
+
+async def _require_recurring_series(
+    session: AsyncSession,
+    series_id: int,
+) -> RecurringSeries:
+    series = await session.get(RecurringSeries, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="Série récurrente introuvable")
+    return series
+
+
+async def _debt_response(session: AsyncSession, debt: Debt) -> DebtRead:
+    recurring_series_name = None
+    if debt.recurring_series_id is not None:
+        series = await session.get(RecurringSeries, debt.recurring_series_id)
+        recurring_series_name = series.label if series else None
+    schedule_count = await session.scalar(
+        select(func.count())
+        .select_from(DebtScheduleEntry)
+        .where(DebtScheduleEntry.debt_id == debt.id)
+    )
+    next_schedule = await session.scalar(
+        select(DebtScheduleEntry)
+        .where(
+            DebtScheduleEntry.debt_id == debt.id,
+            DebtScheduleEntry.due_date >= local_today(),
+        )
+        .order_by(DebtScheduleEntry.due_date)
+        .limit(1)
+    )
+    return _debt_read(
+        debt,
+        recurring_series_name=recurring_series_name,
+        schedule_count=int(schedule_count or 0),
+        next_schedule=next_schedule,
     )
 
 
 @router.get("/debts", response_model=list[DebtRead])
 async def list_debts(session: AsyncSession = Depends(get_session)) -> list[DebtRead]:
     rows = (await session.execute(select(Debt).order_by(Debt.name))).scalars().all()
-    return [_debt_read(row) for row in rows]
+    recurring_names = {
+        series.id: series.label
+        for series in (await session.execute(select(RecurringSeries))).scalars().all()
+    }
+    schedule_counts = {
+        debt_id: count
+        for debt_id, count in (
+            await session.execute(
+                select(DebtScheduleEntry.debt_id, func.count())
+                .group_by(DebtScheduleEntry.debt_id)
+            )
+        ).all()
+    }
+    next_schedules: dict[int, DebtScheduleEntry] = {}
+    for entry in (
+        await session.execute(
+            select(DebtScheduleEntry)
+            .where(DebtScheduleEntry.due_date >= local_today())
+            .order_by(DebtScheduleEntry.due_date)
+        )
+    ).scalars().all():
+        next_schedules.setdefault(entry.debt_id, entry)
+    return [
+        _debt_read(
+            row,
+            recurring_series_name=recurring_names.get(row.recurring_series_id),
+            schedule_count=int(schedule_counts.get(row.id, 0)),
+            next_schedule=next_schedules.get(row.id),
+        )
+        for row in rows
+    ]
 
 
 @router.post("/debts", response_model=DebtRead, status_code=201)
 async def create_debt(payload: DebtCreate, session: AsyncSession = Depends(get_session)) -> DebtRead:
     if payload.account_id is not None:
         await require_account(session, payload.account_id, writable=True)
+    if payload.recurring_series_id is not None:
+        await _require_recurring_series(session, payload.recurring_series_id)
     if payload.balance > payload.principal:
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
     debt = Debt(**payload.model_dump())
     session.add(debt)
     await session.commit()
     await session.refresh(debt)
-    return _debt_read(debt)
+    return await _debt_response(session, debt)
 
 
 @router.patch("/debts/{debt_id}", response_model=DebtRead)
 async def update_debt(
     debt_id: int, payload: DebtUpdate, session: AsyncSession = Depends(get_session)
 ) -> DebtRead:
-    debt = await session.get(Debt, debt_id)
-    if debt is None:
-        raise HTTPException(status_code=404, detail="Dette introuvable")
+    debt = await _require_debt(session, debt_id)
     if debt.account_id is not None:
         await require_account(session, debt.account_id, writable=True)
     data = payload.model_dump(exclude_unset=True)
     if data.get("account_id") is not None:
         await require_account(session, data["account_id"], writable=True)
+    if data.get("recurring_series_id") is not None:
+        await _require_recurring_series(session, data["recurring_series_id"])
+    for required_field in ("name", "debt_type", "principal", "balance", "color", "archived"):
+        if required_field in data and data[required_field] is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Le champ {required_field} ne peut pas être nul",
+            )
     for field, value in data.items():
         setattr(debt, field, value)
     if Decimal(debt.balance) > Decimal(debt.principal):
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
     await session.commit()
     await session.refresh(debt)
-    return _debt_read(debt)
+    return await _debt_response(session, debt)
 
 
 @router.delete("/debts/{debt_id}", status_code=204)
 async def delete_debt(debt_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    debt = await session.get(Debt, debt_id)
-    if debt is None:
-        raise HTTPException(status_code=404, detail="Dette introuvable")
+    debt = await _require_debt(session, debt_id)
     if debt.account_id is not None:
         await require_account(session, debt.account_id, writable=True)
     await session.delete(debt)
     await session.commit()
+
+
+@router.get(
+    "/debts/{debt_id}/schedule",
+    response_model=list[DebtScheduleRead],
+)
+async def list_debt_schedule(
+    debt_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[DebtScheduleEntry]:
+    await _require_debt(session, debt_id)
+    return list(
+        (
+            await session.execute(
+                select(DebtScheduleEntry)
+                .where(DebtScheduleEntry.debt_id == debt_id)
+                .order_by(DebtScheduleEntry.due_date)
+            )
+        ).scalars().all()
+    )
+
+
+@router.post(
+    "/debts/{debt_id}/schedule/import",
+    response_model=DebtScheduleImportResult,
+)
+async def import_debt_schedule(
+    debt_id: int,
+    payload: ScheduleImportRequest,
+    session: AsyncSession = Depends(get_session),
+) -> DebtScheduleImportResult:
+    debt = await _require_debt(session, debt_id)
+    if debt.account_id is not None:
+        await require_account(session, debt.account_id, writable=True)
+    if debt.debt_type not in _SCHEDULED_DEBT_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "L'import d'un échéancier est réservé aux crédits à la consommation "
+                "et aux prêts immobiliers"
+            ),
+        )
+    try:
+        rows = parse_dated_amount_tsv(
+            payload.content,
+            amount_headers=frozenset(
+                {
+                    "montant",
+                    "solde",
+                    "capital restant",
+                    "capital restant dû",
+                    "capital restant du",
+                }
+            ),
+        )
+    except DatedAmountImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    negative = next((row for row in rows if row.amount < 0), None)
+    if negative is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Ligne {negative.source_line} : le capital restant dû "
+                "ne peut pas être négatif."
+            ),
+        )
+
+    dates = {row.due_date for row in rows}
+    existing_by_date = {
+        entry.due_date: entry
+        for entry in (
+            await session.execute(
+                select(DebtScheduleEntry).where(
+                    DebtScheduleEntry.debt_id == debt_id,
+                    DebtScheduleEntry.due_date.in_(dates),
+                )
+            )
+        ).scalars().all()
+    }
+    created_count = 0
+    updated_count = 0
+    for row in rows:
+        entry = existing_by_date.get(row.due_date)
+        if entry is None:
+            entry = DebtScheduleEntry(debt_id=debt_id, due_date=row.due_date)
+            session.add(entry)
+            created_count += 1
+        else:
+            updated_count += 1
+        entry.remaining_balance = money(row.amount)
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Une échéance existe déjà pour l'une des dates importées.",
+        ) from exc
+
+    entries = await list_debt_schedule(debt_id, session)
+    return DebtScheduleImportResult(
+        imported_count=len(rows),
+        created_count=created_count,
+        updated_count=updated_count,
+        entries=[DebtScheduleRead.model_validate(entry) for entry in entries],
+    )
 
 
 # --------------------------------------------------------------------------- #

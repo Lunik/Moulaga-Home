@@ -31,7 +31,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Columns that may be missing on databases created before this schema version.
 # Values are the SQLite column definitions used by ``ALTER TABLE ADD COLUMN``.
@@ -57,7 +57,16 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     "categorization_rules": {
         "patterns_json": "TEXT",
     },
+    "recurring_series": {
+        "recurring_type": "VARCHAR(32) DEFAULT 'uncategorized' NOT NULL",
+        "custom_type": "VARCHAR(120)",
+        "credit_insurance_rate": "NUMERIC(6, 3)",
+    },
     "debts": {
+        "debt_type": "VARCHAR(32) DEFAULT 'other' NOT NULL",
+        "recurring_series_id": (
+            "INTEGER REFERENCES recurring_series(id) ON DELETE SET NULL"
+        ),
         "due_date": "DATE",
         "color": "VARCHAR(16) DEFAULT '#ef4444' NOT NULL",
         "archived": "BOOLEAN DEFAULT 0 NOT NULL",
