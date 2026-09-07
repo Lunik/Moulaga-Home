@@ -135,6 +135,16 @@ type InstitutionChartRow = {
   [key: string]: string | number
 }
 
+const institutionHistoryRanges = [
+  { value: '6m', label: '6M', description: '6 derniers mois', months: 6 },
+  { value: '1y', label: '1A', description: '1 an', months: 12 },
+  { value: '3y', label: '3A', description: '3 dernières années', months: 36 },
+  { value: '5y', label: '5A', description: '5 dernières années', months: 60 },
+  { value: 'max', label: 'Max', description: 'Depuis toujours', months: null },
+] as const
+
+type InstitutionHistoryRange = (typeof institutionHistoryRanges)[number]['value']
+
 function buildInstitutionChart(history: AccountInstitutionHistoryPoint[]) {
   const institutions = [...new Set(history.map((point) => point.institution))]
     .sort((left, right) => left.localeCompare(right, 'fr'))
@@ -165,6 +175,22 @@ function buildInstitutionChart(history: AccountInstitutionHistoryPoint[]) {
   }
 }
 
+function filterInstitutionChartData(
+  data: InstitutionChartRow[],
+  months: number | null,
+) {
+  if (months === null || data.length === 0) return data
+
+  const latestPeriod = data[data.length - 1].period
+  const [latestYear, latestMonth] = latestPeriod.split('-').map(Number)
+  const firstMonthIndex = latestYear * 12 + latestMonth - months
+
+  return data.filter((row) => {
+    const [year, month] = row.period.split('-').map(Number)
+    return year * 12 + month - 1 >= firstMonthIndex
+  })
+}
+
 export function AccountsView({
   accounts,
   navigate,
@@ -177,6 +203,8 @@ export function AccountsView({
   const [showForm, setShowForm] = useState(false)
   const [typeFilter, setTypeFilter] = useState('all')
   const [showArchived, setShowArchived] = useState(false)
+  const [institutionHistoryRange, setInstitutionHistoryRange] =
+    useState<InstitutionHistoryRange>('max')
   const [collapsedInstitutions, setCollapsedInstitutions] = useState<Set<string>>(new Set())
   const institutionHistory = useQuery({
     queryKey: ['account-institution-history', showArchived, typeFilter],
@@ -204,9 +232,19 @@ export function AccountsView({
     }, {}),
   ).sort(([left], [right]) => left.localeCompare(right, 'fr'))
   const {
-    data: institutionChartData,
+    data: allInstitutionChartData,
     series: institutionChartSeries,
   } = buildInstitutionChart(institutionHistory.data ?? [])
+  const activeInstitutionHistoryRange = institutionHistoryRanges.find(
+    (range) => range.value === institutionHistoryRange,
+  ) ?? institutionHistoryRanges[institutionHistoryRanges.length - 1]
+  const institutionChartData = filterInstitutionChartData(
+    allInstitutionChartData,
+    activeInstitutionHistoryRange.months,
+  )
+  const visibleInstitutionChartSeries = institutionChartSeries.filter((series) => (
+    institutionChartData.some((row) => series.dataKey in row)
+  ))
   const toggleInstitution = (institution: string) => {
     setCollapsedInstitutions((current) => {
       const next = new Set(current)
@@ -270,16 +308,38 @@ export function AccountsView({
       </div>
 
       <Panel
+        action={(
+          <div
+            aria-label="Période affichée"
+            className="segmented-control account-history-range-selector"
+            role="group"
+          >
+            {institutionHistoryRanges.map((range) => (
+              <button
+                aria-label={range.description}
+                aria-pressed={institutionHistoryRange === range.value}
+                className={institutionHistoryRange === range.value ? 'active' : ''}
+                key={range.value}
+                title={range.description}
+                type="button"
+                onClick={() => setInstitutionHistoryRange(range.value)}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
+        )}
+        className="account-history-panel"
         title="Évolution des soldes par établissement"
         subtitle="Somme des relevés mensuels des comptes affichés"
       >
-        {institutionChartSeries.length > 0 && (
+        {visibleInstitutionChartSeries.length > 0 && (
           <div
             aria-label="Établissements représentés"
             className="chart-legend institution-history-legend"
             role="list"
           >
-            {institutionChartSeries.map((series) => (
+            {visibleInstitutionChartSeries.map((series) => (
               <span key={series.dataKey} role="listitem">
                 <i className="legend-line" style={{ background: series.color }} />
                 {series.institution}
@@ -297,6 +357,8 @@ export function AccountsView({
           ) : institutionChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
+                accessibilityLayer
+                aria-label={`Évolution des soldes par établissement, ${activeInstitutionHistoryRange.description.toLowerCase()}`}
                 data={institutionChartData}
                 margin={{ top: 12, right: 18, bottom: 4, left: 0 }}
               >
@@ -319,7 +381,7 @@ export function AccountsView({
                   formatter={(value) => money(Number(value))}
                   labelFormatter={(label) => `Période ${label}`}
                 />
-                {institutionChartSeries.map((series) => (
+                {visibleInstitutionChartSeries.map((series) => (
                   <Line
                     connectNulls
                     dataKey={series.dataKey}

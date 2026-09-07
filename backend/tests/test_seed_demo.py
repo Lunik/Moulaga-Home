@@ -22,7 +22,7 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
     result = asyncio.run(seed.seed_demo())
     assert result.accounts == 10
     assert result.transactions > 100
-    assert result.snapshots == 33
+    assert result.snapshots == 309
     assert result.debts == 4
     assert result.real_estate_assets == 1
     assert result.holdings == 2
@@ -300,10 +300,14 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         assert boursobank_flow["outflow"] == "330.00"
         assert boursobank_flow["net"] == "170.00"
 
-        for account in (boursobank_checking, life_insurance, pea, peg, percol, crypto_wallet):
+        for account in (life_insurance, pea, percol):
             assert len(
                 client.get(f"/api/accounts/{account['id']}/snapshots").json()
             ) == 4
+        for account in (checking, boursobank_checking, peg, crypto_wallet):
+            assert len(
+                client.get(f"/api/accounts/{account['id']}/snapshots").json()
+            ) == 73
 
         institution_history = client.get(
             "/api/accounts/institution-history"
@@ -314,7 +318,12 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         assert sum(
             point["institution"] == "Boursobank"
             for point in institution_history
-        ) == 4
+        ) == 73
+        history_periods = sorted({point["period"] for point in institution_history})
+        assert len(history_periods) == 73
+        oldest_year, oldest_month = map(int, history_periods[0].split("-"))
+        latest_year, latest_month = map(int, history_periods[-1].split("-"))
+        assert (latest_year - oldest_year) * 12 + latest_month - oldest_month == 72
         latest_period = max(point["period"] for point in institution_history)
         assert next(
             point["balance"]

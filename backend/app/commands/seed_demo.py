@@ -451,6 +451,26 @@ async def _seed(
         (percol, ("9 200,00 €", "9 800,00 €", "10 400,00 €", "11 200,00 €")),
     ]
     snapshot_count = 0
+    historical_months = [
+        add_month(anchor, -offset) for offset in range(72, 3, -1)
+    ]
+    historical_snapshot_series = [
+        (checking, Decimal("1400.00"), Decimal("12.00")),
+        (boursobank_checking, Decimal("1100.00"), Decimal("17.00")),
+        (peg, Decimal("2500.00"), Decimal("58.00")),
+        (crypto_wallet, Decimal("900.00"), Decimal("38.00")),
+    ]
+    for account, opening_balance, monthly_growth in historical_snapshot_series:
+        session.add_all(
+            BalanceSnapshot(
+                account_id=account.id,
+                period=month.strftime("%Y-%m"),
+                balance=money(opening_balance + monthly_growth * index),
+            )
+            for index, month in enumerate(historical_months)
+        )
+        snapshot_count += len(historical_months)
+
     latest_savings_snapshot: BalanceSnapshot | None = None
     for index, month in enumerate(months):
         checking_running += checking_monthly_deltas[month]

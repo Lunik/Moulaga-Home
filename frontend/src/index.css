@@ -702,6 +702,17 @@ textarea:focus-visible {
   margin-bottom: 0.75rem;
 }
 
+.account-history-range-selector {
+  min-width: 17rem;
+  padding: 0.25rem;
+}
+
+.account-history-range-selector button {
+  min-height: 2.15rem;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.72rem;
+}
+
 .legend-line {
   width: 1.35rem;
   height: 2px;
@@ -4093,6 +4104,20 @@ html[data-theme="light"] .status-badge {
   .section-intro {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .account-history-panel .panel-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .account-history-range-selector {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .account-history-range-selector button {
+    padding-inline: 0.35rem;
   }
 
   .detail-heading {
