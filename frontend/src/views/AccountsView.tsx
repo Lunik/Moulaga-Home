@@ -24,6 +24,7 @@ import type {
   Transaction,
   TransactionCount,
 } from '../api/types'
+import { supportsHoldings } from '../accountCapabilities'
 import { AttachmentManager } from '../AttachmentManager'
 import {
   accountInstitutionLabel,
@@ -76,16 +77,6 @@ const accountTypeFilterOrder = [
   'peg',
   'percol',
 ]
-const positionAccountTypes = new Set([
-  // Kept so accounts created before the generic type was removed remain usable.
-  'investment',
-  'pea',
-  'peg',
-  'percol',
-  'securities',
-  'life_insurance',
-  'wallet',
-])
 const savingsProducts = [
   { name: 'Livret A', rate: '1.700', cap: '22950.00' },
   { name: 'LDDS', rate: '1.700', cap: '12000.00' },
@@ -525,7 +516,7 @@ export function AccountDetailView({
       uncategorized: true,
     })}`),
   })
-  const positionsEnabled = positionAccountTypes.has(account.data?.type ?? '')
+  const positionsEnabled = supportsHoldings(account.data?.type ?? '')
   const positions = useQuery({
     queryKey: ['holdings', 'account', accountId],
     queryFn: () => apiGet<Holding[]>(`/holdings${queryString({ account_id: accountId })}`),

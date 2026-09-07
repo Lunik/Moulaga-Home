@@ -443,8 +443,9 @@ async def _seed(
     checking_running = Decimal(checking.initial_balance)
     savings_running = Decimal(savings.initial_balance)
     boursobank_running = Decimal(boursobank_checking.initial_balance)
+    life_insurance_snapshot_values = ("16700.00", "17450.00", "18100.00", "18500.00")
     additional_snapshot_series = [
-        (life_insurance, ("16700.00", "17450.00", "18100.00", "18500.00")),
+        (life_insurance, life_insurance_snapshot_values),
         (invest, ("2100.00", "2300.00", "2450.00", "2634.00")),
         (crypto_wallet, ("3600.00", "4100.00", "3850.00", "4200.00")),
     ]
@@ -652,7 +653,16 @@ async def _seed(
         account_id=invest.id, name="Fonds Obligations", symbol="BND", asset_class="bond",
         quantity=Decimal("30"), average_price=Decimal("48"), current_price=Decimal("47"),
     )
-    session.add_all([etf, bond])
+    life_fund = Holding(
+        account_id=life_insurance.id,
+        name="Fonds euros",
+        symbol="FONDS-EUR",
+        asset_class="fund",
+        quantity=Decimal("100"),
+        average_price=Decimal("175"),
+        current_price=Decimal("185"),
+    )
+    session.add_all([etf, bond, life_fund])
     await session.flush()
     contribution_count = 0
     for month in months:
@@ -668,9 +678,18 @@ async def _seed(
     portfolio_snapshot_count = 0
     base_cost = Decimal("304300.00")
     base_value = Decimal("334350.00")
+    life_insurance_cost_values = ("16000.00", "16500.00", "17000.00", "17500.00")
     for index, month in enumerate(months):
-        cost_basis = money(base_cost + Decimal(index) * Decimal("200.00"))
-        market_value = money(base_value + Decimal(index) * Decimal("260.00"))
+        cost_basis = money(
+            base_cost
+            + Decimal(index) * Decimal("200.00")
+            + Decimal(life_insurance_cost_values[index])
+        )
+        market_value = money(
+            base_value
+            + Decimal(index) * Decimal("260.00")
+            + Decimal(life_insurance_snapshot_values[index])
+        )
         session.add(
             PortfolioSnapshot(
                 period=month.strftime("%Y-%m"),
@@ -784,7 +803,7 @@ async def _seed(
         changes=1,
         debts=4,
         real_estate_assets=2,
-        holdings=2,
+        holdings=3,
         contributions=contribution_count,
         households=1,
         goals=1,

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_access import require_account
+from ..account_access import require_account, require_holding_account
 from ..account_balances import account_balances
 from ..common import local_today, money
 from ..db import get_session
@@ -281,7 +281,7 @@ async def list_holdings(
 async def create_holding(
     payload: HoldingCreate, session: AsyncSession = Depends(get_session)
 ) -> HoldingRead:
-    await require_account(session, payload.account_id, writable=True)
+    await require_holding_account(session, payload.account_id, writable=True)
     holding = Holding(**payload.model_dump())
     session.add(holding)
     await session.commit()
@@ -297,7 +297,10 @@ async def update_holding(
     if holding is None:
         raise HTTPException(status_code=404, detail="Actif introuvable")
     await require_account(session, holding.account_id, writable=True)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "account_id" in data:
+        await require_holding_account(session, data["account_id"], writable=True)
+    for field, value in data.items():
         setattr(holding, field, value)
     await session.commit()
     await session.refresh(holding)

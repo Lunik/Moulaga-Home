@@ -25,7 +25,7 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
     assert result.snapshots == 309
     assert result.debts == 4
     assert result.real_estate_assets == 2
-    assert result.holdings == 2
+    assert result.holdings == 3
     assert result.households == 1
     assert result.portfolio_snapshots > 0
     assert result.merchants > 0
@@ -47,9 +47,10 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         assert next(
             account for account in accounts if account["name"] == "PER/PERCOL Amundi demo"
         )["type"] == "percol"
-        assert next(
+        life_insurance = next(
             account for account in accounts if account["name"] == "Assurance vie Boursobank demo"
-        )["type"] == "life_insurance"
+        )
+        assert life_insurance["type"] == "life_insurance"
         assert next(
             account for account in accounts if account["name"] == "Wallet crypto demo"
         )["type"] == "wallet"
@@ -64,7 +65,16 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         assert land["current_value"] is None
         assert land["owned_value"] == "22500.00"
         assert land["gain"] == "0.00"
-        assert client.get("/api/holdings").json()
+        holdings = client.get("/api/holdings").json()
+        assert len(holdings) == 3
+        account_types = {account["id"]: account["type"] for account in accounts}
+        assert {account_types[holding["account_id"]] for holding in holdings} == {
+            "pea",
+            "life_insurance",
+        }
+        assert any(
+            holding["account_id"] == life_insurance["id"] for holding in holdings
+        )
         rules = client.get("/api/rules").json()
         assert any(len(rule["patterns"]) >= 3 for rule in rules)
         recurring = client.get("/api/recurring").json()
@@ -396,6 +406,11 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         assert len(holdings) == 2
         assert any(float(holding["gain"]) > 0 for holding in holdings)
         assert any(float(holding["gain"]) < 0 for holding in holdings)
+        assert len(
+            client.get(
+                "/api/holdings", params={"account_id": life_insurance["id"]}
+            ).json()
+        ) == 1
 
         archived_transactions = client.get(
             "/api/transactions",

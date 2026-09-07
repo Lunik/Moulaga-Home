@@ -28,6 +28,7 @@ import type {
   PortfolioSummary,
   RealEstateAsset,
 } from '../api/types'
+import { supportsHoldings } from '../accountCapabilities'
 import { isRouteBeta } from '../featureValidation'
 import type { Route, WealthTab } from '../routing'
 import {
@@ -395,9 +396,14 @@ function ContributionForm({ accounts, holdings }: { accounts: Account[]; holding
 
 function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: Holding[] }) {
   const queryClient = useQueryClient()
-  const [showForm, setShowForm] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [editingHolding, setEditingHolding] = useState<Holding | null>(null)
   const [search, setSearch] = useState('')
   const [assetClass, setAssetClass] = useState('all')
+  const selectableAccounts = useMemo(
+    () => accounts.filter((account) => !account.archived && supportsHoldings(account.type)),
+    [accounts],
+  )
   const filtered = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase('fr-FR')
     return holdings.filter((holding) => {
@@ -408,28 +414,42 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
       return matchesSearch && (assetClass === 'all' || holding.asset_class === assetClass)
     })
   }, [assetClass, holdings, search])
+  const refresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['holdings'] }),
+      queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+    ])
+  }
 
   return (
     <>
       <section className="section-intro">
         <p>Valorisez vos positions sans synchronisation bancaire externe.</p>
-        <button className="primary-button" type="button" onClick={() => setShowForm((current) => !current)}>
+        <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
           <Icon name="plus" /> Ajouter un actif
         </button>
       </section>
-      {showForm && (
-        <HoldingForm
-          accounts={accounts}
-          onCancel={() => setShowForm(false)}
+      {showCreateModal && (
+        <HoldingModal
+          accounts={selectableAccounts}
+          onClose={() => setShowCreateModal(false)}
           onSaved={async () => {
-            await Promise.all([
-              queryClient.invalidateQueries({ queryKey: ['holdings'] }),
-              queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
-              queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
-              queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
-              queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
-            ])
-            setShowForm(false)
+            await refresh()
+            setShowCreateModal(false)
+          }}
+        />
+      )}
+      {editingHolding && (
+        <HoldingModal
+          accounts={selectableAccounts}
+          holding={editingHolding}
+          onClose={() => setEditingHolding(null)}
+          onSaved={async () => {
+            await refresh()
+            setEditingHolding(null)
           }}
         />
       )}
@@ -445,6 +465,7 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
             <option value="savings">Épargne</option>
             <option value="equity">Actions</option>
             <option value="fund">Fonds</option>
+            <option value="bond">Obligations</option>
             <option value="crypto">Crypto</option>
             <option value="real_estate">Immobilier</option>
             <option value="other">Autres</option>
@@ -453,7 +474,13 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
         {filtered.length > 0 ? (
           <div className="holding-list">
             {filtered.map((holding) => (
-              <HoldingRow accounts={accounts} holding={holding} key={holding.id} />
+              <HoldingRow
+                accounts={accounts}
+                holding={holding}
+                key={holding.id}
+                onChanged={refresh}
+                onEdit={() => setEditingHolding(holding)}
+              />
             ))}
           </div>
         ) : (
@@ -464,29 +491,20 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
   )
 }
 
-function HoldingRow({ accounts, holding }: { accounts: Account[]; holding: Holding }) {
-  const queryClient = useQueryClient()
-  const [editing, setEditing] = useState(false)
-  const [price, setPrice] = useState(holding.current_price)
-  const refresh = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['holdings'] }),
-      queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
-      queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
-      queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
-      queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
-    ])
-  }
-  const update = useMutation({
-    mutationFn: () => apiPatch<Holding>(`/holdings/${holding.id}`, { current_price: price }),
-    onSuccess: async () => {
-      setEditing(false)
-      await refresh()
-    },
-  })
+function HoldingRow({
+  accounts,
+  holding,
+  onChanged,
+  onEdit,
+}: {
+  accounts: Account[]
+  holding: Holding
+  onChanged: () => Promise<void>
+  onEdit: () => void
+}) {
   const remove = useMutation({
     mutationFn: () => apiDelete(`/holdings/${holding.id}`),
-    onSuccess: refresh,
+    onSuccess: onChanged,
   })
   return (
     <article>
@@ -499,25 +517,14 @@ function HoldingRow({ accounts, holding }: { accounts: Account[]; holding: Holdi
         </small>
       </span>
       <StatusBadge>{assetLabel(holding.asset_class)}</StatusBadge>
-      {editing ? (
-        <form className="holding-price-editor" onSubmit={(event) => {
-          event.preventDefault()
-          update.mutate()
-        }}>
-          <FormInput aria-label="Prix actuel" type="number" min="0" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} />
-          <button className="icon-action positive" type="submit" aria-label="Enregistrer"><Icon name="check" /></button>
-          <button className="icon-action" type="button" aria-label="Annuler" onClick={() => setEditing(false)}><Icon name="close" /></button>
-        </form>
-      ) : (
-        <span className="holding-value">
-          <strong>{money(holding.market_value)}</strong>
-          <small className={Number(holding.gain) >= 0 ? 'positive' : 'negative'}>
-            {signedMoney(holding.gain)} · {holdingGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
-          </small>
-        </span>
-      )}
+      <span className="holding-value">
+        <strong>{money(holding.market_value)}</strong>
+        <small className={Number(holding.gain) >= 0 ? 'positive' : 'negative'}>
+          {signedMoney(holding.gain)} · {holdingGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+        </small>
+      </span>
       <span className="row-actions">
-        <button className="icon-action" type="button" aria-label="Actualiser le prix" onClick={() => setEditing(true)}><Icon name="edit" /></button>
+        <button className="icon-action" type="button" aria-label="Modifier l'actif" onClick={onEdit}><Icon name="edit" /></button>
         <button
           className="icon-action"
           type="button"
@@ -529,86 +536,122 @@ function HoldingRow({ accounts, holding }: { accounts: Account[]; holding: Holdi
           <Icon name="trash" />
         </button>
       </span>
-      {(update.error || remove.error) && <span className="form-error row-error">{errorMessage(update.error ?? remove.error)}</span>}
+      {remove.error && <span className="form-error row-error">{errorMessage(remove.error)}</span>}
     </article>
   )
 }
 
-function HoldingForm({
+function HoldingModal({
   accounts,
-  onCancel,
+  holding,
+  onClose,
   onSaved,
 }: {
   accounts: Account[]
-  onCancel: () => void
+  holding?: Holding
+  onClose: () => void
   onSaved: () => Promise<void>
 }) {
-  const [accountId, setAccountId] = useState('')
-  const [symbol, setSymbol] = useState('')
-  const [name, setName] = useState('')
-  const [assetClass, setAssetClass] = useState('equity')
-  const [quantity, setQuantity] = useState('')
-  const [averageCost, setAverageCost] = useState('')
-  const [currentPrice, setCurrentPrice] = useState('')
+  const initialAccountId = accounts.some((account) => account.id === holding?.account_id)
+    ? String(holding?.account_id)
+    : String(accounts[0]?.id ?? '')
+  const [accountId, setAccountId] = useState(initialAccountId)
+  const [symbol, setSymbol] = useState(holding?.symbol ?? '')
+  const [name, setName] = useState(holding?.name ?? '')
+  const [assetClass, setAssetClass] = useState(holding?.asset_class ?? 'equity')
+  const [quantity, setQuantity] = useState(holding?.quantity ?? '')
+  const [averageCost, setAverageCost] = useState(holding?.average_price ?? '')
+  const [currentPrice, setCurrentPrice] = useState(holding?.current_price ?? '')
+  const selectedAccountId = accountId || initialAccountId
   const mutation = useMutation({
-    mutationFn: () => apiPost<Holding>('/holdings', {
-      account_id: Number(accountId || accounts[0]?.id),
-      symbol,
-      name,
-      asset_class: assetClass,
-      quantity,
-      average_price: averageCost,
-      current_price: currentPrice,
-    }),
+    mutationFn: () => {
+      const payload = {
+        account_id: Number(selectedAccountId),
+        symbol: symbol.trim() || null,
+        name,
+        asset_class: assetClass,
+        quantity,
+        average_price: averageCost,
+        current_price: currentPrice,
+      }
+      return holding
+        ? apiPatch<Holding>(`/holdings/${holding.id}`, payload)
+        : apiPost<Holding>('/holdings', payload)
+    },
     onSuccess: onSaved,
   })
+  const formId = holding ? `holding-edit-${holding.id}` : 'holding-create'
 
   return (
-    <Panel title="Nouvel actif" subtitle="Les valorisations restent enregistrées dans votre base locale.">
-      <form className="feature-form" onSubmit={(event: FormEvent) => {
+    <Modal
+      title={holding ? "Modifier l'actif" : 'Nouvel actif'}
+      description="Les valorisations restent enregistrées dans votre base locale."
+      onClose={onClose}
+      actions={(
+        <>
+          <button
+            className="primary-button"
+            type="submit"
+            form={formId}
+            disabled={mutation.isPending || !selectedAccountId}
+          >
+            {mutation.isPending ? 'Enregistrement…' : holding ? 'Enregistrer' : 'Ajouter'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <form className="modal-form holding-modal-form" id={formId} onSubmit={(event: FormEvent) => {
         event.preventDefault()
         mutation.mutate()
       }}>
-        <Field label="Compte">
-          <FormSelect value={accountId} onChange={(event) => setAccountId(event.target.value)} required>
-            {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-          </FormSelect>
-        </Field>
-        <Field label="Symbole">
-          <FormInput value={symbol} onChange={(event) => setSymbol(event.target.value)} maxLength={20} required />
-        </Field>
-        <Field label="Nom">
-          <FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
-        </Field>
-        <Field label="Classe">
-          <FormSelect value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
-            <option value="equity">Action</option>
-            <option value="fund">Fonds</option>
-            <option value="crypto">Crypto</option>
-            <option value="savings">Épargne</option>
-            <option value="cash">Liquidités</option>
-            <option value="real_estate">Immobilier</option>
-            <option value="other">Autre</option>
-          </FormSelect>
-        </Field>
-        <Field label="Quantité">
-          <FormInput type="number" min="0" step="0.000001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
-        </Field>
-        <Field label="Prix de revient">
-          <FormInput type="number" min="0" step="0.01" value={averageCost} onChange={(event) => setAverageCost(event.target.value)} required />
-        </Field>
-        <Field label="Prix actuel">
-          <FormInput type="number" min="0" step="0.01" value={currentPrice} onChange={(event) => setCurrentPrice(event.target.value)} required />
-        </Field>
-        <div className="form-buttons">
-          <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
-          <button className="primary-button" type="submit" disabled={mutation.isPending || accounts.length === 0}>
-            {mutation.isPending ? 'Ajout…' : 'Ajouter'}
-          </button>
+        <div className="holding-modal-grid">
+          <Field label="Compte">
+            <FormSelect value={selectedAccountId} onChange={(event) => setAccountId(event.target.value)} required>
+              {!selectedAccountId && <option value="">Aucun compte compatible</option>}
+              {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </FormSelect>
+          </Field>
+          <Field label="Symbole">
+            <FormInput value={symbol} onChange={(event) => setSymbol(event.target.value)} maxLength={32} />
+          </Field>
+          <Field label="Nom">
+            <FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
+          </Field>
+          <Field label="Classe">
+            <FormSelect value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
+              <option value="equity">Action</option>
+              <option value="fund">Fonds</option>
+              <option value="bond">Obligations</option>
+              <option value="crypto">Crypto</option>
+              <option value="savings">Épargne</option>
+              <option value="cash">Liquidités</option>
+              <option value="real_estate">Immobilier</option>
+              <option value="other">Autre</option>
+            </FormSelect>
+          </Field>
+          <Field label="Quantité">
+            <FormInput type="number" min="0" step="0.000001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
+          </Field>
+          <Field label="Prix de revient">
+            <FormInput type="number" min="0" step="0.01" value={averageCost} onChange={(event) => setAverageCost(event.target.value)} required />
+          </Field>
+          <Field label="Prix actuel">
+            <FormInput type="number" min="0" step="0.01" value={currentPrice} onChange={(event) => setCurrentPrice(event.target.value)} required />
+          </Field>
         </div>
+        <p className="modal-hint">
+          Seuls les comptes d'investissement actifs (PEA, PEG, PER/PERCOL, compte-titres,
+          assurance-vie et wallet crypto) sont proposés.
+        </p>
+        {accounts.length === 0 && (
+          <p className="form-error" role="alert">
+            Aucun compte compatible n'est disponible. Créez ou restaurez d'abord un compte d'investissement.
+          </p>
+        )}
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
-      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </Panel>
+    </Modal>
   )
 }
 

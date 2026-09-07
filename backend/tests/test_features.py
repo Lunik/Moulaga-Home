@@ -1105,6 +1105,9 @@ def test_snapshot_attachments_use_hashed_local_paths(client, tmp_path):
 
 def test_archived_account_is_read_only_across_linked_resources(client):
     account_id = _account_id(client)
+    assert client.patch(
+        f"/api/accounts/{account_id}", json={"type": "pea"}
+    ).status_code == 200
     transaction = client.post(
         "/api/transactions",
         json={
@@ -1570,6 +1573,101 @@ def test_debt_progress_and_validation(client):
         "/api/debts", json={"name": "Incoherent", "principal": "100.00", "balance": "200.00"}
     )
     assert invalid.status_code == 422
+
+
+def test_holdings_require_supported_accounts_and_allow_full_update(client):
+    supported_types = (
+        "pea",
+        "peg",
+        "percol",
+        "securities",
+        "life_insurance",
+        "wallet",
+    )
+    holdings = {}
+    accounts = {}
+    for account_type in supported_types:
+        account = client.post(
+            "/api/accounts",
+            json={
+                "name": f"Compte {account_type}",
+                "type": account_type,
+                "initial_balance": "0.00",
+            },
+        ).json()
+        accounts[account_type] = account
+        response = client.post(
+            "/api/holdings",
+            json={
+                "account_id": account["id"],
+                "name": f"Actif {account_type}",
+                "asset_class": "fund",
+                "quantity": "2",
+                "average_price": "10",
+                "current_price": "11",
+            },
+        )
+        assert response.status_code == 201
+        holdings[account_type] = response.json()
+
+    unsupported_account_id = _account_id(client)
+    rejected = client.post(
+        "/api/holdings",
+        json={
+            "account_id": unsupported_account_id,
+            "name": "Actif invalide",
+            "quantity": "1",
+            "average_price": "10",
+            "current_price": "10",
+        },
+    )
+    assert rejected.status_code == 422
+    assert "ne prend pas en charge" in rejected.json()["detail"]
+
+    holding = holdings["pea"]
+    updated = client.patch(
+        f"/api/holdings/{holding['id']}",
+        json={
+            "account_id": accounts["life_insurance"]["id"],
+            "name": "Fonds euros actualise",
+            "symbol": "EURO",
+            "asset_class": "fund",
+            "quantity": "3",
+            "average_price": "12",
+            "current_price": "14",
+        },
+    )
+    assert updated.status_code == 200
+    updated_holding = updated.json()
+    expected_update = {
+        "account_id": accounts["life_insurance"]["id"],
+        "name": "Fonds euros actualise",
+        "symbol": "EURO",
+        "asset_class": "fund",
+        "quantity": "3.000000",
+        "average_price": "12.000000",
+        "current_price": "14.000000",
+        "cost_basis": "36.00",
+        "market_value": "42.00",
+        "gain": "6.00",
+    }
+    assert {
+        field: updated_holding[field] for field in expected_update
+    } == expected_update
+
+    rejected_move = client.patch(
+        f"/api/holdings/{holding['id']}",
+        json={"account_id": unsupported_account_id},
+    )
+    assert rejected_move.status_code == 422
+    life_insurance_holdings = client.get(
+        "/api/holdings",
+        params={"account_id": accounts["life_insurance"]["id"]},
+    ).json()
+    assert any(
+        item["id"] == holding["id"]
+        for item in life_insurance_holdings
+    )
 
 
 def test_holdings_portfolio_and_networth_no_double_count(client):
