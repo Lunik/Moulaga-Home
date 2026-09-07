@@ -142,6 +142,7 @@ export function DashboardView({
       value: Number(account.balance),
       color: colors[index % colors.length],
     }))
+    .sort((left, right) => right.value - left.value || left.name.localeCompare(right.name, 'fr'))
   const activeDebts = (debts.data ?? []).filter((debt) => !debt.archived)
   const netWorthData = netWorth.data
   const portfolioData = portfolio.data
@@ -334,7 +335,11 @@ export function DashboardView({
                       <Pie data={allocation} dataKey="value" nameKey="name" innerRadius="64%" outerRadius="88%" paddingAngle={2} stroke="none">
                         {allocation.map((entry) => <Cell key={entry.id} fill={entry.color} />)}
                       </Pie>
-                      <Tooltip contentStyle={chartTooltipStyle} formatter={(value) => money(Number(value))} />
+                      <Tooltip
+                        contentStyle={chartTooltipStyle}
+                        itemStyle={{ color: 'var(--text)' }}
+                        formatter={(value) => money(Number(value))}
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="donut-label"><strong>{allocation.length}</strong><span>comptes</span></div>
@@ -343,9 +348,14 @@ export function DashboardView({
                 <EmptyState icon="accounts" text="Aucun solde positif à répartir." />
               )}
             </div>
-            <div className="distribution-list">
-              {allocation.slice(0, 6).map((entry) => (
-                <div key={entry.id}><span><i style={{ background: entry.color }} />{entry.name}</span><strong>{money(entry.value)}</strong></div>
+            <div
+              className="distribution-list"
+              role="list"
+              aria-label="Comptes classés par solde décroissant"
+              tabIndex={allocation.length > 6 ? 0 : undefined}
+            >
+              {allocation.map((entry) => (
+                <div key={entry.id} role="listitem"><span><i style={{ background: entry.color }} />{entry.name}</span><strong>{money(entry.value)}</strong></div>
               ))}
             </div>
           </div>

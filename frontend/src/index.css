@@ -759,6 +759,17 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
+  max-height: 18rem;
+  padding-right: 0.4rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.distribution-list:focus-visible {
+  border-radius: 0.5rem;
+  outline: 2px solid #6f83ff;
+  outline-offset: 3px;
 }
 
 .distribution-list > div {

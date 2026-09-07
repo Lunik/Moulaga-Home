@@ -36,6 +36,7 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         accounts = client.get("/api/accounts").json()
         assert len(accounts) == 9
         assert len({account["balance"] for account in accounts}) > 6
+        assert sum(float(account["balance"]) > 0 for account in accounts) > 6
         savings = next(account for account in accounts if account["type"] == "savings")
         pea = next(account for account in accounts if account["name"] == "PEA demo")
         assert pea["type"] == "pea"
