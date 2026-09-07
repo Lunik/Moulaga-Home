@@ -14,8 +14,8 @@ export type Route =
   | { name: 'dashboard' }
   | { name: 'accounts' }
   | { name: 'account'; accountId: number }
-  | { name: 'budget'; tab: BudgetTab }
-  | { name: 'wealth'; tab: WealthTab }
+  | { name: 'budget'; tab: BudgetTab; focusId?: number }
+  | { name: 'wealth'; tab: WealthTab; focusId?: number }
   | { name: 'family' }
   | { name: 'settings' }
 
@@ -64,9 +64,9 @@ export function routeHash(route: Route): string {
     case 'account':
       return `#/accounts/${route.accountId}`
     case 'budget':
-      return `#/budget/${route.tab}`
+      return `#/budget/${route.tab}${route.focusId ? `/${route.focusId}` : ''}`
     case 'wealth':
-      return `#/wealth/${route.tab}`
+      return `#/wealth/${route.tab}${route.focusId ? `/${route.focusId}` : ''}`
   }
 }
 
@@ -79,14 +79,26 @@ function parseHash(hash: string): Route {
   if (parts[0] === 'accounts') return { name: 'accounts' }
   if (parts[0] === 'budget') {
     const tab = parts[1] as BudgetTab
-    if (budgetTabs.has(tab)) return { name: 'budget', tab }
+    if (budgetTabs.has(tab)) {
+      const focusId = positiveInteger(parts[2])
+      return focusId ? { name: 'budget', tab, focusId } : { name: 'budget', tab }
+    }
     return { name: 'budget', tab: legacyBudgetTabs[parts[1]] ?? 'overview' }
   }
   if (parts[0] === 'wealth') {
     const tab = parts[1] as WealthTab
-    return { name: 'wealth', tab: wealthTabs.has(tab) ? tab : 'overview' }
+    if (wealthTabs.has(tab)) {
+      const focusId = positiveInteger(parts[2])
+      return focusId ? { name: 'wealth', tab, focusId } : { name: 'wealth', tab }
+    }
+    return { name: 'wealth', tab: 'overview' }
   }
   if (parts[0] === 'family') return { name: 'family' }
   if (parts[0] === 'settings') return { name: 'settings' }
   return { name: 'dashboard' }
+}
+
+function positiveInteger(value: string | undefined): number | undefined {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }

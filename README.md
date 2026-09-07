@@ -18,8 +18,11 @@ une base SQLite locale et persistante.
 - categories deplacables dans la hierarchie, archivage protecteur de l'historique,
   restauration et regles deterministes a plusieurs motifs ;
 - boite de categorisation et suggestions entierement locales ;
-- series recurrentes modifiables, detection avec validation des propositions et echeancier previsionnel ;
-- dettes, biens immobiliers avec quote-part et emprunt associe, positions, valorisations,
+- series recurrentes typees et modifiables, assurances credit avec taux et import TSV
+  d'echeancier, detection avec validation des propositions et echeancier previsionnel ;
+- dettes creees et modifiees en modale, association a une serie recurrente, import TSV
+  d'echeancier pour les credits, liens navigables entre biens, dettes et series recurrentes,
+  biens immobiliers avec quote-part et emprunt associe, positions, valorisations,
   contributions et performance du portefeuille ;
 - foyers locaux, roles, comptes partages et objectifs communs ;
 - themes clair/sombre/systeme, formats de date et styles de navigation ;

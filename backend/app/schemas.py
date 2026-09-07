@@ -545,6 +545,11 @@ class SuggestionResult(BaseModel):
 # Recurring series
 # --------------------------------------------------------------------------- #
 _FREQ = "^(weekly|monthly|quarterly|yearly)$"
+_RECURRING_TYPE = (
+    "^(uncategorized|subscription|rent|energy|telecom|auto_insurance|"
+    "home_insurance|health_insurance|credit_insurance|loan_payment|tax|"
+    "salary|transfer|other)$"
+)
 
 
 class RecurringCreate(BaseModel):
@@ -556,12 +561,33 @@ class RecurringCreate(BaseModel):
     amount: Decimal | None = Field(default=None, **_MONEY)
     amount_type: str = Field(default="fixed", pattern="^(fixed|variable)$")
     status: str = Field(default="active", pattern="^(active|paused|ended)$")
+    recurring_type: str = Field(default="uncategorized", pattern=_RECURRING_TYPE)
+    custom_type: str | None = Field(default=None, max_length=120)
+    credit_insurance_rate: Decimal | None = Field(
+        default=None, ge=0, le=100, max_digits=6, decimal_places=3
+    )
     confidence: Decimal = Field(default=Decimal("1.00"), ge=0, le=1)
 
     @field_validator("label")
     @classmethod
     def strip_label(cls, value: str) -> str:
         return _strip_required(value)
+
+    @field_validator("custom_type")
+    @classmethod
+    def strip_custom_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def validate_type_details(self) -> RecurringCreate:
+        if self.recurring_type == "other" and self.custom_type is None:
+            raise ValueError("Le type libre est requis lorsque le type « Autre » est sélectionné")
+        if self.recurring_type != "credit_insurance" and self.credit_insurance_rate is not None:
+            raise ValueError("Le taux est réservé aux assurances crédit")
+        return self
 
 
 class RecurringUpdate(BaseModel):
@@ -573,12 +599,25 @@ class RecurringUpdate(BaseModel):
     amount: Decimal | None = Field(default=None, **_MONEY)
     amount_type: str | None = Field(default=None, pattern="^(fixed|variable)$")
     status: str | None = Field(default=None, pattern="^(active|paused|ended)$")
+    recurring_type: str | None = Field(default=None, pattern=_RECURRING_TYPE)
+    custom_type: str | None = Field(default=None, max_length=120)
+    credit_insurance_rate: Decimal | None = Field(
+        default=None, ge=0, le=100, max_digits=6, decimal_places=3
+    )
     confidence: Decimal | None = Field(default=None, ge=0, le=1)
 
     @field_validator("label")
     @classmethod
     def strip_optional_label(cls, value: str | None) -> str | None:
         return _strip_required(value) if value is not None else None
+
+    @field_validator("custom_type")
+    @classmethod
+    def strip_optional_custom_type(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class RecurringRead(BaseModel):
@@ -593,9 +632,22 @@ class RecurringRead(BaseModel):
     amount: Decimal | None
     amount_type: str
     status: str
+    recurring_type: str
+    custom_type: str | None
+    credit_insurance_rate: Decimal | None
     confidence: Decimal
     account_name: str = ""
     category_name: str | None = None
+    attachment_count: int = 0
+
+
+class RecurringSeriesAttachmentRead(BaseModel):
+    id: int
+    series_id: int
+    original_name: str
+    storage_path: str
+    content_type: str | None
+    size: int
 
 
 class DetectionProposal(BaseModel):
@@ -650,13 +702,18 @@ class DetectResult(BaseModel):
 # --------------------------------------------------------------------------- #
 # Wealth: debts, real estate, holdings, contributions, net worth
 # --------------------------------------------------------------------------- #
+_DEBT_TYPE = "^(consumer_credit|mortgage|other)$"
+
+
 class DebtCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    debt_type: str = Field(default="other", pattern=_DEBT_TYPE)
     principal: Decimal = Field(ge=0, **_MONEY)
     balance: Decimal = Field(ge=0, **_MONEY)
     interest_rate: Decimal | None = Field(default=None, ge=0, max_digits=5, decimal_places=2)
     minimum_payment: Decimal | None = Field(default=None, ge=0, **_MONEY)
     account_id: int | None = None
+    recurring_series_id: int | None = None
     due_date: date | None = None
     color: str = Field(default="#ef4444", pattern=HEX_COLOR)
 
@@ -668,14 +725,21 @@ class DebtCreate(BaseModel):
 
 class DebtUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
+    debt_type: str | None = Field(default=None, pattern=_DEBT_TYPE)
     principal: Decimal | None = Field(default=None, ge=0, **_MONEY)
     balance: Decimal | None = Field(default=None, ge=0, **_MONEY)
     interest_rate: Decimal | None = Field(default=None, ge=0, max_digits=5, decimal_places=2)
     minimum_payment: Decimal | None = Field(default=None, ge=0, **_MONEY)
     account_id: int | None = None
+    recurring_series_id: int | None = None
     due_date: date | None = None
     color: str | None = Field(default=None, pattern=HEX_COLOR)
     archived: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def strip_optional_name(cls, value: str | None) -> str | None:
+        return _strip_required(value) if value is not None else None
 
 
 class DebtRead(BaseModel):
@@ -683,16 +747,29 @@ class DebtRead(BaseModel):
 
     id: int
     name: str
+    debt_type: str
     principal: Decimal
     balance: Decimal
     interest_rate: Decimal | None
     minimum_payment: Decimal | None
     account_id: int | None
+    recurring_series_id: int | None
+    recurring_series_name: str | None = None
     due_date: date | None
     color: str
     archived: bool
     paid: Decimal
     progress: Decimal
+    attachment_count: int = 0
+
+
+class DebtAttachmentRead(BaseModel):
+    id: int
+    debt_id: int
+    original_name: str
+    storage_path: str
+    content_type: str | None
+    size: int
 
 
 _PROPERTY_TYPE = (
@@ -706,6 +783,14 @@ def _validate_acquired_on(value: date | None) -> date | None:
     return value
 
 
+def _validate_debt_ids(value: list[int]) -> list[int]:
+    if any(debt_id <= 0 for debt_id in value):
+        raise ValueError("Les identifiants de dette doivent être positifs")
+    if len(value) != len(set(value)):
+        raise ValueError("Une dette ne peut être associée qu'une seule fois")
+    return value
+
+
 class RealEstateCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     property_type: str = Field(default="primary_residence", pattern=_PROPERTY_TYPE)
@@ -716,7 +801,7 @@ class RealEstateCreate(BaseModel):
     ownership_share: Decimal = Field(
         default=Decimal("100.00"), gt=0, le=100, max_digits=5, decimal_places=2
     )
-    debt_id: int | None = Field(default=None, gt=0)
+    debt_ids: list[int] = Field(default_factory=list, max_length=100)
 
     @field_validator("name")
     @classmethod
@@ -736,6 +821,11 @@ class RealEstateCreate(BaseModel):
     def validate_acquired_on(cls, value: date | None) -> date | None:
         return _validate_acquired_on(value)
 
+    @field_validator("debt_ids")
+    @classmethod
+    def validate_debt_ids(cls, value: list[int]) -> list[int]:
+        return _validate_debt_ids(value)
+
 
 class RealEstateUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
@@ -747,7 +837,7 @@ class RealEstateUpdate(BaseModel):
     ownership_share: Decimal | None = Field(
         default=None, gt=0, le=100, max_digits=5, decimal_places=2
     )
-    debt_id: int | None = Field(default=None, gt=0)
+    debt_ids: list[int] = Field(default_factory=list, max_length=100)
 
     @field_validator("name")
     @classmethod
@@ -767,6 +857,18 @@ class RealEstateUpdate(BaseModel):
     def validate_acquired_on(cls, value: date | None) -> date | None:
         return _validate_acquired_on(value)
 
+    @field_validator("debt_ids")
+    @classmethod
+    def validate_debt_ids(cls, value: list[int]) -> list[int]:
+        return _validate_debt_ids(value)
+
+class RealEstateDebtRead(BaseModel):
+    id: int
+    name: str
+    balance: Decimal
+    recurring_series_id: int | None
+    recurring_series_name: str | None
+
 
 class RealEstateRead(BaseModel):
     id: int
@@ -777,13 +879,23 @@ class RealEstateRead(BaseModel):
     purchase_price: Decimal
     current_value: Decimal | None
     ownership_share: Decimal
-    debt_id: int | None
-    debt_name: str | None
+    debt_ids: list[int]
+    debts: list[RealEstateDebtRead]
     debt_balance: Decimal
     owned_purchase_price: Decimal
     owned_value: Decimal
     gain: Decimal
     net_equity: Decimal
+    attachment_count: int = 0
+
+
+class RealEstateAttachmentRead(BaseModel):
+    id: int
+    asset_id: int
+    original_name: str
+    storage_path: str
+    content_type: str | None
+    size: int
 
 
 class HoldingCreate(BaseModel):
@@ -802,12 +914,20 @@ class HoldingCreate(BaseModel):
 
 
 class HoldingUpdate(BaseModel):
+    account_id: int | None = None
     name: str | None = Field(default=None, min_length=1, max_length=120)
     symbol: str | None = Field(default=None, max_length=32)
     asset_class: str | None = Field(default=None, max_length=32)
     quantity: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
     average_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
     current_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
+
+    @field_validator("account_id")
+    @classmethod
+    def reject_null_account_id(cls, value: int | None) -> int:
+        if value is None:
+            raise ValueError("Ce champ ne peut pas etre nul")
+        return value
 
 
 class HoldingRead(BaseModel):

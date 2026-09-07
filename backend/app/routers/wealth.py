@@ -5,28 +5,41 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_access import require_account
+from ..account_access import require_account, require_holding_account
 from ..account_balances import account_balances
+from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import local_today, money
 from ..db import get_session
+from ..debt_recurring import (
+    build_debt_recurring_series,
+    debt_payment,
+    recurring_amount,
+)
 from ..models import (
     Account,
     BalanceSnapshot,
     Contribution,
     Debt,
+    DebtAttachment,
     Holding,
     PortfolioSnapshot,
     RealEstateAsset,
+    RealEstateAttachment,
+    RealEstateDebtLink,
+    RecurringSeries,
 )
 from ..schemas import (
     AllocationSlice,
     ContributionCreate,
     ContributionCreateAggregate,
     ContributionRead,
+    DebtAttachmentRead,
     DebtCreate,
     DebtRead,
     DebtUpdate,
@@ -39,7 +52,9 @@ from ..schemas import (
     PortfolioSnapshotCreate,
     PortfolioSnapshotRead,
     PortfolioSummary,
+    RealEstateAttachmentRead,
     RealEstateCreate,
+    RealEstateDebtRead,
     RealEstateRead,
     RealEstateUpdate,
 )
@@ -47,10 +62,12 @@ from ..schemas import (
 router = APIRouter(tags=["wealth"])
 
 
-# --------------------------------------------------------------------------- #
-# Debts
-# --------------------------------------------------------------------------- #
-def _debt_read(debt: Debt) -> DebtRead:
+def _debt_read(
+    debt: Debt,
+    *,
+    recurring_series_name: str | None = None,
+    attachment_count: int = 0,
+) -> DebtRead:
     principal = Decimal(debt.principal)
     balance = Decimal(debt.balance)
     paid = money(principal - balance)
@@ -58,67 +75,275 @@ def _debt_read(debt: Debt) -> DebtRead:
     return DebtRead(
         id=debt.id,
         name=debt.name,
+        debt_type=debt.debt_type,
         principal=money(principal),
         balance=money(balance),
         interest_rate=debt.interest_rate,
         minimum_payment=debt.minimum_payment,
         account_id=debt.account_id,
+        recurring_series_id=debt.recurring_series_id,
+        recurring_series_name=recurring_series_name,
         due_date=debt.due_date,
         color=debt.color,
         archived=debt.archived,
         paid=paid,
         progress=progress,
+        attachment_count=attachment_count,
+    )
+
+
+async def _require_debt(session: AsyncSession, debt_id: int) -> Debt:
+    debt = await session.get(Debt, debt_id)
+    if debt is None:
+        raise HTTPException(status_code=404, detail="Dette introuvable")
+    return debt
+
+
+async def _require_recurring_series(
+    session: AsyncSession,
+    series_id: int,
+) -> RecurringSeries:
+    series = await session.get(RecurringSeries, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="Série récurrente introuvable")
+    return series
+
+
+async def _debt_response(session: AsyncSession, debt: Debt) -> DebtRead:
+    recurring_series_name = None
+    if debt.recurring_series_id is not None:
+        series = await session.get(RecurringSeries, debt.recurring_series_id)
+        recurring_series_name = series.label if series else None
+    attachment_count = await session.scalar(
+        select(func.count())
+        .select_from(DebtAttachment)
+        .where(DebtAttachment.debt_id == debt.id)
+    )
+    return _debt_read(
+        debt,
+        recurring_series_name=recurring_series_name,
+        attachment_count=int(attachment_count or 0),
     )
 
 
 @router.get("/debts", response_model=list[DebtRead])
 async def list_debts(session: AsyncSession = Depends(get_session)) -> list[DebtRead]:
     rows = (await session.execute(select(Debt).order_by(Debt.name))).scalars().all()
-    return [_debt_read(row) for row in rows]
+    recurring_names = {
+        series.id: series.label
+        for series in (await session.execute(select(RecurringSeries))).scalars().all()
+    }
+    attachment_counts = {
+        debt_id: count
+        for debt_id, count in (
+            await session.execute(
+                select(DebtAttachment.debt_id, func.count(DebtAttachment.id))
+                .group_by(DebtAttachment.debt_id)
+            )
+        ).all()
+    }
+    return [
+        _debt_read(
+            row,
+            recurring_series_name=recurring_names.get(row.recurring_series_id),
+            attachment_count=int(attachment_counts.get(row.id, 0)),
+        )
+        for row in rows
+    ]
 
 
 @router.post("/debts", response_model=DebtRead, status_code=201)
 async def create_debt(payload: DebtCreate, session: AsyncSession = Depends(get_session)) -> DebtRead:
     if payload.account_id is not None:
         await require_account(session, payload.account_id, writable=True)
+    series = None
+    if payload.recurring_series_id is not None:
+        series = await _require_recurring_series(session, payload.recurring_series_id)
+        await require_account(session, series.account_id, writable=True)
     if payload.balance > payload.principal:
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
     debt = Debt(**payload.model_dump())
     session.add(debt)
+    if series is None and payload.minimum_payment is not None and payload.minimum_payment > 0:
+        try:
+            series = build_debt_recurring_series(debt)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        session.add(series)
+        await session.flush()
+        debt.recurring_series_id = series.id
+    elif series is not None:
+        if payload.minimum_payment is None:
+            debt.minimum_payment = debt_payment(series.amount)
+        else:
+            series.amount = recurring_amount(payload.minimum_payment)
     await session.commit()
     await session.refresh(debt)
-    return _debt_read(debt)
+    return await _debt_response(session, debt)
 
 
 @router.patch("/debts/{debt_id}", response_model=DebtRead)
 async def update_debt(
     debt_id: int, payload: DebtUpdate, session: AsyncSession = Depends(get_session)
 ) -> DebtRead:
-    debt = await session.get(Debt, debt_id)
-    if debt is None:
-        raise HTTPException(status_code=404, detail="Dette introuvable")
+    debt = await _require_debt(session, debt_id)
     if debt.account_id is not None:
         await require_account(session, debt.account_id, writable=True)
     data = payload.model_dump(exclude_unset=True)
     if data.get("account_id") is not None:
         await require_account(session, data["account_id"], writable=True)
+    series = None
+    if data.get("recurring_series_id") is not None:
+        series = await _require_recurring_series(session, data["recurring_series_id"])
+    elif "recurring_series_id" not in data and debt.recurring_series_id is not None:
+        series = await _require_recurring_series(session, debt.recurring_series_id)
+    if series is not None and "minimum_payment" in data:
+        await require_account(session, series.account_id, writable=True)
+    for required_field in ("name", "debt_type", "principal", "balance", "color", "archived"):
+        if required_field in data and data[required_field] is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Le champ {required_field} ne peut pas être nul",
+            )
     for field, value in data.items():
         setattr(debt, field, value)
     if Decimal(debt.balance) > Decimal(debt.principal):
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
+    if series is not None:
+        if "minimum_payment" in data:
+            series.amount = recurring_amount(debt.minimum_payment)
+        elif "recurring_series_id" in data:
+            debt.minimum_payment = debt_payment(series.amount)
     await session.commit()
     await session.refresh(debt)
-    return _debt_read(debt)
+    return await _debt_response(session, debt)
 
 
 @router.delete("/debts/{debt_id}", status_code=204)
 async def delete_debt(debt_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    debt = await session.get(Debt, debt_id)
-    if debt is None:
-        raise HTTPException(status_code=404, detail="Dette introuvable")
+    debt = await _require_debt(session, debt_id)
     if debt.account_id is not None:
         await require_account(session, debt.account_id, writable=True)
+    attachments = (
+        await session.execute(
+            select(DebtAttachment).where(DebtAttachment.debt_id == debt_id)
+        )
+    ).scalars().all()
+    for attachment in attachments:
+        remove_attachment(attachment.stored_path)
     await session.delete(debt)
+    await session.commit()
+
+
+def _debt_attachment_read(attachment: DebtAttachment) -> DebtAttachmentRead:
+    return DebtAttachmentRead(
+        id=attachment.id,
+        debt_id=attachment.debt_id,
+        original_name=attachment.original_name,
+        storage_path=f"/{attachment.stored_path}",
+        content_type=attachment.content_type,
+        size=attachment.size,
+    )
+
+
+async def _require_debt_attachment(
+    session: AsyncSession,
+    debt_id: int,
+    attachment_id: int,
+) -> DebtAttachment:
+    attachment = await session.get(DebtAttachment, attachment_id)
+    if attachment is None or attachment.debt_id != debt_id:
+        raise HTTPException(status_code=404, detail="Piece jointe introuvable")
+    return attachment
+
+
+@router.get(
+    "/debts/{debt_id}/attachments",
+    response_model=list[DebtAttachmentRead],
+)
+async def list_debt_attachments(
+    debt_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[DebtAttachmentRead]:
+    await _require_debt(session, debt_id)
+    rows = (
+        await session.execute(
+            select(DebtAttachment)
+            .where(DebtAttachment.debt_id == debt_id)
+            .order_by(DebtAttachment.created_at, DebtAttachment.id)
+        )
+    ).scalars().all()
+    return [_debt_attachment_read(row) for row in rows]
+
+
+@router.post(
+    "/debts/{debt_id}/attachments",
+    response_model=DebtAttachmentRead,
+    status_code=201,
+)
+async def upload_debt_attachment(
+    debt_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> DebtAttachmentRead:
+    debt = await _require_debt(session, debt_id)
+    if debt.account_id is not None:
+        await require_account(session, debt.account_id, writable=True)
+    content_type = file.content_type
+    original_name, stored_path, size = await store_attachment(file)
+    attachment = DebtAttachment(
+        debt_id=debt_id,
+        original_name=original_name,
+        stored_path=stored_path,
+        content_type=content_type,
+        size=size,
+    )
+    session.add(attachment)
+    try:
+        await session.commit()
+    except SQLAlchemyError:
+        remove_attachment(stored_path)
+        raise
+    await session.refresh(attachment)
+    return _debt_attachment_read(attachment)
+
+
+@router.get(
+    "/debts/{debt_id}/attachments/{attachment_id}/download",
+    response_model=None,
+)
+async def download_debt_attachment(
+    debt_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    attachment = await _require_debt_attachment(session, debt_id, attachment_id)
+    path = attachment_path(attachment.stored_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Fichier de piece jointe introuvable")
+    return FileResponse(
+        path,
+        filename=attachment.original_name,
+        media_type=attachment.content_type or "application/octet-stream",
+        content_disposition_type="attachment",
+    )
+
+
+@router.delete(
+    "/debts/{debt_id}/attachments/{attachment_id}",
+    status_code=204,
+)
+async def delete_debt_attachment(
+    debt_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    debt = await _require_debt(session, debt_id)
+    if debt.account_id is not None:
+        await require_account(session, debt.account_id, writable=True)
+    attachment = await _require_debt_attachment(session, debt_id, attachment_id)
+    remove_attachment(attachment.stored_path)
+    await session.delete(attachment)
     await session.commit()
 
 
@@ -138,9 +363,15 @@ def _real_estate_owned_values(asset: RealEstateAsset) -> tuple[Decimal, Decimal]
     )
 
 
-def _real_estate_read(asset: RealEstateAsset, debt: Debt | None) -> RealEstateRead:
+def _real_estate_read(
+    asset: RealEstateAsset,
+    debts: list[tuple[Debt, str | None]],
+    attachment_count: int = 0,
+) -> RealEstateRead:
     owned_purchase_price, owned_value = _real_estate_owned_values(asset)
-    debt_balance = money(Decimal(debt.balance)) if debt is not None else Decimal("0.00")
+    debt_balance = money(
+        sum((Decimal(debt.balance) for debt, _ in debts), Decimal("0"))
+    )
     return RealEstateRead(
         id=asset.id,
         name=asset.name,
@@ -152,58 +383,145 @@ def _real_estate_read(asset: RealEstateAsset, debt: Debt | None) -> RealEstateRe
             money(Decimal(asset.current_value)) if asset.current_value is not None else None
         ),
         ownership_share=Decimal(asset.ownership_share),
-        debt_id=asset.debt_id,
-        debt_name=debt.name if debt is not None else None,
+        debt_ids=[debt.id for debt, _ in debts],
+        debts=[
+            RealEstateDebtRead(
+                id=debt.id,
+                name=debt.name,
+                balance=money(Decimal(debt.balance)),
+                recurring_series_id=debt.recurring_series_id,
+                recurring_series_name=recurring_series_name,
+            )
+            for debt, recurring_series_name in debts
+        ],
         debt_balance=debt_balance,
         owned_purchase_price=owned_purchase_price,
         owned_value=owned_value,
         gain=money(owned_value - owned_purchase_price),
         net_equity=money(owned_value - debt_balance),
+        attachment_count=attachment_count,
     )
 
 
-async def _validate_real_estate_debt(
-    session: AsyncSession, debt_id: int | None, asset_id: int | None = None
-) -> Debt | None:
-    if debt_id is None:
-        return None
-    debt = await session.get(Debt, debt_id)
-    if debt is None:
+async def _load_real_estate_debts(
+    session: AsyncSession,
+    asset_id: int,
+) -> list[tuple[Debt, str | None]]:
+    rows = (
+        await session.execute(
+            select(Debt, RecurringSeries.label)
+            .join(RealEstateDebtLink, RealEstateDebtLink.debt_id == Debt.id)
+            .outerjoin(
+                RecurringSeries,
+                RecurringSeries.id == Debt.recurring_series_id,
+            )
+            .where(RealEstateDebtLink.asset_id == asset_id)
+            .order_by(Debt.name, Debt.id)
+        )
+    ).all()
+    return [(debt, recurring_name) for debt, recurring_name in rows]
+
+
+async def _validate_real_estate_debts(
+    session: AsyncSession,
+    debt_ids: list[int],
+    asset_id: int | None = None,
+) -> list[Debt]:
+    if not debt_ids:
+        return []
+    debts = (
+        await session.execute(select(Debt).where(Debt.id.in_(debt_ids)))
+    ).scalars().all()
+    debts_by_id = {debt.id: debt for debt in debts}
+    if len(debts_by_id) != len(debt_ids):
         raise HTTPException(status_code=404, detail="Dette introuvable")
-    statement = select(RealEstateAsset.id).where(RealEstateAsset.debt_id == debt_id)
+    statement = select(RealEstateDebtLink.debt_id).where(
+        RealEstateDebtLink.debt_id.in_(debt_ids)
+    )
     if asset_id is not None:
-        statement = statement.where(RealEstateAsset.id != asset_id)
+        statement = statement.where(RealEstateDebtLink.asset_id != asset_id)
     if await session.scalar(statement) is not None:
         raise HTTPException(
             status_code=409, detail="Cette dette est deja rattachee a un bien immobilier"
         )
-    return debt
+    return [debts_by_id[debt_id] for debt_id in debt_ids]
+
+
+async def _replace_real_estate_debts(
+    session: AsyncSession,
+    asset_id: int,
+    debts: list[Debt],
+) -> None:
+    existing = (
+        await session.execute(
+            select(RealEstateDebtLink).where(RealEstateDebtLink.asset_id == asset_id)
+        )
+    ).scalars().all()
+    for link in existing:
+        await session.delete(link)
+    await session.flush()
+    session.add_all(
+        RealEstateDebtLink(asset_id=asset_id, debt_id=debt.id)
+        for debt in debts
+    )
 
 
 @router.get("/real-estate", response_model=list[RealEstateRead])
 async def list_real_estate(
     session: AsyncSession = Depends(get_session),
 ) -> list[RealEstateRead]:
-    rows = (
+    assets = (
         await session.execute(
-            select(RealEstateAsset, Debt)
-            .outerjoin(Debt, Debt.id == RealEstateAsset.debt_id)
-            .order_by(RealEstateAsset.name)
+            select(RealEstateAsset).order_by(RealEstateAsset.name)
+        )
+    ).scalars().all()
+    debts_by_asset: dict[int, list[tuple[Debt, str | None]]] = {}
+    linked_debts = (
+        await session.execute(
+            select(RealEstateDebtLink.asset_id, Debt, RecurringSeries.label)
+            .join(Debt, Debt.id == RealEstateDebtLink.debt_id)
+            .outerjoin(
+                RecurringSeries,
+                RecurringSeries.id == Debt.recurring_series_id,
+            )
+            .order_by(RealEstateDebtLink.asset_id, Debt.name, Debt.id)
         )
     ).all()
-    return [_real_estate_read(asset, debt) for asset, debt in rows]
+    for asset_id, debt, recurring_name in linked_debts:
+        debts_by_asset.setdefault(asset_id, []).append((debt, recurring_name))
+    attachment_counts = {
+        asset_id: count
+        for asset_id, count in (
+            await session.execute(
+                select(
+                    RealEstateAttachment.asset_id,
+                    func.count(RealEstateAttachment.id),
+                ).group_by(RealEstateAttachment.asset_id)
+            )
+        ).all()
+    }
+    return [
+        _real_estate_read(
+            asset,
+            debts_by_asset.get(asset.id, []),
+            attachment_count=int(attachment_counts.get(asset.id, 0)),
+        )
+        for asset in assets
+    ]
 
 
 @router.post("/real-estate", response_model=RealEstateRead, status_code=201)
 async def create_real_estate(
     payload: RealEstateCreate, session: AsyncSession = Depends(get_session)
 ) -> RealEstateRead:
-    debt = await _validate_real_estate_debt(session, payload.debt_id)
-    asset = RealEstateAsset(**payload.model_dump())
+    debts = await _validate_real_estate_debts(session, payload.debt_ids)
+    asset = RealEstateAsset(**payload.model_dump(exclude={"debt_ids"}))
     session.add(asset)
+    await session.flush()
+    await _replace_real_estate_debts(session, asset.id, debts)
     await session.commit()
     await session.refresh(asset)
-    return _real_estate_read(asset, debt)
+    return _real_estate_read(asset, await _load_real_estate_debts(session, asset.id))
 
 
 @router.patch("/real-estate/{asset_id}", response_model=RealEstateRead)
@@ -216,18 +534,28 @@ async def update_real_estate(
     if asset is None:
         raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
     data = payload.model_dump(exclude_unset=True)
-    debt = (
-        await _validate_real_estate_debt(session, data["debt_id"], asset_id)
-        if "debt_id" in data
-        else await session.get(Debt, asset.debt_id)
-        if asset.debt_id is not None
+    debt_ids = data.pop("debt_ids", None)
+    debts = (
+        await _validate_real_estate_debts(session, debt_ids, asset_id)
+        if debt_ids is not None
         else None
     )
     for field, value in data.items():
         setattr(asset, field, value)
+    if debts is not None:
+        await _replace_real_estate_debts(session, asset.id, debts)
     await session.commit()
     await session.refresh(asset)
-    return _real_estate_read(asset, debt)
+    attachment_count = await session.scalar(
+        select(func.count())
+        .select_from(RealEstateAttachment)
+        .where(RealEstateAttachment.asset_id == asset.id)
+    )
+    return _real_estate_read(
+        asset,
+        await _load_real_estate_debts(session, asset.id),
+        int(attachment_count or 0),
+    )
 
 
 @router.delete("/real-estate/{asset_id}", status_code=204)
@@ -237,7 +565,135 @@ async def delete_real_estate(
     asset = await session.get(RealEstateAsset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    attachments = (
+        await session.execute(
+            select(RealEstateAttachment).where(RealEstateAttachment.asset_id == asset_id)
+        )
+    ).scalars().all()
+    for attachment in attachments:
+        remove_attachment(attachment.stored_path)
     await session.delete(asset)
+    await session.commit()
+
+
+def _real_estate_attachment_read(
+    attachment: RealEstateAttachment,
+) -> RealEstateAttachmentRead:
+    return RealEstateAttachmentRead(
+        id=attachment.id,
+        asset_id=attachment.asset_id,
+        original_name=attachment.original_name,
+        storage_path=f"/{attachment.stored_path}",
+        content_type=attachment.content_type,
+        size=attachment.size,
+    )
+
+
+async def _require_real_estate_attachment(
+    session: AsyncSession,
+    asset_id: int,
+    attachment_id: int,
+) -> RealEstateAttachment:
+    attachment = await session.get(RealEstateAttachment, attachment_id)
+    if attachment is None or attachment.asset_id != asset_id:
+        raise HTTPException(status_code=404, detail="Piece jointe introuvable")
+    return attachment
+
+
+@router.get(
+    "/real-estate/{asset_id}/attachments",
+    response_model=list[RealEstateAttachmentRead],
+)
+async def list_real_estate_attachments(
+    asset_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[RealEstateAttachmentRead]:
+    if await session.get(RealEstateAsset, asset_id) is None:
+        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    rows = (
+        await session.execute(
+            select(RealEstateAttachment)
+            .where(RealEstateAttachment.asset_id == asset_id)
+            .order_by(RealEstateAttachment.created_at, RealEstateAttachment.id)
+        )
+    ).scalars().all()
+    return [_real_estate_attachment_read(row) for row in rows]
+
+
+@router.post(
+    "/real-estate/{asset_id}/attachments",
+    response_model=RealEstateAttachmentRead,
+    status_code=201,
+)
+async def upload_real_estate_attachment(
+    asset_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> RealEstateAttachmentRead:
+    if await session.get(RealEstateAsset, asset_id) is None:
+        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    content_type = file.content_type
+    original_name, stored_path, size = await store_attachment(file)
+    attachment = RealEstateAttachment(
+        asset_id=asset_id,
+        original_name=original_name,
+        stored_path=stored_path,
+        content_type=content_type,
+        size=size,
+    )
+    session.add(attachment)
+    try:
+        await session.commit()
+    except SQLAlchemyError:
+        remove_attachment(stored_path)
+        raise
+    await session.refresh(attachment)
+    return _real_estate_attachment_read(attachment)
+
+
+@router.get(
+    "/real-estate/{asset_id}/attachments/{attachment_id}/download",
+    response_model=None,
+)
+async def download_real_estate_attachment(
+    asset_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    attachment = await _require_real_estate_attachment(
+        session,
+        asset_id,
+        attachment_id,
+    )
+    path = attachment_path(attachment.stored_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Fichier de piece jointe introuvable")
+    return FileResponse(
+        path,
+        filename=attachment.original_name,
+        media_type=attachment.content_type or "application/octet-stream",
+        content_disposition_type="attachment",
+    )
+
+
+@router.delete(
+    "/real-estate/{asset_id}/attachments/{attachment_id}",
+    status_code=204,
+)
+async def delete_real_estate_attachment(
+    asset_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    if await session.get(RealEstateAsset, asset_id) is None:
+        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    attachment = await _require_real_estate_attachment(
+        session,
+        asset_id,
+        attachment_id,
+    )
+    remove_attachment(attachment.stored_path)
+    await session.delete(attachment)
     await session.commit()
 
 
@@ -281,7 +737,7 @@ async def list_holdings(
 async def create_holding(
     payload: HoldingCreate, session: AsyncSession = Depends(get_session)
 ) -> HoldingRead:
-    await require_account(session, payload.account_id, writable=True)
+    await require_holding_account(session, payload.account_id, writable=True)
     holding = Holding(**payload.model_dump())
     session.add(holding)
     await session.commit()
@@ -297,7 +753,10 @@ async def update_holding(
     if holding is None:
         raise HTTPException(status_code=404, detail="Actif introuvable")
     await require_account(session, holding.account_id, writable=True)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "account_id" in data:
+        await require_holding_account(session, data["account_id"], writable=True)
+    for field, value in data.items():
         setattr(holding, field, value)
     await session.commit()
     await session.refresh(holding)

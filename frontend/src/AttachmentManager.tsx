@@ -8,6 +8,50 @@ import { FormInput, Icon, errorMessage } from './ui'
 export type AttachmentOwner =
   | { kind: 'transaction'; transactionId: number }
   | { kind: 'snapshot'; accountId: number; snapshotId: number }
+  | { kind: 'recurring'; seriesId: number }
+  | { kind: 'debt'; debtId: number }
+  | { kind: 'real-estate'; assetId: number }
+
+interface AttachmentConfig {
+  resourcePath: string
+  attachmentQueryKey: readonly unknown[]
+  parentQueryKeys: readonly (readonly unknown[])[]
+}
+
+function attachmentConfig(owner: AttachmentOwner): AttachmentConfig {
+  switch (owner.kind) {
+    case 'transaction':
+      return {
+        resourcePath: `/transactions/${owner.transactionId}`,
+        attachmentQueryKey: ['transaction-attachments', owner.transactionId],
+        parentQueryKeys: [['transactions'], ['transaction-ledger']],
+      }
+    case 'snapshot':
+      return {
+        resourcePath: `/accounts/${owner.accountId}/snapshots/${owner.snapshotId}`,
+        attachmentQueryKey: ['snapshot-attachments', owner.accountId, owner.snapshotId],
+        parentQueryKeys: [['account-snapshots', owner.accountId]],
+      }
+    case 'recurring':
+      return {
+        resourcePath: `/recurring/${owner.seriesId}`,
+        attachmentQueryKey: ['recurring-attachments', owner.seriesId],
+        parentQueryKeys: [['recurring-series']],
+      }
+    case 'debt':
+      return {
+        resourcePath: `/debts/${owner.debtId}`,
+        attachmentQueryKey: ['debt-attachments', owner.debtId],
+        parentQueryKeys: [['debts']],
+      }
+    case 'real-estate':
+      return {
+        resourcePath: `/real-estate/${owner.assetId}`,
+        attachmentQueryKey: ['real-estate-attachments', owner.assetId],
+        parentQueryKeys: [['real-estate']],
+      }
+  }
+}
 
 export function AttachmentManager({
   owner,
@@ -21,15 +65,7 @@ export function AttachmentManager({
   const queryClient = useQueryClient()
   const [file, setFile] = useState<File | null>(null)
   const [inputKey, setInputKey] = useState(0)
-  const resourcePath = owner.kind === 'transaction'
-    ? `/transactions/${owner.transactionId}`
-    : `/accounts/${owner.accountId}/snapshots/${owner.snapshotId}`
-  const attachmentQueryKey = owner.kind === 'transaction'
-    ? ['transaction-attachments', owner.transactionId]
-    : ['snapshot-attachments', owner.accountId, owner.snapshotId]
-  const parentQueryKeys = owner.kind === 'transaction'
-    ? [['transactions'], ['transaction-ledger']]
-    : [['account-snapshots', owner.accountId]]
+  const { resourcePath, attachmentQueryKey, parentQueryKeys } = attachmentConfig(owner)
   const attachments = useQuery({
     queryKey: attachmentQueryKey,
     queryFn: () => apiGet<StoredAttachment[]>(`${resourcePath}/attachments`),

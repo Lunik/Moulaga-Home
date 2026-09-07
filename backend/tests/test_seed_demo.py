@@ -25,12 +25,15 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
     assert result.snapshots == 309
     assert result.debts == 4
     assert result.real_estate_assets == 2
-    assert result.holdings == 2
+    assert result.holdings == 3
     assert result.households == 1
     assert result.portfolio_snapshots > 0
     assert result.merchants > 0
     assert result.transaction_attachments == 2
     assert result.snapshot_attachments == 2
+    assert result.recurring_attachments == 1
+    assert result.debt_attachments == 1
+    assert result.real_estate_attachments == 1
 
     with TestClient(main.create_app()) as client:
         accounts = client.get("/api/accounts").json()
@@ -47,29 +50,102 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         assert next(
             account for account in accounts if account["name"] == "PER/PERCOL Amundi demo"
         )["type"] == "percol"
-        assert next(
+        life_insurance = next(
             account for account in accounts if account["name"] == "Assurance vie Boursobank demo"
-        )["type"] == "life_insurance"
+        )
+        assert life_insurance["type"] == "life_insurance"
         assert next(
             account for account in accounts if account["name"] == "Wallet crypto demo"
         )["type"] == "wallet"
         assert savings["savings_product"] == "Livret A"
         assert savings["legal_cap"] == "22950.00"
-        assert client.get("/api/debts").json()
+        debts = client.get("/api/debts").json()
+        mortgage = next(debt for debt in debts if debt["debt_type"] == "mortgage")
+        assert mortgage["recurring_series_name"] == "Mensualite pret immobilier"
+        assert mortgage["attachment_count"] == 1
+        mortgage_attachments = client.get(
+            f"/api/debts/{mortgage['id']}/attachments"
+        ).json()
+        assert [item["original_name"] for item in mortgage_attachments] == [
+            "offre-pret-immobilier-demo.txt"
+        ]
+        assert client.get(
+            f"/api/debts/{mortgage['id']}/attachments/"
+            f"{mortgage_attachments[0]['id']}/download"
+        ).status_code == 200
         real_estate = client.get("/api/real-estate").json()
         assert len(real_estate) == 2
         apartment = next(asset for asset in real_estate if asset["name"] == "Appartement demo")
-        assert apartment["debt_name"] == "Pret immobilier demo"
+        assert {debt["name"] for debt in apartment["debts"]} == {
+            "Pret immobilier demo",
+            "Pret travaux demo",
+        }
+        assert apartment["debt_balance"] == "186200.00"
+        assert apartment["attachment_count"] == 1
+        property_attachments = client.get(
+            f"/api/real-estate/{apartment['id']}/attachments"
+        ).json()
+        assert [item["original_name"] for item in property_attachments] == [
+            "acte-propriete-demo.txt"
+        ]
+        assert client.get(
+            f"/api/real-estate/{apartment['id']}/attachments/"
+            f"{property_attachments[0]['id']}/download"
+        ).status_code == 200
         land = next(asset for asset in real_estate if asset["name"] == "Terrain demo")
         assert land["current_value"] is None
         assert land["owned_value"] == "22500.00"
         assert land["gain"] == "0.00"
-        assert client.get("/api/holdings").json()
+        holdings = client.get("/api/holdings").json()
+        assert len(holdings) == 3
+        account_types = {account["id"]: account["type"] for account in accounts}
+        assert {account_types[holding["account_id"]] for holding in holdings} == {
+            "pea",
+            "life_insurance",
+        }
+        assert any(
+            holding["account_id"] == life_insurance["id"] for holding in holdings
+        )
         rules = client.get("/api/rules").json()
         assert any(len(rule["patterns"]) >= 3 for rule in rules)
         recurring = client.get("/api/recurring").json()
-        assert len(recurring) == 3
+        assert len(recurring) == 8
         assert any(series["amount_type"] == "variable" for series in recurring)
+        auto_loan = next(debt for debt in debts if debt["name"] == "Pret travaux demo")
+        assert auto_loan["recurring_series_id"] is not None
+        auto_loan_series = next(
+            series
+            for series in recurring
+            if series["id"] == auto_loan["recurring_series_id"]
+        )
+        assert auto_loan_series["label"] == "Mensualité · Pret travaux demo"
+        assert auto_loan_series["amount"] == "-250.00"
+        student_loan = next(debt for debt in debts if debt["name"] == "Pret etudiant")
+        assert student_loan["recurring_series_id"] is not None
+        assert next(
+            series
+            for series in recurring
+            if series["id"] == student_loan["recurring_series_id"]
+        )["amount"] == "-80.00"
+        insurance = next(
+            series for series in recurring if series["recurring_type"] == "credit_insurance"
+        )
+        assert insurance["credit_insurance_rate"] == "0.320"
+        assert insurance["attachment_count"] == 1
+        recurring_attachments = client.get(
+            f"/api/recurring/{insurance['id']}/attachments"
+        ).json()
+        assert [item["original_name"] for item in recurring_attachments] == [
+            "contrat-assurance-emprunteur-demo.txt"
+        ]
+        assert client.get(
+            f"/api/recurring/{insurance['id']}/attachments/"
+            f"{recurring_attachments[0]['id']}/download"
+        ).status_code == 200
+        assert any(
+            series["recurring_type"] == "other" and series["custom_type"]
+            for series in recurring
+        )
         assert client.get("/api/recurring/detect").json()
         envelopes = client.get("/api/budget/envelopes").json()
         unlimited = next(envelope for envelope in envelopes if envelope["category_name"] == "Transport")
@@ -396,6 +472,11 @@ def test_seed_demo_covers_every_account_page_state(tmp_path, monkeypatch):
         assert len(holdings) == 2
         assert any(float(holding["gain"]) > 0 for holding in holdings)
         assert any(float(holding["gain"]) < 0 for holding in holdings)
+        assert len(
+            client.get(
+                "/api/holdings", params={"account_id": life_insurance["id"]}
+            ).json()
+        ) == 1
 
         archived_transactions = client.get(
             "/api/transactions",
@@ -438,7 +519,7 @@ def test_seed_demo_refuses_to_overwrite_without_reset(tmp_path, monkeypatch):
     old_attachment_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(old_attachment_files) == 4
+    assert len(old_attachment_files) == 7
     with pytest.raises(seed.SeedError):
         asyncio.run(seed.seed_demo())
 
@@ -448,7 +529,7 @@ def test_seed_demo_refuses_to_overwrite_without_reset(tmp_path, monkeypatch):
     new_attachment_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(new_attachment_files) == 4
+    assert len(new_attachment_files) == 7
     assert old_attachment_files.isdisjoint(new_attachment_files)
 
 

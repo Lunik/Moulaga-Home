@@ -37,6 +37,7 @@ from ..attachments import remove_attachment, store_attachment
 from ..common import add_month, get_preferences, money
 from ..config import settings
 from ..db import SessionLocal, engine, init_db
+from ..debt_recurring import build_debt_recurring_series
 from ..models import (
     Account,
     BalanceSnapshot,
@@ -46,6 +47,7 @@ from ..models import (
     Category,
     Contribution,
     Debt,
+    DebtAttachment,
     Goal,
     GoalContribution,
     Holding,
@@ -54,8 +56,11 @@ from ..models import (
     MerchantIdentity,
     PortfolioSnapshot,
     RealEstateAsset,
+    RealEstateAttachment,
+    RealEstateDebtLink,
     RecurringChange,
     RecurringSeries,
+    RecurringSeriesAttachment,
     SharedAccountLink,
     Transaction,
     TransactionAttachment,
@@ -88,6 +93,9 @@ class SeedResult:
     merchants: int
     transaction_attachments: int
     snapshot_attachments: int
+    recurring_attachments: int
+    debt_attachments: int
+    real_estate_attachments: int
 
 
 def _guard_data_dir() -> None:
@@ -122,7 +130,13 @@ async def _has_user_data(session: AsyncSession) -> bool:
 
 
 async def _remove_attachment_files(session: AsyncSession) -> None:
-    for model in (TransactionAttachment, BalanceSnapshotAttachment):
+    for model in (
+        TransactionAttachment,
+        BalanceSnapshotAttachment,
+        RecurringSeriesAttachment,
+        DebtAttachment,
+        RealEstateAttachment,
+    ):
         stored_paths = (await session.scalars(select(model.stored_path))).all()
         for stored_path in stored_paths:
             remove_attachment(stored_path)
@@ -443,8 +457,9 @@ async def _seed(
     checking_running = Decimal(checking.initial_balance)
     savings_running = Decimal(savings.initial_balance)
     boursobank_running = Decimal(boursobank_checking.initial_balance)
+    life_insurance_snapshot_values = ("16700.00", "17450.00", "18100.00", "18500.00")
     additional_snapshot_series = [
-        (life_insurance, ("16700.00", "17450.00", "18100.00", "18500.00")),
+        (life_insurance, life_insurance_snapshot_values),
         (invest, ("2100.00", "2300.00", "2450.00", "2634.00")),
         (crypto_wallet, ("3600.00", "4100.00", "3850.00", "4200.00")),
     ]
@@ -553,7 +568,7 @@ async def _seed(
     rent_series = RecurringSeries(
         label="Loyer", account_id=checking.id, category_id=logement.id, frequency="monthly",
         next_due=add_month(months[-1], 1).replace(day=3), amount=money("-750.00"),
-        amount_type="fixed", status="active", confidence=money("0.95"),
+        amount_type="fixed", status="active", recurring_type="rent", confidence=money("0.95"),
     )
     session.add(rent_series)
     await session.flush()
@@ -567,6 +582,7 @@ async def _seed(
             amount=money("-14.90"),
             amount_type="fixed",
             status="active",
+            recurring_type="subscription",
             confidence=money("1.00"),
         )
     )
@@ -580,9 +596,50 @@ async def _seed(
             amount=money("-95.00"),
             amount_type="variable",
             status="active",
+            recurring_type="energy",
             confidence=money("0.85"),
         )
     )
+    loan_series = RecurringSeries(
+        label="Mensualite pret immobilier",
+        account_id=checking.id,
+        category_id=logement.id,
+        frequency="monthly",
+        next_due=add_month(anchor, 1).replace(day=15),
+        amount=money("-920.00"),
+        amount_type="fixed",
+        status="active",
+        recurring_type="loan_payment",
+        confidence=money("1.00"),
+    )
+    credit_insurance_series = RecurringSeries(
+        label="Assurance emprunteur",
+        account_id=checking.id,
+        category_id=logement.id,
+        frequency="monthly",
+        next_due=add_month(anchor, 1).replace(day=5),
+        amount=money("-34.80"),
+        amount_type="variable",
+        status="active",
+        recurring_type="credit_insurance",
+        credit_insurance_rate=Decimal("0.320"),
+        confidence=money("1.00"),
+    )
+    custom_series = RecurringSeries(
+        label="Cotisation associative",
+        account_id=checking.id,
+        category_id=loisirs.id,
+        frequency="yearly",
+        next_due=add_month(anchor, 2).replace(day=12),
+        amount=money("-45.00"),
+        amount_type="fixed",
+        status="active",
+        recurring_type="other",
+        custom_type="Cotisation associative",
+        confidence=money("1.00"),
+    )
+    session.add_all([loan_series, credit_insurance_series, custom_series])
+    await session.flush()
     session.add(
         RecurringChange(
             series_id=rent_series.id, change_type="amount", detected_amount=money("-780.00"),
@@ -594,52 +651,89 @@ async def _seed(
     # --- Debts ------------------------------------------------------------- #
     mortgage = Debt(
         name="Pret immobilier demo",
+        debt_type="mortgage",
         principal=money("210000.00"),
         balance=money("178000.00"),
         interest_rate=Decimal("2.10"),
         minimum_payment=money("920.00"),
+        recurring_series_id=loan_series.id,
         due_date=date(2042, 5, 15),
         color="#7c3aed",
+        archived=False,
+    )
+    auto_loan = Debt(
+        name="Pret travaux demo",
+        debt_type="consumer_credit",
+        principal=money("15000.00"),
+        balance=money("8200.00"),
+        interest_rate=Decimal("2.90"),
+        minimum_payment=money("250.00"),
+        account_id=checking.id,
+        due_date=add_month(anchor, 1).replace(day=5),
+        color="#ef4444",
+        archived=False,
+    )
+    student_loan = Debt(
+        name="Pret etudiant",
+        debt_type="other",
+        principal=money("6000.00"),
+        balance=money("1500.00"),
+        interest_rate=Decimal("1.20"),
+        minimum_payment=money("80.00"),
+        account_id=checking.id,
+        due_date=add_month(anchor, 2).replace(day=15),
+        color="#f97316",
         archived=False,
     )
     session.add_all(
         [
             mortgage,
-            Debt(name="Pret auto", principal=money("15000.00"), balance=money("8200.00"),
-                 interest_rate=Decimal("2.90"), minimum_payment=money("250.00"),
-                 account_id=checking.id, due_date=add_month(anchor, 1).replace(day=5),
-                 color="#ef4444", archived=False),
-            Debt(name="Pret etudiant", principal=money("6000.00"), balance=money("1500.00"),
-                 interest_rate=Decimal("1.20"), minimum_payment=money("80.00"),
-                 due_date=add_month(anchor, 2).replace(day=15), color="#f97316", archived=False),
-            Debt(name="Ancien pret solde", principal=money("2000.00"), balance=money("0.00"),
+            auto_loan,
+            student_loan,
+            Debt(name="Ancien pret solde", debt_type="other",
+                 principal=money("2000.00"), balance=money("0.00"),
                  interest_rate=Decimal("0.00"), minimum_payment=money("0.00"),
                  color="#94a3b8", archived=True),
         ]
     )
     await session.flush()
+    automatic_debt_series = [
+        build_debt_recurring_series(auto_loan),
+        build_debt_recurring_series(student_loan),
+    ]
+    session.add_all(automatic_debt_series)
+    await session.flush()
+    for debt, series in zip(
+        (auto_loan, student_loan),
+        automatic_debt_series,
+        strict=True,
+    ):
+        debt.recurring_series_id = series.id
 
     # --- Real estate ------------------------------------------------------- #
+    apartment = RealEstateAsset(
+        name="Appartement demo",
+        property_type="primary_residence",
+        address="12 rue des Exemples, 75000 Paris",
+        acquired_on=date(2021, 5, 15),
+        purchase_price=money("280000.00"),
+        current_value=money("310000.00"),
+        ownership_share=Decimal("100.00"),
+    )
+    land = RealEstateAsset(
+        name="Terrain demo",
+        property_type="land",
+        acquired_on=date(2024, 3, 10),
+        purchase_price=money("45000.00"),
+        current_value=None,
+        ownership_share=Decimal("50.00"),
+    )
+    session.add_all([apartment, land])
+    await session.flush()
     session.add_all(
         [
-            RealEstateAsset(
-                name="Appartement demo",
-                property_type="primary_residence",
-                address="12 rue des Exemples, 75000 Paris",
-                acquired_on=date(2021, 5, 15),
-                purchase_price=money("280000.00"),
-                current_value=money("310000.00"),
-                ownership_share=Decimal("100.00"),
-                debt_id=mortgage.id,
-            ),
-            RealEstateAsset(
-                name="Terrain demo",
-                property_type="land",
-                acquired_on=date(2024, 3, 10),
-                purchase_price=money("45000.00"),
-                current_value=None,
-                ownership_share=Decimal("50.00"),
-            ),
+            RealEstateDebtLink(asset_id=apartment.id, debt_id=mortgage.id),
+            RealEstateDebtLink(asset_id=apartment.id, debt_id=auto_loan.id),
         ]
     )
 
@@ -652,7 +746,16 @@ async def _seed(
         account_id=invest.id, name="Fonds Obligations", symbol="BND", asset_class="bond",
         quantity=Decimal("30"), average_price=Decimal("48"), current_price=Decimal("47"),
     )
-    session.add_all([etf, bond])
+    life_fund = Holding(
+        account_id=life_insurance.id,
+        name="Fonds euros",
+        symbol="FONDS-EUR",
+        asset_class="fund",
+        quantity=Decimal("100"),
+        average_price=Decimal("175"),
+        current_price=Decimal("185"),
+    )
+    session.add_all([etf, bond, life_fund])
     await session.flush()
     contribution_count = 0
     for month in months:
@@ -668,9 +771,18 @@ async def _seed(
     portfolio_snapshot_count = 0
     base_cost = Decimal("304300.00")
     base_value = Decimal("334350.00")
+    life_insurance_cost_values = ("16000.00", "16500.00", "17000.00", "17500.00")
     for index, month in enumerate(months):
-        cost_basis = money(base_cost + Decimal(index) * Decimal("200.00"))
-        market_value = money(base_value + Decimal(index) * Decimal("260.00"))
+        cost_basis = money(
+            base_cost
+            + Decimal(index) * Decimal("200.00")
+            + Decimal(life_insurance_cost_values[index])
+        )
+        market_value = money(
+            base_value
+            + Decimal(index) * Decimal("260.00")
+            + Decimal(life_insurance_snapshot_values[index])
+        )
         session.add(
             PortfolioSnapshot(
                 period=month.strftime("%Y-%m"),
@@ -773,6 +885,66 @@ async def _seed(
             )
         )
 
+    recurring_attachments = [
+        (
+            credit_insurance_series,
+            "contrat-assurance-emprunteur-demo.txt",
+            b"Moulaga QA - contrat recurrent entierement synthetique.\n",
+        ),
+    ]
+    for series, filename, payload in recurring_attachments:
+        original_name, stored_path, size = await _store_demo_file(filename, payload)
+        created_attachment_paths.append(stored_path)
+        session.add(
+            RecurringSeriesAttachment(
+                series_id=series.id,
+                original_name=original_name,
+                stored_path=stored_path,
+                content_type="text/plain",
+                size=size,
+            )
+        )
+
+    debt_attachments = [
+        (
+            mortgage,
+            "offre-pret-immobilier-demo.txt",
+            b"Moulaga QA - offre de pret entierement synthetique.\n",
+        ),
+    ]
+    for debt, filename, payload in debt_attachments:
+        original_name, stored_path, size = await _store_demo_file(filename, payload)
+        created_attachment_paths.append(stored_path)
+        session.add(
+            DebtAttachment(
+                debt_id=debt.id,
+                original_name=original_name,
+                stored_path=stored_path,
+                content_type="text/plain",
+                size=size,
+            )
+        )
+
+    real_estate_attachments = [
+        (
+            apartment,
+            "acte-propriete-demo.txt",
+            b"Moulaga QA - acte de propriete entierement synthetique.\n",
+        ),
+    ]
+    for asset, filename, payload in real_estate_attachments:
+        original_name, stored_path, size = await _store_demo_file(filename, payload)
+        created_attachment_paths.append(stored_path)
+        session.add(
+            RealEstateAttachment(
+                asset_id=asset.id,
+                original_name=original_name,
+                stored_path=stored_path,
+                content_type="text/plain",
+                size=size,
+            )
+        )
+
     total_categories = await session.scalar(select(func.count()).select_from(Category))
     return SeedResult(
         accounts=10,
@@ -780,11 +952,11 @@ async def _seed(
         snapshots=snapshot_count,
         categories=int(total_categories or 0),
         rules=2,
-        recurring=3,
+        recurring=8,
         changes=1,
         debts=4,
         real_estate_assets=2,
-        holdings=2,
+        holdings=3,
         contributions=contribution_count,
         households=1,
         goals=1,
@@ -792,6 +964,9 @@ async def _seed(
         merchants=merchant_count,
         transaction_attachments=len(transaction_attachments),
         snapshot_attachments=len(snapshot_attachments),
+        recurring_attachments=len(recurring_attachments),
+        debt_attachments=len(debt_attachments),
+        real_estate_attachments=len(real_estate_attachments),
     )
 
 
@@ -833,7 +1008,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{result.portfolio_snapshots} valorisation(s), {result.merchants} identite(s), "
         f"{result.households} foyer, {result.goals} objectif, "
         f"{result.transaction_attachments} justificatif(s) de transaction, "
-        f"{result.snapshot_attachments} releve(s) joint(s)."
+        f"{result.snapshot_attachments} releve(s) joint(s), "
+        f"{result.recurring_attachments} piece(s) jointe(s) recurrente(s), "
+        f"{result.debt_attachments} piece(s) jointe(s) de dette, "
+        f"{result.real_estate_attachments} piece(s) jointe(s) immobiliere(s)."
     )
     return 0
 

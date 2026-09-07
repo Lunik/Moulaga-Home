@@ -16,7 +16,13 @@ from ..category_budgeting import (
 )
 from ..common import cycle_bounds, get_preferences, money
 from ..db import get_session
-from ..models import Account, Category, Contribution, RecurringSeries, Transaction
+from ..models import (
+    Account,
+    Category,
+    Contribution,
+    RecurringSeries,
+    Transaction,
+)
 from ..schemas import (
     BudgetCycleOverview,
     CashflowFlow,
@@ -99,7 +105,6 @@ async def cycle_overview(
                 Transaction.category_id.in_(covered_category_ids),
             )
         )
-    # Upcoming recurring items whose next occurrence falls inside the cycle.
     recurring_rows = (
         await session.execute(
             select(RecurringSeries.amount).where(

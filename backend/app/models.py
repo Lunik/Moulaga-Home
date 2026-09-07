@@ -225,6 +225,11 @@ class RecurringSeries(Base):
     amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     amount_type: Mapped[str] = mapped_column(String(16), default="fixed")  # fixed|variable
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    recurring_type: Mapped[str] = mapped_column(String(32), default="uncategorized", index=True)
+    custom_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    credit_insurance_rate: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 3), nullable=True
+    )
     confidence: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("1.00"))
     match_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -234,6 +239,25 @@ class RecurringSeries(Base):
     changes: Mapped[list[RecurringChange]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
+    attachments: Mapped[list[RecurringSeriesAttachment]] = relationship(
+        back_populates="series", cascade="all, delete-orphan"
+    )
+
+
+class RecurringSeriesAttachment(Base):
+    __tablename__ = "recurring_series_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    series_id: Mapped[int] = mapped_column(
+        ForeignKey("recurring_series.id", ondelete="CASCADE"), index=True
+    )
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(512), unique=True)
+    content_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    series: Mapped[RecurringSeries] = relationship(back_populates="attachments")
 
 
 class RecurringChange(Base):
@@ -260,6 +284,7 @@ class Debt(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
+    debt_type: Mapped[str] = mapped_column(String(32), default="other", index=True)
     principal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
     balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
     interest_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
@@ -267,10 +292,34 @@ class Debt(Base):
     account_id: Mapped[int | None] = mapped_column(
         ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
     )
+    recurring_series_id: Mapped[int | None] = mapped_column(
+        ForeignKey("recurring_series.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     color: Mapped[str] = mapped_column(String(16), default="#ef4444")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    recurring_series: Mapped[RecurringSeries | None] = relationship()
+    attachments: Mapped[list[DebtAttachment]] = relationship(
+        back_populates="debt", cascade="all, delete-orphan"
+    )
+
+
+class DebtAttachment(Base):
+    __tablename__ = "debt_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    debt_id: Mapped[int] = mapped_column(
+        ForeignKey("debts.id", ondelete="CASCADE"), index=True
+    )
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(512), unique=True)
+    content_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    debt: Mapped[Debt] = relationship(back_populates="attachments")
 
 
 class RealEstateAsset(Base):
@@ -286,12 +335,48 @@ class RealEstateAsset(Base):
     ownership_share: Mapped[Decimal] = mapped_column(
         Numeric(5, 2), default=Decimal("100.00")
     )
-    debt_id: Mapped[int | None] = mapped_column(
-        ForeignKey("debts.id", ondelete="SET NULL"), nullable=True, unique=True, index=True
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    debt: Mapped[Debt | None] = relationship()
+    debt_links: Mapped[list[RealEstateDebtLink]] = relationship(
+        back_populates="asset", cascade="all, delete-orphan", passive_deletes=True
+    )
+    attachments: Mapped[list[RealEstateAttachment]] = relationship(
+        back_populates="asset", cascade="all, delete-orphan"
+    )
+
+
+class RealEstateDebtLink(Base):
+    __tablename__ = "real_estate_debt_links"
+    __table_args__ = (
+        UniqueConstraint("debt_id", name="uq_real_estate_debt_links_debt"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("real_estate_assets.id", ondelete="CASCADE"), index=True
+    )
+    debt_id: Mapped[int] = mapped_column(
+        ForeignKey("debts.id", ondelete="CASCADE"), index=True
+    )
+
+    asset: Mapped[RealEstateAsset] = relationship(back_populates="debt_links")
+    debt: Mapped[Debt] = relationship()
+
+
+class RealEstateAttachment(Base):
+    __tablename__ = "real_estate_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("real_estate_assets.id", ondelete="CASCADE"), index=True
+    )
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(512), unique=True)
+    content_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    asset: Mapped[RealEstateAsset] = relationship(back_populates="attachments")
 
 
 class Holding(Base):

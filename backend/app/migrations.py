@@ -8,8 +8,9 @@ module performs a tiny, safe, idempotent reconciliation:
 * new tables are created by ``create_all``;
 * missing columns on pre-existing tables are added with ``ALTER TABLE ... ADD
   COLUMN`` (a non-destructive SQLite operation);
-* constrained tables are rebuilt transactionally when an existing column must
-  become nullable;
+* constrained tables are rebuilt transactionally when columns or constraints
+  must change;
+* tables belonging to explicitly retired features are removed after the backup;
 * a timestamped copy of the database file is taken *before* any structural
   change so an upgrade can never lose data.
 
@@ -31,7 +32,13 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 14
+OBSOLETE_TABLES = frozenset(
+    {
+        "debt_schedule_entries",
+        "recurring_schedule_entries",
+    }
+)
 
 # Columns that may be missing on databases created before this schema version.
 # Values are the SQLite column definitions used by ``ALTER TABLE ADD COLUMN``.
@@ -57,7 +64,16 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     "categorization_rules": {
         "patterns_json": "TEXT",
     },
+    "recurring_series": {
+        "recurring_type": "VARCHAR(32) DEFAULT 'uncategorized' NOT NULL",
+        "custom_type": "VARCHAR(120)",
+        "credit_insurance_rate": "NUMERIC(6, 3)",
+    },
     "debts": {
+        "debt_type": "VARCHAR(32) DEFAULT 'other' NOT NULL",
+        "recurring_series_id": (
+            "INTEGER REFERENCES recurring_series(id) ON DELETE SET NULL"
+        ),
         "due_date": "DATE",
         "color": "VARCHAR(16) DEFAULT '#ef4444' NOT NULL",
         "archived": "BOOLEAN DEFAULT 0 NOT NULL",
@@ -105,27 +121,66 @@ def _missing_tables(conn: Connection) -> set[str]:
     return {table for table in Base.metadata.tables if not _table_exists(conn, table)}
 
 
+def _existing_obsolete_tables(conn: Connection) -> set[str]:
+    return {table for table in OBSOLETE_TABLES if _table_exists(conn, table)}
+
+
 def _apply_columns(conn: Connection, pending: dict[str, dict[str, str]]) -> None:
     for table, columns in pending.items():
         for name, ddl in columns.items():
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
-def _real_estate_current_value_is_required(conn: Connection) -> bool:
+def _real_estate_requires_rebuild(conn: Connection) -> bool:
     if not _table_exists(conn, "real_estate_assets"):
         return False
     rows = conn.execute(text("PRAGMA table_info(real_estate_assets)")).all()
-    return any(row[1] == "current_value" and bool(row[3]) for row in rows)
+    return any(row[1] == "debt_id" for row in rows) or any(
+        row[1] == "current_value" and bool(row[3]) for row in rows
+    )
 
 
-def _make_real_estate_current_value_nullable(conn: Connection) -> None:
-    table = Base.metadata.tables["real_estate_assets"]
+def _rebuild_real_estate_assets(conn: Connection) -> None:
+    asset_table = Base.metadata.tables["real_estate_assets"]
+    link_table = Base.metadata.tables["real_estate_debt_links"]
+    attachment_table = Base.metadata.tables["real_estate_attachments"]
     legacy_table = "real_estate_assets_legacy"
-    columns = ", ".join(column.name for column in table.columns)
+    existing_columns = _existing_columns(conn, "real_estate_assets")
+    links: set[tuple[int, int]] = set()
+    attachments: list[dict[str, object]] = []
+    if "debt_id" in existing_columns:
+        links.update(
+            (asset_id, debt_id)
+            for asset_id, debt_id in conn.execute(
+                text(
+                    "SELECT id, debt_id FROM real_estate_assets "
+                    "WHERE debt_id IS NOT NULL"
+                )
+            )
+        )
+    if _table_exists(conn, "real_estate_debt_links"):
+        links.update(
+            (asset_id, debt_id)
+            for asset_id, debt_id in conn.execute(
+                text("SELECT asset_id, debt_id FROM real_estate_debt_links")
+            )
+        )
+        conn.execute(text("DROP TABLE real_estate_debt_links"))
+    if _table_exists(conn, "real_estate_attachments"):
+        attachments = [
+            dict(row._mapping)
+            for row in conn.execute(text("SELECT * FROM real_estate_attachments"))
+        ]
+        conn.execute(text("DROP TABLE real_estate_attachments"))
+
+    copied_columns = [
+        column.name for column in asset_table.columns if column.name in existing_columns
+    ]
+    columns = ", ".join(copied_columns)
 
     conn.execute(text(f"ALTER TABLE real_estate_assets RENAME TO {legacy_table}"))
     conn.execute(text("DROP INDEX IF EXISTS ix_real_estate_assets_debt_id"))
-    table.create(conn)
+    asset_table.create(conn)
     conn.execute(
         text(
             f"INSERT INTO real_estate_assets ({columns}) "
@@ -133,6 +188,31 @@ def _make_real_estate_current_value_nullable(conn: Connection) -> None:
         )
     )
     conn.execute(text(f"DROP TABLE {legacy_table}"))
+    link_table.create(conn)
+    attachment_table.create(conn)
+    if links:
+        conn.execute(
+            link_table.insert(),
+            [
+                {"asset_id": asset_id, "debt_id": debt_id}
+                for asset_id, debt_id in sorted(links)
+            ],
+        )
+    if attachments:
+        attachment_columns = [
+            column.name
+            for column in attachment_table.columns
+            if column.name in attachments[0]
+        ]
+        columns_sql = ", ".join(attachment_columns)
+        values_sql = ", ".join(f":{column}" for column in attachment_columns)
+        conn.execute(
+            text(
+                f"INSERT INTO real_estate_attachments ({columns_sql}) "
+                f"VALUES ({values_sql})"
+            ),
+            attachments,
+        )
 
 
 def _backup(db_path: Path, from_version: int) -> None:
@@ -155,12 +235,11 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         version = await conn.scalar(text("PRAGMA user_version"))
         pending = await conn.run_sync(_pending_columns)
         missing_tables = await conn.run_sync(_missing_tables)
-        requires_real_estate_rebuild = await conn.run_sync(
-            _real_estate_current_value_is_required
-        )
+        obsolete_tables = await conn.run_sync(_existing_obsolete_tables)
+        requires_real_estate_rebuild = await conn.run_sync(_real_estate_requires_rebuild)
 
     if (
-        pending or missing_tables or requires_real_estate_rebuild
+        pending or missing_tables or obsolete_tables or requires_real_estate_rebuild
     ) and pre_existing and db_path is not None:
         _backup(db_path, int(version or 0))
 
@@ -168,9 +247,11 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_apply_columns, pending)
         if requires_real_estate_rebuild:
-            await conn.run_sync(_make_real_estate_current_value_nullable)
+            await conn.run_sync(_rebuild_real_estate_assets)
+        for table in sorted(obsolete_tables):
+            await conn.execute(text(f"DROP TABLE {table}"))
         await conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
         await conn.execute(text("PRAGMA optimize"))
 
-    if pending or missing_tables or requires_real_estate_rebuild:
+    if pending or missing_tables or obsolete_tables or requires_real_estate_rebuild:
         logger.info("Schema mis a jour vers la version %s", SCHEMA_VERSION)

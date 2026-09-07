@@ -215,6 +215,22 @@ export interface CategorizationInboxItem {
   account_id: number
 }
 
+export type RecurringType =
+  | 'uncategorized'
+  | 'subscription'
+  | 'rent'
+  | 'energy'
+  | 'telecom'
+  | 'auto_insurance'
+  | 'home_insurance'
+  | 'health_insurance'
+  | 'credit_insurance'
+  | 'loan_payment'
+  | 'tax'
+  | 'salary'
+  | 'transfer'
+  | 'other'
+
 export interface RecurringSeries {
   id: number
   label: string
@@ -227,7 +243,11 @@ export interface RecurringSeries {
   next_due: string
   amount_type: 'fixed' | 'variable'
   status: 'active' | 'paused' | 'ended'
+  recurring_type: RecurringType
+  custom_type: string | null
+  credit_insurance_rate: string | null
   confidence: number
+  attachment_count: number
 }
 
 export interface RecurringDetectionProposal {
@@ -274,16 +294,20 @@ export interface RecurringChange {
 export interface Debt {
   id: number
   name: string
+  debt_type: 'consumer_credit' | 'mortgage' | 'other'
   principal: Money
   balance: Money
   interest_rate: string | null
   minimum_payment: Money | null
   account_id: number | null
+  recurring_series_id: number | null
+  recurring_series_name: string | null
   paid: Money
   progress: number
   due_date?: string | null
   color?: string
   archived?: boolean
+  attachment_count: number
 }
 
 export interface RealEstateAsset {
@@ -295,13 +319,22 @@ export interface RealEstateAsset {
   purchase_price: Money
   current_value: Money | null
   ownership_share: string
-  debt_id: number | null
-  debt_name: string | null
+  debt_ids: number[]
+  debts: RealEstateDebt[]
   debt_balance: Money
   owned_purchase_price: Money
   owned_value: Money
   gain: Money
   net_equity: Money
+  attachment_count: number
+}
+
+export interface RealEstateDebt {
+  id: number
+  name: string
+  balance: Money
+  recurring_series_id: number | null
+  recurring_series_name: string | null
 }
 
 export interface Holding {
