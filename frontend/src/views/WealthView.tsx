@@ -290,7 +290,7 @@ function WealthOverview({
                       <Pie data={allocationData} dataKey="numericValue" innerRadius="64%" outerRadius="88%" paddingAngle={2} stroke="none">
                         {allocationData.map((allocation) => <Cell key={allocation.asset_class} fill={allocation.color} />)}
                       </Pie>
-                      <Tooltip contentStyle={chartTooltipStyle} formatter={(value) => money(Number(value))} />
+                      <Tooltip contentStyle={chartTooltipStyle} itemStyle={{ color: 'var(--text)' }} labelStyle={{ color: 'var(--text)' }} label="" formatter={(value) => money(Number(value))} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="donut-label">

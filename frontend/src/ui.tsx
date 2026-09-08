@@ -584,6 +584,14 @@ export const chartTooltipStyle: CSSProperties = {
   border: '1px solid var(--line-strong)',
   borderRadius: '12px',
   color: 'var(--text)',
+  padding: '0.65rem 0.85rem',
+  maxWidth: '24rem',
+  minWidth: '14rem',
+  whiteSpace: 'normal',
+  overflowWrap: 'break-word',
+  fontSize: '0.78rem',
+  lineHeight: 1.35,
+  boxShadow: '0 10px 32px rgb(0 0 0 / 35%)',
 }
 
 let activeLocale = 'fr-FR'
