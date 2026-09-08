@@ -158,6 +158,14 @@ export function DashboardView({
     ...point,
     net_worth: Number(point.net_worth),
   }))
+  const positiveHistoryData = historyData.map((point) => ({
+    ...point,
+    net_worth: Number(point.net_worth) > 0 ? Number(point.net_worth) : null,
+  }))
+  const negativeHistoryData = historyData.map((point) => ({
+    ...point,
+    net_worth: Number(point.net_worth) < 0 ? Number(point.net_worth) : null,
+  }))
   const monthlyData = monthlyPoints.map((point) => ({
     ...point,
     income: Number(point.income),
@@ -304,9 +312,13 @@ export function DashboardView({
                   margin={{ top: 12, right: 10, left: -8, bottom: 0 }}
                 >
                   <defs>
-                    <linearGradient id="dashboard-net-fill" x1="0" x2="0" y1="0" y2="1">
+                    <linearGradient id="dashboard-net-fill-positive" x1="0" x2="0" y1="0" y2="1">
                       <stop offset="0%" stopColor="#16c79a" stopOpacity={0.3} />
                       <stop offset="100%" stopColor="#16c79a" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="dashboard-net-fill-negative" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#e11d48" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#e11d48" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
@@ -317,7 +329,8 @@ export function DashboardView({
                     formatter={(value) => money(Number(value))}
                     labelFormatter={(value) => formatMonth(String(value))}
                   />
-                  <Area dataKey="net_worth" name="Patrimoine" type="monotone" stroke="#16c79a" strokeWidth={2.5} fill="url(#dashboard-net-fill)" />
+                  <Area data={positiveHistoryData} dataKey="net_worth" name="Patrimoine" type="monotone" stroke="#16c79a" strokeWidth={2.5} fill="url(#dashboard-net-fill-positive)" connectNulls={false} />
+                  <Area data={negativeHistoryData} dataKey="net_worth" name="Patrimoine" type="monotone" stroke="#e11d48" strokeWidth={2.5} fill="url(#dashboard-net-fill-negative)" connectNulls={false} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
