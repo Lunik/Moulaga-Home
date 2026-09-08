@@ -259,17 +259,6 @@ async def update_debt(
         await require_account(session, series_insurance.account_id, writable=True)
     elif "recurring_series_insurance_id" not in data and debt.recurring_series_insurance_id is not None:
         series_insurance = await _require_recurring_series(session, debt.recurring_series_insurance_id)
-    # Check if both series are on the same account
-    accounts_match = (
-        series_repayment is None
-        or series_insurance is None
-        or series_repayment.account_id == series_insurance.account_id
-    )
-    if not accounts_match:
-        raise HTTPException(
-            status_code=422,
-            detail="Les deux séries doivent être sur le même compte",
-        )
     for required_field in ("name", "debt_type", "principal", "balance", "color", "archived"):
         if required_field in data and data[required_field] is None:
             raise HTTPException(
