@@ -17,7 +17,8 @@ from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import local_today, money
 from ..db import get_session
 from ..debt_recurring import (
-    build_debt_recurring_series,
+    build_debt_recurring_series_insurance,
+    build_debt_recurring_series_repayment,
     debt_payment,
     recurring_amount,
 )
@@ -65,13 +66,22 @@ router = APIRouter(tags=["wealth"])
 def _debt_read(
     debt: Debt,
     *,
-    recurring_series_name: str | None = None,
+    recurring_series_name_repayment: str | None = None,
+    recurring_series_name_insurance: str | None = None,
     attachment_count: int = 0,
 ) -> DebtRead:
     principal = Decimal(debt.principal)
     balance = Decimal(debt.balance)
     paid = money(principal - balance)
     progress = (paid / principal).quantize(Decimal("0.01")) if principal > 0 else Decimal("0.00")
+
+    # Compute sum of the two associated budgets for display
+    total_budget = Decimal("0.00")
+    if debt.recurring_series_repayment_id is not None:
+        total_budget += Decimal(debt.recurring_series_repayment.amount or 0)
+    if debt.recurring_series_insurance_id is not None:
+        total_budget += Decimal(debt.recurring_series_insurance.amount or 0)
+
     return DebtRead(
         id=debt.id,
         name=debt.name,
@@ -79,10 +89,12 @@ def _debt_read(
         principal=money(principal),
         balance=money(balance),
         interest_rate=debt.interest_rate,
-        minimum_payment=debt.minimum_payment,
+        minimum_payment=total_budget,
         account_id=debt.account_id,
-        recurring_series_id=debt.recurring_series_id,
-        recurring_series_name=recurring_series_name,
+        recurring_series_repayment_id=debt.recurring_series_repayment_id,
+        recurring_series_insurance_id=debt.recurring_series_insurance_id,
+        recurring_series_name_repayment=recurring_series_name_repayment,
+        recurring_series_name_insurance=recurring_series_name_insurance,
         due_date=debt.due_date,
         color=debt.color,
         archived=debt.archived,
@@ -110,10 +122,14 @@ async def _require_recurring_series(
 
 
 async def _debt_response(session: AsyncSession, debt: Debt) -> DebtRead:
-    recurring_series_name = None
-    if debt.recurring_series_id is not None:
-        series = await session.get(RecurringSeries, debt.recurring_series_id)
-        recurring_series_name = series.label if series else None
+    recurring_series_name_repayment = None
+    recurring_series_name_insurance = None
+    if debt.recurring_series_repayment_id is not None:
+        series = await session.get(RecurringSeries, debt.recurring_series_repayment_id)
+        recurring_series_name_repayment = series.label if series else None
+    if debt.recurring_series_insurance_id is not None:
+        series = await session.get(RecurringSeries, debt.recurring_series_insurance_id)
+        recurring_series_name_insurance = series.label if series else None
     attachment_count = await session.scalar(
         select(func.count())
         .select_from(DebtAttachment)
@@ -121,7 +137,8 @@ async def _debt_response(session: AsyncSession, debt: Debt) -> DebtRead:
     )
     return _debt_read(
         debt,
-        recurring_series_name=recurring_series_name,
+        recurring_series_name_repayment=recurring_series_name_repayment,
+        recurring_series_name_insurance=recurring_series_name_insurance,
         attachment_count=int(attachment_count or 0),
     )
 
@@ -129,8 +146,8 @@ async def _debt_response(session: AsyncSession, debt: Debt) -> DebtRead:
 @router.get("/debts", response_model=list[DebtRead])
 async def list_debts(session: AsyncSession = Depends(get_session)) -> list[DebtRead]:
     rows = (await session.execute(select(Debt).order_by(Debt.name))).scalars().all()
-    recurring_names = {
-        series.id: series.label
+    recurring_series = {
+        series.id: series
         for series in (await session.execute(select(RecurringSeries))).scalars().all()
     }
     attachment_counts = {
@@ -142,41 +159,79 @@ async def list_debts(session: AsyncSession = Depends(get_session)) -> list[DebtR
             )
         ).all()
     }
-    return [
-        _debt_read(
-            row,
-            recurring_series_name=recurring_names.get(row.recurring_series_id),
-            attachment_count=int(attachment_counts.get(row.id, 0)),
+    result: list[DebtRead] = []
+    for row in rows:
+        rs_repayment = recurring_series.get(row.recurring_series_repayment_id)
+        rs_insurance = recurring_series.get(row.recurring_series_insurance_id)
+        result.append(
+            _debt_read(
+                row,
+                recurring_series_name_repayment=rs_repayment.label if rs_repayment else None,
+                recurring_series_name_insurance=rs_insurance.label if rs_insurance else None,
+                attachment_count=int(attachment_counts.get(row.id, 0)),
+            )
         )
-        for row in rows
-    ]
+    return result
 
 
 @router.post("/debts", response_model=DebtRead, status_code=201)
 async def create_debt(payload: DebtCreate, session: AsyncSession = Depends(get_session)) -> DebtRead:
     if payload.account_id is not None:
         await require_account(session, payload.account_id, writable=True)
-    series = None
-    if payload.recurring_series_id is not None:
-        series = await _require_recurring_series(session, payload.recurring_series_id)
-        await require_account(session, series.account_id, writable=True)
+    series_repayment = None
+    series_insurance = None
+    if payload.recurring_series_repayment_id is not None:
+        series_repayment = await _require_recurring_series(session, payload.recurring_series_repayment_id)
+        await require_account(session, series_repayment.account_id, writable=True)
+    if payload.recurring_series_insurance_id is not None:
+        series_insurance = await _require_recurring_series(session, payload.recurring_series_insurance_id)
+        await require_account(session, series_insurance.account_id, writable=True)
     if payload.balance > payload.principal:
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
     debt = Debt(**payload.model_dump())
     session.add(debt)
-    if series is None and payload.minimum_payment is not None and payload.minimum_payment > 0:
-        try:
-            series = build_debt_recurring_series(debt)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        session.add(series)
-        await session.flush()
-        debt.recurring_series_id = series.id
-    elif series is not None:
+    if series_repayment is None and series_insurance is None:
+        if payload.minimum_payment is not None and payload.minimum_payment > 0:
+            try:
+                series_repayment = build_debt_recurring_series_repayment(debt)
+                series_insurance = build_debt_recurring_series_insurance(debt)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            session.add(series_repayment)
+            session.add(series_insurance)
+            await session.flush()
+            debt.recurring_series_repayment_id = series_repayment.id
+            debt.recurring_series_insurance_id = series_insurance.id
+    elif series_repayment is not None and series_insurance is not None:
         if payload.minimum_payment is None:
-            debt.minimum_payment = debt_payment(series.amount)
+            debt.minimum_payment = debt_payment(
+                series_repayment.amount + series_insurance.amount
+            )
         else:
-            series.amount = recurring_amount(payload.minimum_payment)
+            # Distribute the minimum_payment proportionally between the two series
+            # based on their current amounts
+            total_amount = abs(Decimal(series_repayment.amount or 0)) + abs(
+                Decimal(series_insurance.amount or 0)
+            )
+            if total_amount > 0:
+                repayment_share = abs(Decimal(series_repayment.amount or 0)) / total_amount
+                insurance_share = abs(Decimal(series_insurance.amount or 0)) / total_amount
+                series_repayment.amount = recurring_amount(
+                    Decimal(payload.minimum_payment) * repayment_share
+                )
+                series_insurance.amount = recurring_amount(
+                    Decimal(payload.minimum_payment) * insurance_share
+                )
+    elif series_repayment is not None:
+        if payload.minimum_payment is None:
+            debt.minimum_payment = debt_payment(series_repayment.amount)
+        else:
+            series_repayment.amount = recurring_amount(payload.minimum_payment)
+    elif series_insurance is not None:
+        if payload.minimum_payment is None:
+            debt.minimum_payment = debt_payment(series_insurance.amount)
+        else:
+            series_insurance.amount = recurring_amount(payload.minimum_payment)
     await session.commit()
     await session.refresh(debt)
     return await _debt_response(session, debt)
@@ -192,13 +247,29 @@ async def update_debt(
     data = payload.model_dump(exclude_unset=True)
     if data.get("account_id") is not None:
         await require_account(session, data["account_id"], writable=True)
-    series = None
-    if data.get("recurring_series_id") is not None:
-        series = await _require_recurring_series(session, data["recurring_series_id"])
-    elif "recurring_series_id" not in data and debt.recurring_series_id is not None:
-        series = await _require_recurring_series(session, debt.recurring_series_id)
-    if series is not None and "minimum_payment" in data:
-        await require_account(session, series.account_id, writable=True)
+    series_repayment = None
+    series_insurance = None
+    if data.get("recurring_series_repayment_id") is not None:
+        series_repayment = await _require_recurring_series(session, data["recurring_series_repayment_id"])
+        await require_account(session, series_repayment.account_id, writable=True)
+    elif "recurring_series_repayment_id" not in data and debt.recurring_series_repayment_id is not None:
+        series_repayment = await _require_recurring_series(session, debt.recurring_series_repayment_id)
+    if data.get("recurring_series_insurance_id") is not None:
+        series_insurance = await _require_recurring_series(session, data["recurring_series_insurance_id"])
+        await require_account(session, series_insurance.account_id, writable=True)
+    elif "recurring_series_insurance_id" not in data and debt.recurring_series_insurance_id is not None:
+        series_insurance = await _require_recurring_series(session, debt.recurring_series_insurance_id)
+    # Check if both series are on the same account
+    accounts_match = (
+        series_repayment is None
+        or series_insurance is None
+        or series_repayment.account_id == series_insurance.account_id
+    )
+    if not accounts_match:
+        raise HTTPException(
+            status_code=422,
+            detail="Les deux séries doivent être sur le même compte",
+        )
     for required_field in ("name", "debt_type", "principal", "balance", "color", "archived"):
         if required_field in data and data[required_field] is None:
             raise HTTPException(
@@ -209,15 +280,35 @@ async def update_debt(
         setattr(debt, field, value)
     if Decimal(debt.balance) > Decimal(debt.principal):
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
-    if series is not None:
+    # Synchronize the two series with minimum_payment
+    if series_repayment is not None or series_insurance is not None:
         if "minimum_payment" in data:
-            series.amount = recurring_amount(debt.minimum_payment)
-        elif "recurring_series_id" in data:
-            debt.minimum_payment = debt_payment(series.amount)
+            if series_repayment is not None and series_insurance is not None:
+                # Re-distribute minimum_payment proportionally between the two series
+                total_amount = abs(Decimal(series_repayment.amount or 0)) + abs(
+                    Decimal(series_insurance.amount or 0)
+                )
+                if total_amount > 0:
+                    repayment_share = abs(Decimal(series_repayment.amount or 0)) / total_amount
+                    insurance_share = abs(Decimal(series_insurance.amount or 0)) / total_amount
+                    series_repayment.amount = recurring_amount(
+                        Decimal(debt.minimum_payment) * repayment_share
+                    )
+                    series_insurance.amount = recurring_amount(
+                        Decimal(debt.minimum_payment) * insurance_share
+                    )
+            elif series_repayment is not None:
+                series_repayment.amount = recurring_amount(debt.minimum_payment)
+            elif series_insurance is not None:
+                series_insurance.amount = recurring_amount(debt.minimum_payment)
+        elif "recurring_series_repayment_id" in data or "recurring_series_insurance_id" in data:
+            if series_repayment is not None:
+                debt.minimum_payment = debt_payment(series_repayment.amount)
+            if series_insurance is not None:
+                pass
     await session.commit()
     await session.refresh(debt)
     return await _debt_response(session, debt)
-
 
 @router.delete("/debts/{debt_id}", status_code=204)
 async def delete_debt(debt_id: int, session: AsyncSession = Depends(get_session)) -> None:
@@ -365,12 +456,12 @@ def _real_estate_owned_values(asset: RealEstateAsset) -> tuple[Decimal, Decimal]
 
 def _real_estate_read(
     asset: RealEstateAsset,
-    debts: list[tuple[Debt, str | None]],
+    debts: list[tuple[Debt, str | None, str | None]],
     attachment_count: int = 0,
 ) -> RealEstateRead:
     owned_purchase_price, owned_value = _real_estate_owned_values(asset)
     debt_balance = money(
-        sum((Decimal(debt.balance) for debt, _ in debts), Decimal("0"))
+        sum((Decimal(debt.balance) for debt, _, _ in debts), Decimal("0"))
     )
     return RealEstateRead(
         id=asset.id,
@@ -383,16 +474,18 @@ def _real_estate_read(
             money(Decimal(asset.current_value)) if asset.current_value is not None else None
         ),
         ownership_share=Decimal(asset.ownership_share),
-        debt_ids=[debt.id for debt, _ in debts],
+        debt_ids=[debt.id for debt, _, _ in debts],
         debts=[
             RealEstateDebtRead(
                 id=debt.id,
                 name=debt.name,
                 balance=money(Decimal(debt.balance)),
-                recurring_series_id=debt.recurring_series_id,
-                recurring_series_name=recurring_series_name,
+                recurring_series_repayment_id=debt.recurring_series_repayment_id,
+                recurring_series_insurance_id=debt.recurring_series_insurance_id,
+                recurring_series_name_repayment=repayment_label,
+                recurring_series_name_insurance=insurance_label,
             )
-            for debt, recurring_series_name in debts
+            for debt, repayment_label, insurance_label in debts
         ],
         debt_balance=debt_balance,
         owned_purchase_price=owned_purchase_price,
@@ -406,20 +499,47 @@ def _real_estate_read(
 async def _load_real_estate_debts(
     session: AsyncSession,
     asset_id: int,
-) -> list[tuple[Debt, str | None]]:
-    rows = (
+) -> list[tuple[Debt, str | None, str | None]]:
+    # Get repayment series labels
+    repayment_rows = (
         await session.execute(
-            select(Debt, RecurringSeries.label)
+            select(Debt.id, RecurringSeries.label)
             .join(RealEstateDebtLink, RealEstateDebtLink.debt_id == Debt.id)
             .outerjoin(
                 RecurringSeries,
-                RecurringSeries.id == Debt.recurring_series_id,
+                RecurringSeries.id == Debt.recurring_series_repayment_id,
             )
             .where(RealEstateDebtLink.asset_id == asset_id)
             .order_by(Debt.name, Debt.id)
         )
     ).all()
-    return [(debt, recurring_name) for debt, recurring_name in rows]
+    # Get insurance series labels
+    insurance_rows = (
+        await session.execute(
+            select(Debt.id, RecurringSeries.label)
+            .join(RealEstateDebtLink, RealEstateDebtLink.debt_id == Debt.id)
+            .outerjoin(
+                RecurringSeries,
+                RecurringSeries.id == Debt.recurring_series_insurance_id,
+            )
+            .where(RealEstateDebtLink.asset_id == asset_id)
+            .order_by(Debt.name, Debt.id)
+        )
+    ).all()
+    repayment_labels = {row.id: row.label for row in repayment_rows}
+    insurance_labels = {row.id: row.label for row in insurance_rows}
+    debt_ids = set(row.id for row in repayment_rows) | set(row.id for row in insurance_rows)
+    rows_by_debt = {}
+    for debt_id in debt_ids:
+        debt = await session.get(Debt, debt_id)
+        if debt:
+            rows_by_debt[debt_id] = debt
+    result = []
+    for debt_id in sorted(rows_by_debt):
+        debt = rows_by_debt.get(debt_id)
+        if debt:
+            result.append((debt, repayment_labels.get(debt_id, ''), insurance_labels.get(debt_id, '')))
+    return result
 
 
 async def _validate_real_estate_debts(
@@ -478,16 +598,38 @@ async def list_real_estate(
     debts_by_asset: dict[int, list[tuple[Debt, str | None]]] = {}
     linked_debts = (
         await session.execute(
-            select(RealEstateDebtLink.asset_id, Debt, RecurringSeries.label)
+            select(
+                RealEstateDebtLink.asset_id,
+                Debt,
+                RecurringSeries.label.label("repayment_label"),
+            )
             .join(Debt, Debt.id == RealEstateDebtLink.debt_id)
             .outerjoin(
                 RecurringSeries,
-                RecurringSeries.id == Debt.recurring_series_id,
+                RecurringSeries.id == Debt.recurring_series_repayment_id,
             )
             .order_by(RealEstateDebtLink.asset_id, Debt.name, Debt.id)
         )
     ).all()
-    for asset_id, debt, recurring_name in linked_debts:
+    # Also get insurance labels
+    insurance_labels = {
+        row.id: row.label
+        for row in (
+            await session.execute(
+                select(Debt.id, RecurringSeries.label)
+                .join(RecurringSeries, RecurringSeries.id == Debt.recurring_series_insurance_id)
+            )
+        ).all()
+    }
+    for asset_id, debt, repayment_label in linked_debts:
+        insurance_label = insurance_labels.get(debt.id)
+        # Combine both labels for display
+        recurring_names = []
+        if repayment_label:
+            recurring_names.append(repayment_label)
+        if insurance_label:
+            recurring_names.append(insurance_label)
+        recurring_name = " | ".join(recurring_names) if recurring_names else None
         debts_by_asset.setdefault(asset_id, []).append((debt, recurring_name))
     attachment_counts = {
         asset_id: count

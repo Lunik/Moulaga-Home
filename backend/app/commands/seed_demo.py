@@ -37,7 +37,10 @@ from ..attachments import remove_attachment, store_attachment
 from ..common import add_month, get_preferences, money
 from ..config import settings
 from ..db import SessionLocal, engine, init_db
-from ..debt_recurring import build_debt_recurring_series
+from ..debt_recurring import (
+    build_debt_recurring_series_insurance,
+    build_debt_recurring_series_repayment,
+)
 from ..models import (
     Account,
     BalanceSnapshot,
@@ -601,7 +604,7 @@ async def _seed(
         )
     )
     loan_series = RecurringSeries(
-        label="Mensualite pret immobilier",
+        label="Remboursement · Pret immobilier demo",
         account_id=checking.id,
         category_id=logement.id,
         frequency="monthly",
@@ -613,7 +616,7 @@ async def _seed(
         confidence=money("1.00"),
     )
     credit_insurance_series = RecurringSeries(
-        label="Assurance emprunteur",
+        label="Assurance · Pret immobilier demo",
         account_id=checking.id,
         category_id=logement.id,
         frequency="monthly",
@@ -656,7 +659,8 @@ async def _seed(
         balance=money("178000.00"),
         interest_rate=Decimal("2.10"),
         minimum_payment=money("920.00"),
-        recurring_series_id=loan_series.id,
+        recurring_series_repayment_id=loan_series.id,
+        recurring_series_insurance_id=credit_insurance_series.id,
         due_date=date(2042, 5, 15),
         color="#7c3aed",
         archived=False,
@@ -697,18 +701,21 @@ async def _seed(
         ]
     )
     await session.flush()
-    automatic_debt_series = [
-        build_debt_recurring_series(auto_loan),
-        build_debt_recurring_series(student_loan),
-    ]
+    automatic_debt_series = []
+    for debt in (auto_loan, student_loan):
+        repayment_series = build_debt_recurring_series_repayment(debt)
+        insurance_series = build_debt_recurring_series_insurance(debt)
+        automatic_debt_series.extend([repayment_series, insurance_series])
     session.add_all(automatic_debt_series)
     await session.flush()
-    for debt, series in zip(
+    for debt, repayment_series, insurance_series in zip(
         (auto_loan, student_loan),
-        automatic_debt_series,
+        automatic_debt_series[::2],
+        automatic_debt_series[1::2],
         strict=True,
     ):
-        debt.recurring_series_id = series.id
+        debt.recurring_series_repayment_id = repayment_series.id
+        debt.recurring_series_insurance_id = insurance_series.id
 
     # --- Real estate ------------------------------------------------------- #
     apartment = RealEstateAsset(

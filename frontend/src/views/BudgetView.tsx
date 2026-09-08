@@ -466,10 +466,10 @@ function RecurringPanel({
               <RecurringRow
                 assets={(realEstate.data ?? []).filter((asset) => (
                   (debts.data ?? []).some(
-                    (debt) => asset.debt_ids.includes(debt.id) && debt.recurring_series_id === item.id,
+                    (debt) => asset.debt_ids.includes(debt.id) && (debt.recurring_series_repayment_id === item.id || debt.recurring_series_insurance_id === item.id),
                   )
                 ))}
-                debts={(debts.data ?? []).filter((debt) => debt.recurring_series_id === item.id)}
+                debts={(debts.data ?? []).filter((debt) => (debt.recurring_series_repayment_id === item.id || debt.recurring_series_insurance_id === item.id))}
                 focused={focusId === item.id}
                 item={item}
                 key={item.id}

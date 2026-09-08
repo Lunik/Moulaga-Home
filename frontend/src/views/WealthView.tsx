@@ -877,15 +877,26 @@ function RealEstateRow({
                   icon="debt"
                   label={`Dette : ${debt.name}`}
                 />
-                {debt.recurring_series_id && debt.recurring_series_name && (
+                {debt.recurring_series_repayment_id && (
                   <LinkedEntityLink
                     href={routeHash({
                       name: 'budget',
                       tab: 'recurring',
-                      focusId: debt.recurring_series_id,
+                      focusId: debt.recurring_series_repayment_id,
                     })}
                     icon="recurring"
-                    label={`Récurrence : ${debt.recurring_series_name}`}
+                    label={`Récurrence remboursement : ${debt.recurring_series_name_repayment || 'Remboursement'}`}
+                  />
+                )}
+                {debt.recurring_series_insurance_id && (
+                  <LinkedEntityLink
+                    href={routeHash({
+                      name: 'budget',
+                      tab: 'recurring',
+                      focusId: debt.recurring_series_insurance_id,
+                    })}
+                    icon="recurring"
+                    label={`Récurrence assurance : ${debt.recurring_series_name_insurance || 'Assurance'}`}
                   />
                 )}
               </Fragment>
@@ -1175,7 +1186,7 @@ function DebtRow({
         {debt.minimum_payment !== null && <span>{money(debt.minimum_payment)} / mois</span>}
         {debt.interest_rate !== null && <span>Taux {Number(debt.interest_rate).toLocaleString('fr-FR')}%</span>}
         {debt.due_date && <span>Fin prévue {formatDate(debt.due_date)}</span>}
-        {(asset || (debt.recurring_series_id && debt.recurring_series_name)) && (
+        {(asset || (debt.recurring_series_repayment_id || debt.recurring_series_insurance_id)) && (
           <span className="linked-entities debt-links">
             {asset && (
               <LinkedEntityLink
@@ -1184,15 +1195,26 @@ function DebtRow({
                 label={`Bien : ${asset.name}`}
               />
             )}
-            {debt.recurring_series_id && debt.recurring_series_name && (
+            {debt.recurring_series_repayment_id && (
               <LinkedEntityLink
                 href={routeHash({
                   name: 'budget',
                   tab: 'recurring',
-                  focusId: debt.recurring_series_id,
+                  focusId: debt.recurring_series_repayment_id,
                 })}
                 icon="recurring"
-                label={`Récurrence : ${debt.recurring_series_name}`}
+                label={`Récurrence remboursement : ${debt.recurring_series_name_repayment || 'Remboursement'}`}
+              />
+            )}
+            {debt.recurring_series_insurance_id && (
+              <LinkedEntityLink
+                href={routeHash({
+                  name: 'budget',
+                  tab: 'recurring',
+                  focusId: debt.recurring_series_insurance_id,
+                })}
+                icon="recurring"
+                label={`Récurrence assurance : ${debt.recurring_series_name_insurance || 'Assurance'}`}
               />
             )}
           </span>
@@ -1256,10 +1278,10 @@ function DebtModal({
   const [debtType, setDebtType] = useState<Debt['debt_type']>(debt?.debt_type ?? 'other')
   const [initialAmount, setInitialAmount] = useState(debt?.principal ?? '')
   const [remainingAmount, setRemainingAmount] = useState(debt?.balance ?? '')
-  const [monthlyPayment, setMonthlyPayment] = useState(debt?.minimum_payment ?? '')
   const [interestRate, setInterestRate] = useState(debt?.interest_rate ?? '')
   const [accountId, setAccountId] = useState(String(debt?.account_id ?? ''))
-  const [recurringSeriesId, setRecurringSeriesId] = useState(String(debt?.recurring_series_id ?? ''))
+  const [recurringSeriesRepaymentId, setRecurringSeriesRepaymentId] = useState(String(debt?.recurring_series_repayment_id ?? ''))
+  const [recurringSeriesInsuranceId, setRecurringSeriesInsuranceId] = useState(String(debt?.recurring_series_insurance_id ?? ''))
   const [dueDate, setDueDate] = useState(debt?.due_date ?? '')
   const [color, setColor] = useState(debt?.color ?? '#ff6b70')
   const [archived, setArchived] = useState(debt?.archived ?? false)
@@ -1270,10 +1292,10 @@ function DebtModal({
         debt_type: debtType,
         principal: initialAmount,
         balance: remainingAmount,
-        minimum_payment: monthlyPayment || null,
-        interest_rate: interestRate || null,
+                interest_rate: interestRate || null,
         account_id: accountId ? Number(accountId) : null,
-        recurring_series_id: recurringSeriesId ? Number(recurringSeriesId) : null,
+        recurring_series_repayment_id: recurringSeriesRepaymentId ? Number(recurringSeriesRepaymentId) : null,
+        recurring_series_insurance_id: recurringSeriesInsuranceId ? Number(recurringSeriesInsuranceId) : null,
         due_date: dueDate || null,
         color,
         ...(debt ? { archived } : {}),
@@ -1322,9 +1344,6 @@ function DebtModal({
         <Field label="Capital restant">
           <FormInput type="number" min="0" step="0.01" value={remainingAmount} onChange={(event) => setRemainingAmount(event.target.value)} required />
         </Field>
-        <Field label="Mensualité">
-          <FormInput type="number" min="0" step="0.01" value={monthlyPayment} onChange={(event) => setMonthlyPayment(event.target.value)} />
-        </Field>
         <Field label="Taux annuel (%)">
           <FormInput type="number" min="0" step="0.01" value={interestRate} onChange={(event) => setInterestRate(event.target.value)} />
         </Field>
@@ -1332,7 +1351,7 @@ function DebtModal({
           <FormSelect
             value={accountId}
             onChange={(event) => setAccountId(event.target.value)}
-            required={!recurringSeriesId && Number(monthlyPayment) > 0}
+            required={!recurringSeriesRepaymentId && !recurringSeriesInsuranceId}
           >
             <option value="">Aucun compte</option>
             {selectableAccounts.map((account) => (
@@ -1340,15 +1359,29 @@ function DebtModal({
             ))}
           </FormSelect>
         </Field>
-        <Field label="Série récurrente">
-          <FormSelect value={recurringSeriesId} onChange={(event) => setRecurringSeriesId(event.target.value)}>
+        <Field label="Série récurrente remboursement">
+          <FormSelect value={recurringSeriesRepaymentId} onChange={(event) => setRecurringSeriesRepaymentId(event.target.value)}>
             <option value="">Aucune série</option>
-            {recurringSeries.map((series) => (
-              <option key={series.id} value={series.id}>{series.label}</option>
-            ))}
+            {recurringSeries.map((series) => {
+              if (series.recurring_type === 'loan_payment') {
+                return <option key={series.id} value={series.id}>{series.label}</option>
+              }
+              return null
+            })}
           </FormSelect>
         </Field>
-        {!recurringSeriesId && Number(monthlyPayment) > 0 && (
+        <Field label="Série récurrente assurance">
+          <FormSelect value={recurringSeriesInsuranceId} onChange={(event) => setRecurringSeriesInsuranceId(event.target.value)}>
+            <option value="">Aucune série</option>
+            {recurringSeries.map((series) => {
+              if (series.recurring_type === 'credit_insurance') {
+                return <option key={series.id} value={series.id}>{series.label}</option>
+              }
+              return null
+            })}
+          </FormSelect>
+        </Field>
+        {(!recurringSeriesRepaymentId && !recurringSeriesInsuranceId) && (
           <p className="modal-hint debt-modal-wide">
             Une série mensuelle de remboursement sera créée automatiquement dans le budget.
           </p>

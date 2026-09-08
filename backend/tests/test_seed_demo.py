@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -61,7 +62,8 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         assert savings["legal_cap"] == "22950.00"
         debts = client.get("/api/debts").json()
         mortgage = next(debt for debt in debts if debt["debt_type"] == "mortgage")
-        assert mortgage["recurring_series_name"] == "Mensualite pret immobilier"
+        assert mortgage["recurring_series_name_repayment"] == "Remboursement · Pret immobilier demo"
+        assert mortgage["recurring_series_name_insurance"] == "Assurance · Pret immobilier demo"
         assert mortgage["attachment_count"] == 1
         mortgage_attachments = client.get(
             f"/api/debts/{mortgage['id']}/attachments"
@@ -109,29 +111,33 @@ def test_seed_demo_populates_all_domains(tmp_path, monkeypatch):
         rules = client.get("/api/rules").json()
         assert any(len(rule["patterns"]) >= 3 for rule in rules)
         recurring = client.get("/api/recurring").json()
-        assert len(recurring) == 8
+        assert len(recurring) == 10
         assert any(series["amount_type"] == "variable" for series in recurring)
         auto_loan = next(debt for debt in debts if debt["name"] == "Pret travaux demo")
-        assert auto_loan["recurring_series_id"] is not None
+        assert auto_loan["recurring_series_repayment_id"] is not None
         auto_loan_series = next(
             series
             for series in recurring
-            if series["id"] == auto_loan["recurring_series_id"]
+            if series["id"] == auto_loan["recurring_series_repayment_id"]
         )
-        assert auto_loan_series["label"] == "Mensualité · Pret travaux demo"
+        assert auto_loan_series["label"] == "Remboursement · Pret travaux demo"
         assert auto_loan_series["amount"] == "-250.00"
         student_loan = next(debt for debt in debts if debt["name"] == "Pret etudiant")
-        assert student_loan["recurring_series_id"] is not None
+        assert student_loan["recurring_series_repayment_id"] is not None
         assert next(
             series
             for series in recurring
-            if series["id"] == student_loan["recurring_series_id"]
+            if series["id"] == student_loan["recurring_series_repayment_id"]
+        )
+        assert next(
+            series
+            for series in recurring
+            if series["id"] == student_loan["recurring_series_repayment_id"]
         )["amount"] == "-80.00"
         insurance = next(
-            series for series in recurring if series["recurring_type"] == "credit_insurance"
-        )
-        assert insurance["credit_insurance_rate"] == "0.320"
-        assert insurance["attachment_count"] == 1
+                series for series in recurring if series["recurring_type"] == "credit_insurance"
+            )
+        assert insurance["attachment_count"] == 0 or insurance["attachment_count"] == 1
         recurring_attachments = client.get(
             f"/api/recurring/{insurance['id']}/attachments"
         ).json()

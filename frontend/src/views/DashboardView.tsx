@@ -377,9 +377,8 @@ export function DashboardView({
               <article key={debt.id}>
                 <div className="debt-head"><span><i style={{ background: debt.color ?? '#ff6b70' }} /><strong>{debt.name}</strong></span><strong className="negative">{money(debt.balance)}</strong></div>
                 <ProgressBar value={Number(debt.progress) * 100} color={debt.color ?? '#ff6b70'} />
-                <div className="debt-meta">
+<div className="debt-meta">
                   <span>{Math.round(Number(debt.progress) * 100)}% remboursé</span>
-                  <span>{debt.minimum_payment === null ? 'Mensualité non renseignée' : `${money(debt.minimum_payment)} / mois`}</span>
                 </div>
               </article>
             ))}

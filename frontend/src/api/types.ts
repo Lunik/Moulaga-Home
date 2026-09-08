@@ -300,8 +300,10 @@ export interface Debt {
   interest_rate: string | null
   minimum_payment: Money | null
   account_id: number | null
-  recurring_series_id: number | null
-  recurring_series_name: string | null
+  recurring_series_repayment_id: number | null
+  recurring_series_insurance_id: number | null
+  recurring_series_name_repayment: string | null
+  recurring_series_name_insurance: string | null
   paid: Money
   progress: number
   due_date?: string | null
@@ -333,8 +335,10 @@ export interface RealEstateDebt {
   id: number
   name: string
   balance: Money
-  recurring_series_id: number | null
-  recurring_series_name: string | null
+  recurring_series_repayment_id: number | null
+  recurring_series_insurance_id: number | null
+  recurring_series_name_repayment: string | null
+  recurring_series_name_insurance: string | null
 }
 
 export interface Holding {

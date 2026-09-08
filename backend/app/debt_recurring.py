@@ -22,11 +22,11 @@ def debt_payment(amount: Decimal | None) -> Decimal | None:
     return money(abs(Decimal(amount)))
 
 
-def build_debt_recurring_series(debt: Debt) -> RecurringSeries:
+def build_debt_recurring_series_repayment(debt: Debt) -> RecurringSeries:
     if debt.account_id is None:
         raise ValueError("Un compte est requis pour créer la récurrence d'une mensualité.")
     return RecurringSeries(
-        label=f"Mensualité · {debt.name}",
+        label=f"Remboursement · {debt.name}",
         account_id=debt.account_id,
         category_id=None,
         frequency="monthly",
@@ -37,6 +37,29 @@ def build_debt_recurring_series(debt: Debt) -> RecurringSeries:
         recurring_type="loan_payment",
         confidence=Decimal("1.00"),
     )
+
+
+def build_debt_recurring_series_insurance(debt: Debt) -> RecurringSeries:
+    if debt.account_id is None:
+        raise ValueError("Un compte est requis pour créer la récurrence d'une assurance.")
+    return RecurringSeries(
+        label=f"Assurance · {debt.name}",
+        account_id=debt.account_id,
+        category_id=None,
+        frequency="monthly",
+        next_due=_next_payment_date(debt.due_date),
+        amount=recurring_amount(debt.minimum_payment),
+        amount_type="fixed",
+        status="active",
+        recurring_type="credit_insurance",
+        confidence=Decimal("1.00"),
+    )
+
+
+# Backward compatibility alias for seed_demo.py
+def build_debt_recurring_series(debt: Debt) -> RecurringSeries:
+    """Deprecated: use build_debt_recurring_series_repayment instead."""
+    return build_debt_recurring_series_repayment(debt)
 
 
 def _next_payment_date(final_due: date | None) -> date:

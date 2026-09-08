@@ -713,7 +713,8 @@ class DebtCreate(BaseModel):
     interest_rate: Decimal | None = Field(default=None, ge=0, max_digits=5, decimal_places=2)
     minimum_payment: Decimal | None = Field(default=None, ge=0, **_MONEY)
     account_id: int | None = None
-    recurring_series_id: int | None = None
+    recurring_series_repayment_id: int | None = None
+    recurring_series_insurance_id: int | None = None
     due_date: date | None = None
     color: str = Field(default="#ef4444", pattern=HEX_COLOR)
 
@@ -731,7 +732,8 @@ class DebtUpdate(BaseModel):
     interest_rate: Decimal | None = Field(default=None, ge=0, max_digits=5, decimal_places=2)
     minimum_payment: Decimal | None = Field(default=None, ge=0, **_MONEY)
     account_id: int | None = None
-    recurring_series_id: int | None = None
+    recurring_series_repayment_id: int | None = None
+    recurring_series_insurance_id: int | None = None
     due_date: date | None = None
     color: str | None = Field(default=None, pattern=HEX_COLOR)
     archived: bool | None = None
@@ -753,8 +755,10 @@ class DebtRead(BaseModel):
     interest_rate: Decimal | None
     minimum_payment: Decimal | None
     account_id: int | None
-    recurring_series_id: int | None
-    recurring_series_name: str | None = None
+    recurring_series_repayment_id: int | None
+    recurring_series_insurance_id: int | None
+    recurring_series_name_repayment: str | None = None
+    recurring_series_name_insurance: str | None = None
     due_date: date | None
     color: str
     archived: bool
@@ -866,8 +870,10 @@ class RealEstateDebtRead(BaseModel):
     id: int
     name: str
     balance: Decimal
-    recurring_series_id: int | None
-    recurring_series_name: str | None
+    recurring_series_repayment_id: int | None
+    recurring_series_insurance_id: int | None
+    recurring_series_name_repayment: str | None
+    recurring_series_name_insurance: str | None
 
 
 class RealEstateRead(BaseModel):

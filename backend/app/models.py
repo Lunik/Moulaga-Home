@@ -292,7 +292,10 @@ class Debt(Base):
     account_id: Mapped[int | None] = mapped_column(
         ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
     )
-    recurring_series_id: Mapped[int | None] = mapped_column(
+    recurring_series_repayment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("recurring_series.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    recurring_series_insurance_id: Mapped[int | None] = mapped_column(
         ForeignKey("recurring_series.id", ondelete="SET NULL"), nullable=True, index=True
     )
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -300,7 +303,12 @@ class Debt(Base):
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    recurring_series: Mapped[RecurringSeries | None] = relationship()
+    recurring_series_repayment: Mapped[RecurringSeries | None] = relationship(
+        foreign_keys=[recurring_series_repayment_id]
+    )
+    recurring_series_insurance: Mapped[RecurringSeries | None] = relationship(
+        foreign_keys=[recurring_series_insurance_id]
+    )
     attachments: Mapped[list[DebtAttachment]] = relationship(
         back_populates="debt", cascade="all, delete-orphan"
     )
