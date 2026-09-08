@@ -31,10 +31,8 @@ import type {
   RecurringSeries,
 } from '../api/types'
 import { supportsHoldings } from '../accountCapabilities'
-import { isRouteBeta } from '../featureValidation'
 import { routeHash, type Route, type WealthTab } from '../routing'
 import {
-  BetaBadge,
   EmptyState,
   Field,
   FormInput,
@@ -141,19 +139,15 @@ export function WealthView({
       <nav className="module-tabs" aria-label="Patrimoine" ref={tabsRef}>
         <button className={tab === 'overview' ? 'active' : ''} type="button" onClick={() => navigate({ name: 'wealth', tab: 'overview' })}>
           <Icon name="wealth" /> Vue d'ensemble
-          {isRouteBeta({ name: 'wealth', tab: 'overview' }) && <BetaBadge />}
         </button>
         <button className={tab === 'holdings' ? 'active' : ''} type="button" onClick={() => navigate({ name: 'wealth', tab: 'holdings' })}>
           <Icon name="holdings" /> Actifs
-          {isRouteBeta({ name: 'wealth', tab: 'holdings' }) && <BetaBadge />}
         </button>
         <button className={tab === 'real-estate' ? 'active' : ''} type="button" onClick={() => navigate({ name: 'wealth', tab: 'real-estate' })}>
           <Icon name="home" /> Immobilier
-          {isRouteBeta({ name: 'wealth', tab: 'real-estate' }) && <BetaBadge />}
         </button>
         <button className={tab === 'debts' ? 'active' : ''} type="button" onClick={() => navigate({ name: 'wealth', tab: 'debts' })}>
           <Icon name="debt" /> Dettes
-          {isRouteBeta({ name: 'wealth', tab: 'debts' }) && <BetaBadge />}
         </button>
       </nav>
 
