@@ -3441,6 +3441,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 0.85rem;
   min-height: 4.9rem;
+  padding: 0.7rem 0.85rem;
   border-bottom: 1px solid var(--line);
 }
 
@@ -3449,11 +3450,23 @@ textarea:focus-visible {
   border: 0;
 }
 
+.recurring-copy {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .recurring-copy > span {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.45rem;
+  overflow: hidden;
+}
+
+.recurring-copy > span > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .recurring-copy > small,
