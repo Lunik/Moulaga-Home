@@ -74,7 +74,10 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     },
     "debts": {
         "debt_type": "VARCHAR(32) DEFAULT 'other' NOT NULL",
-        "recurring_series_id": (
+        "recurring_series_repayment_id": (
+            "INTEGER REFERENCES recurring_series(id) ON DELETE SET NULL"
+        ),
+        "recurring_series_insurance_id": (
             "INTEGER REFERENCES recurring_series(id) ON DELETE SET NULL"
         ),
         "due_date": "DATE",
