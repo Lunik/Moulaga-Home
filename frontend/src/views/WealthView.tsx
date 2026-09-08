@@ -840,10 +840,6 @@ function RealEstateRow({
     },
     onSuccess: onChanged,
   })
-  const iconDelete = useMutation({
-    mutationFn: () => apiDelete(`/real-estate/${asset.id}/icon`),
-    onSuccess: onChanged,
-  })
   const remove = useMutation({
     mutationFn: () => apiDelete(`/real-estate/${asset.id}`),
     onSuccess: onChanged,
@@ -961,17 +957,6 @@ function RealEstateRow({
             }
           }}
         />
-        {asset.icon_path && (
-          <button
-            className="icon-action"
-            type="button"
-            aria-label="Supprimer l'icône"
-            onClick={() => iconDelete.mutate()}
-            disabled={iconDelete.isPending}
-          >
-            <Icon name="close" />
-          </button>
-        )}
         <button className="icon-action" type="button" aria-label="Modifier" onClick={onEdit}><Icon name="edit" /></button>
         <button
           className="icon-action"
