@@ -595,7 +595,7 @@ async def list_real_estate(
             select(RealEstateAsset).order_by(RealEstateAsset.name)
         )
     ).scalars().all()
-    debts_by_asset: dict[int, list[tuple[Debt, str | None]]] = {}
+    debts_by_asset: dict[int, list[tuple[Debt, str | None, str | None]]] = {}
     linked_debts = (
         await session.execute(
             select(
@@ -623,14 +623,7 @@ async def list_real_estate(
     }
     for asset_id, debt, repayment_label in linked_debts:
         insurance_label = insurance_labels.get(debt.id)
-        # Combine both labels for display
-        recurring_names = []
-        if repayment_label:
-            recurring_names.append(repayment_label)
-        if insurance_label:
-            recurring_names.append(insurance_label)
-        recurring_name = " | ".join(recurring_names) if recurring_names else None
-        debts_by_asset.setdefault(asset_id, []).append((debt, recurring_name))
+        debts_by_asset.setdefault(asset_id, []).append((debt, repayment_label, insurance_label))
     attachment_counts = {
         asset_id: count
         for asset_id, count in (
