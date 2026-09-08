@@ -343,6 +343,7 @@ class RealEstateAsset(Base):
     ownership_share: Mapped[Decimal] = mapped_column(
         Numeric(5, 2), default=Decimal("100.00")
     )
+    icon_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     debt_links: Mapped[list[RealEstateDebtLink]] = relationship(

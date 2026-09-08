@@ -329,6 +329,7 @@ export interface RealEstateAsset {
   gain: Money
   net_equity: Money
   attachment_count: number
+  icon_path?: string | null
 }
 
 export interface RealEstateDebt {

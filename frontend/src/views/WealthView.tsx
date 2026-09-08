@@ -15,7 +15,7 @@ import {
   YAxis,
 } from 'recharts'
 
-import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiUpload } from '../api/client'
 import { AttachmentManager } from '../AttachmentManager'
 import type {
   Account,
@@ -831,6 +831,19 @@ function RealEstateRow({
   onEdit: () => void
 }) {
   const [showAttachments, setShowAttachments] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const iconUpload = useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      return apiUpload(`/real-estate/${asset.id}/icon`, form)
+    },
+    onSuccess: onChanged,
+  })
+  const iconDelete = useMutation({
+    mutationFn: () => apiDelete(`/real-estate/${asset.id}/icon`),
+    onSuccess: onChanged,
+  })
   const remove = useMutation({
     mutationFn: () => apiDelete(`/real-estate/${asset.id}`),
     onSuccess: onChanged,
@@ -845,7 +858,25 @@ function RealEstateRow({
       id={linkedEntityTargetId('real-estate', asset.id)}
       tabIndex={focused ? -1 : undefined}
     >
-      <span className="property-mark"><Icon name="home" /></span>
+      <span
+        className="property-mark"
+        style={{ cursor: 'pointer', display: 'inline-block', width: 60, height: 60, overflow: 'hidden', borderRadius: 8 }}
+        onClick={() => fileInputRef.current?.click()}
+        aria-label={asset.icon_path ? 'Modifier l\'icône' : 'Ajouter une icône'}
+        role="button"
+      >
+        {asset.icon_path ? (
+          <img
+            src={`/api/real-estate/${asset.id}/icon/download?t=${asset.icon_path || '0'}`}
+            alt={asset.name}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          />
+        ) : (
+          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', background: 'var(--surface)', borderRadius: 8 }}>
+            <Icon name="home" />
+          </span>
+        )}
+      </span>
       <span className="property-copy">
         <strong>{asset.name}</strong>
         <small>{propertyTypeLabel(asset.property_type)}{asset.address ? ` · ${asset.address}` : ''}</small>
@@ -917,6 +948,30 @@ function RealEstateRow({
             <span className="attachment-count-badge">{asset.attachment_count}</span>
           )}
         </button>
+        <input
+          type="file"
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) {
+              iconUpload.mutate(file)
+              e.target.value = ''
+            }
+          }}
+        />
+        {asset.icon_path && (
+          <button
+            className="icon-action"
+            type="button"
+            aria-label="Supprimer l'icône"
+            onClick={() => iconDelete.mutate()}
+            disabled={iconDelete.isPending}
+          >
+            <Icon name="close" />
+          </button>
+        )}
         <button className="icon-action" type="button" aria-label="Modifier" onClick={onEdit}><Icon name="edit" /></button>
         <button
           className="icon-action"

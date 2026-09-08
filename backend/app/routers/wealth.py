@@ -493,6 +493,7 @@ def _real_estate_read(
         gain=money(owned_value - owned_purchase_price),
         net_equity=money(owned_value - debt_balance),
         attachment_count=attachment_count,
+        icon_path=asset.icon_path,
     )
 
 
@@ -709,6 +710,59 @@ async def delete_real_estate(
         remove_attachment(attachment.stored_path)
     await session.delete(asset)
     await session.commit()
+
+
+@router.post("/real-estate/{asset_id}/icon", status_code=201)
+async def upload_real_estate_icon(
+    asset_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    asset = await session.get(RealEstateAsset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    if asset.icon_path is not None:
+        remove_attachment(asset.icon_path)
+    original_name, stored_path, size = await store_attachment(file)
+    asset.icon_path = stored_path
+    await session.commit()
+    await session.refresh(asset)
+    return {"icon_path": stored_path}
+
+
+@router.get("/real-estate/{asset_id}/icon/download", response_model=None)
+async def download_real_estate_icon(
+    asset_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    asset = await session.get(RealEstateAsset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    if asset.icon_path is None:
+        raise HTTPException(status_code=404, detail="Icone introuvable")
+    path = attachment_path(asset.icon_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Fichier d'icone introuvable")
+    return FileResponse(
+        path,
+        filename="icon",
+        media_type="image/png",
+        content_disposition_type="inline",
+    )
+
+
+@router.delete("/real-estate/{asset_id}/icon", status_code=204)
+async def delete_real_estate_icon(
+    asset_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    asset = await session.get(RealEstateAsset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    if asset.icon_path is not None:
+        remove_attachment(asset.icon_path)
+        asset.icon_path = None
+        await session.commit()
 
 
 def _real_estate_attachment_read(

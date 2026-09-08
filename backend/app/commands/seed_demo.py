@@ -932,6 +932,19 @@ async def _seed(
             )
         )
 
+    # Synthetic icon for the apartment (minimal PNG header)
+    icon_filename = "appartement-icone-demo.png"
+    icon_payload = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+        b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+        b"\x00\x00\x00\nIDATx\x9cc\xfc\xcf\xc0\x00\x00\x00"
+        b"\x00\x04\x00\x01\xaa\x8a\x82\x8b\x00\x00\x00\x00"
+        b"IEND\xaeB`\x82"
+    )
+    original_name, stored_path, size = await _store_demo_file(icon_filename, icon_payload)
+    created_attachment_paths.append(stored_path)
+    apartment.icon_path = stored_path
+
     real_estate_attachments = [
         (
             apartment,

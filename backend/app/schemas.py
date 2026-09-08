@@ -806,6 +806,7 @@ class RealEstateCreate(BaseModel):
         default=Decimal("100.00"), gt=0, le=100, max_digits=5, decimal_places=2
     )
     debt_ids: list[int] = Field(default_factory=list, max_length=100)
+    icon_path: str | None = Field(default=None, max_length=512)
 
     @field_validator("name")
     @classmethod
@@ -842,6 +843,7 @@ class RealEstateUpdate(BaseModel):
         default=None, gt=0, le=100, max_digits=5, decimal_places=2
     )
     debt_ids: list[int] = Field(default_factory=list, max_length=100)
+    icon_path: str | None = Field(default=None, max_length=512)
 
     @field_validator("name")
     @classmethod
@@ -893,6 +895,7 @@ class RealEstateRead(BaseModel):
     gain: Decimal
     net_equity: Decimal
     attachment_count: int = 0
+    icon_path: str | None = None
 
 
 class RealEstateAttachmentRead(BaseModel):

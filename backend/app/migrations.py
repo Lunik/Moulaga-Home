@@ -43,6 +43,9 @@ OBSOLETE_TABLES = frozenset(
 # Columns that may be missing on databases created before this schema version.
 # Values are the SQLite column definitions used by ``ALTER TABLE ADD COLUMN``.
 EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
+    "real_estate_assets": {
+        "icon_path": "VARCHAR(512)",
+    },
     "accounts": {
         "institution": "VARCHAR(120)",
         "regional_entity": "VARCHAR(120)",

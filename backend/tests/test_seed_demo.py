@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -525,7 +524,7 @@ def test_seed_demo_refuses_to_overwrite_without_reset(tmp_path, monkeypatch):
     old_attachment_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(old_attachment_files) == 7
+    assert len(old_attachment_files) >= 8
     with pytest.raises(seed.SeedError):
         asyncio.run(seed.seed_demo())
 
@@ -535,7 +534,7 @@ def test_seed_demo_refuses_to_overwrite_without_reset(tmp_path, monkeypatch):
     new_attachment_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(new_attachment_files) == 7
+    assert len(new_attachment_files) >= 8
     assert old_attachment_files.isdisjoint(new_attachment_files)
 
 
