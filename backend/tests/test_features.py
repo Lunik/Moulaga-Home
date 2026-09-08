@@ -1123,7 +1123,7 @@ def test_recurring_debt_and_real_estate_attachments(client, tmp_path):
             "principal": "100000.00",
             "balance": "80000.00",
             "account_id": account_id,
-            "recurring_series_id": series["id"],
+            "recurring_series_repayment_id": series["id"],
         },
     ).json()
     asset = client.post(
@@ -1795,12 +1795,12 @@ def test_debt_monthly_payment_creates_and_syncs_recurring_series(client):
 
     assert created.status_code == 201
     debt = created.json()
-    assert debt["recurring_series_id"] is not None
+    assert debt["recurring_series_repayment_id"] is not None
     assert debt["recurring_series_name"] == "Mensualité · Prêt auto synchronisé"
     recurring = client.get("/api/recurring").json()
     assert len(recurring) == len(recurring_before) + 1
     series = next(
-        item for item in recurring if item["id"] == debt["recurring_series_id"]
+        item for item in recurring if item["id"] == debt["recurring_series_repayment_id"]
     )
     assert series["account_id"] == account_id
     assert series["frequency"] == "monthly"
@@ -1818,7 +1818,7 @@ def test_debt_monthly_payment_creates_and_syncs_recurring_series(client):
     series = next(
         item
         for item in client.get("/api/recurring").json()
-        if item["id"] == debt["recurring_series_id"]
+        if item["id"] == debt["recurring_series_repayment_id"]
     )
     assert series["amount"] == "-275.50"
 
@@ -1979,7 +1979,7 @@ def test_debt_full_update_and_recurring_association(client):
             "interest_rate": "2.10",
             "minimum_payment": "850.00",
             "account_id": account_id,
-            "recurring_series_id": series["id"],
+            "recurring_series_repayment_id": series["id"],
             "due_date": "2042-05-15",
             "color": "#7c3aed",
         },
@@ -2001,7 +2001,7 @@ def test_debt_full_update_and_recurring_association(client):
             "interest_rate": None,
             "minimum_payment": "825.00",
             "account_id": None,
-            "recurring_series_id": None,
+            "recurring_series_repayment_id": None,
             "due_date": "2041-12-31",
             "color": "#ef4444",
             "archived": True,
@@ -2016,7 +2016,7 @@ def test_debt_full_update_and_recurring_association(client):
         "interest_rate": None,
         "minimum_payment": "825.00",
         "account_id": None,
-        "recurring_series_id": None,
+        "recurring_series_repayment_id": None,
         "recurring_series_name": None,
         "due_date": "2041-12-31",
         "color": "#ef4444",

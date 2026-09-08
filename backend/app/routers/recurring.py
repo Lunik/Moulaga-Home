@@ -268,7 +268,7 @@ async def update_series(
         linked_debts = list(
             (
                 await session.execute(
-                    select(Debt).where(Debt.recurring_series_id == series_id)
+                    select(Debt).where(Debt.recurring_series_repayment_id == series_id)
                 )
             ).scalars().all()
         )

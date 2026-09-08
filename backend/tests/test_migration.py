@@ -437,7 +437,7 @@ def test_recurring_and_debt_schema_upgrade_removes_schedules(tmp_path, monkeypat
         debts = client.get("/api/debts").json()
         assert debts[0]["name"] == "Dette historique"
         assert debts[0]["debt_type"] == "other"
-        assert debts[0]["recurring_series_id"] is None
+        assert debts[0]["recurring_series_repayment_id"] is None
         assert debts[0]["attachment_count"] == 0
 
     connection = sqlite3.connect(db_path)
@@ -471,7 +471,7 @@ def test_recurring_and_debt_schema_upgrade_removes_schedules(tmp_path, monkeypat
         "custom_type",
         "credit_insurance_rate",
     } <= recurring_columns
-    assert {"debt_type", "recurring_series_id"} <= debt_columns
+    assert {"debt_type", "recurring_series_repayment_id", "recurring_series_insurance_id"} <= debt_columns
     assert schedule_tables == set()
     assert attachment_tables == {
         "recurring_series_attachments",
