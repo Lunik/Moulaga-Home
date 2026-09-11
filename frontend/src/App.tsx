@@ -17,6 +17,7 @@ const DocumentsView = lazy(() => import('./views/DocumentsView').then((module) =
 const FamilyView = lazy(() => import('./views/FamilyView').then((module) => ({ default: module.FamilyView })))
 const SettingsView = lazy(() => import('./views/SettingsView').then((module) => ({ default: module.SettingsView })))
 const WealthView = lazy(() => import('./views/WealthView').then((module) => ({ default: module.WealthView })))
+const WorkView = lazy(() => import('./views/WorkView').then((module) => ({ default: module.WorkView })))
 
 const navigation: Array<{
   id: Route['name']
@@ -30,6 +31,7 @@ const navigation: Array<{
   { id: 'budget', label: 'Budget', caption: 'Prévisions récurrentes', icon: 'budget', route: { name: 'budget', tab: 'overview' } },
   { id: 'wealth', label: 'Patrimoine', caption: 'Actifs & dettes', icon: 'wealth', route: { name: 'wealth', tab: 'overview' } },
   { id: 'documents', label: 'Documents', caption: 'Pièces & justificatifs', icon: 'documents', route: { name: 'documents', tab: 'overview' } },
+  { id: 'work', label: 'Travail', caption: 'Salaires & retraite', icon: 'briefcase', route: { name: 'work', tab: 'overview' } },
   { id: 'family', label: 'Famille', caption: 'Objectifs partagés', icon: 'family', route: { name: 'family' } },
   { id: 'settings', label: 'Paramètres', caption: 'Préférences locales', icon: 'settings', route: { name: 'settings' } },
 ]
@@ -72,6 +74,10 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ['documents'] }),
       queryClient.invalidateQueries({ queryKey: ['account-institution-history'] }),
       queryClient.invalidateQueries({ queryKey: ['shared-accounts'] }),
+      queryClient.invalidateQueries({ queryKey: ['work-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['work-contracts'] }),
+      queryClient.invalidateQueries({ queryKey: ['work-payslips'] }),
+      queryClient.invalidateQueries({ queryKey: ['work-pension'] }),
     ])
   }
   const firstError = [
@@ -149,6 +155,12 @@ export default function App() {
             )}
             {route.name === 'documents' && (
               <DocumentsView tab={route.tab} navigate={navigate} />
+            )}
+            {route.name === 'work' && (
+              <WorkView
+                tab={route.tab}
+                navigate={navigate}
+              />
             )}
             {route.name === 'family' && <FamilyView accounts={accounts.data ?? []} />}
             {route.name === 'settings' && <SettingsView />}
@@ -243,6 +255,8 @@ function titleForRoute(route: Route): string {
       return 'Patrimoine'
     case 'documents':
       return 'Documents'
+    case 'work':
+      return 'Travail'
     case 'family':
       return 'Famille'
     case 'settings':

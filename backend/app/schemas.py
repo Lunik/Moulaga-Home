@@ -24,6 +24,14 @@ def _strip_required(value: str) -> str:
     return cleaned
 
 
+def _validate_period(value: str) -> str:
+    try:
+        date.fromisoformat(f"{value}-01")
+    except ValueError as exc:
+        raise ValueError("Periode invalide") from exc
+    return value
+
+
 # --------------------------------------------------------------------------- #
 # Accounts
 # --------------------------------------------------------------------------- #
@@ -969,6 +977,173 @@ class GoalContributionCreate(BaseModel):
     occurred_on: date
     member_id: int | None = None
     note: str | None = Field(default=None, max_length=200)
+
+
+# --------------------------------------------------------------------------- #
+# Work module schemas
+# --------------------------------------------------------------------------- #
+class WorkContractCreate(BaseModel):
+    employer: str = Field(min_length=1, max_length=120)
+    position: str = Field(min_length=1, max_length=120)
+    contract_type: str = Field(default="CDI", max_length=32)
+    start_date: date
+    end_date: date | None = None
+    gross_annual_salary: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    payment_period_months: int = Field(default=12, ge=1, le=24)
+    work_percentage: int = Field(default=100, ge=1, le=100)
+    recurring_series_id: int | None = None
+    status: str = Field(default="active", pattern="^(active|ended)$")
+    notes: str | None = Field(default=None, max_length=500)
+
+    @field_validator("employer", "position", "contract_type")
+    @classmethod
+    def strip_required(cls, value: str) -> str:
+        return _strip_required(value)
+
+
+class WorkContractUpdate(BaseModel):
+    employer: str | None = Field(default=None, min_length=1, max_length=120)
+    position: str | None = Field(default=None, min_length=1, max_length=120)
+    contract_type: str | None = Field(default=None, max_length=32)
+    start_date: date | None = None
+    end_date: date | None = None
+    gross_annual_salary: Decimal | None = Field(default=None, **_MONEY)
+    payment_period_months: int | None = Field(default=None, ge=1, le=24)
+    work_percentage: int | None = Field(default=None, ge=1, le=100)
+    recurring_series_id: int | None = None
+    status: str | None = Field(default=None, pattern="^(active|ended)$")
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class WorkContractRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employer: str
+    position: str
+    contract_type: str
+    start_date: date
+    end_date: date | None
+    gross_annual_salary: Decimal
+    payment_period_months: int
+    work_percentage: int
+    recurring_series_id: int | None
+    status: str
+    notes: str | None
+
+
+class PaySlipAttachmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    payslip_id: int
+    original_name: str
+    stored_path: str
+    content_type: str | None
+    size: int
+
+
+class PaySlipCreate(BaseModel):
+    contract_id: int | None = None
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    gross_salary: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    taxable_net: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    net_before_tax: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    pas_rate: Decimal = Field(default=Decimal("0.00"), ge=0, le=100, max_digits=5, decimal_places=2)
+    pas_amount: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    net_after_tax: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    bonuses: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    employer_contributions: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    employer_profit_sharing: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    hours_worked: Decimal | None = Field(default=None, ge=0, max_digits=6, decimal_places=2)
+    overtime_hours: Decimal | None = Field(default=None, ge=0, max_digits=6, decimal_places=2)
+    notes: str | None = Field(default=None, max_length=500)
+
+    @field_validator("period")
+    @classmethod
+    def validate_period(cls, value: str) -> str:
+        return _validate_period(value)
+
+
+class PaySlipUpdate(BaseModel):
+    contract_id: int | None = None
+    period: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    gross_salary: Decimal | None = Field(default=None, **_MONEY)
+    taxable_net: Decimal | None = Field(default=None, **_MONEY)
+    net_before_tax: Decimal | None = Field(default=None, **_MONEY)
+    pas_rate: Decimal | None = Field(default=None, ge=0, le=100, max_digits=5, decimal_places=2)
+    pas_amount: Decimal | None = Field(default=None, **_MONEY)
+    net_after_tax: Decimal | None = Field(default=None, **_MONEY)
+    bonuses: Decimal | None = Field(default=None, **_MONEY)
+    employer_contributions: Decimal | None = Field(default=None, **_MONEY)
+    employer_profit_sharing: Decimal | None = Field(default=None, **_MONEY)
+    hours_worked: Decimal | None = Field(default=None, ge=0, max_digits=6, decimal_places=2)
+    overtime_hours: Decimal | None = Field(default=None, ge=0, max_digits=6, decimal_places=2)
+    notes: str | None = Field(default=None, max_length=500)
+
+    @field_validator("period")
+    @classmethod
+    def validate_period(cls, value: str | None) -> str | None:
+        return _validate_period(value) if value is not None else None
+
+
+class PaySlipRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    contract_id: int | None
+    period: str
+    gross_salary: Decimal
+    taxable_net: Decimal
+    net_before_tax: Decimal
+    pas_rate: Decimal
+    pas_amount: Decimal
+    net_after_tax: Decimal
+    bonuses: Decimal
+    employer_contributions: Decimal
+    employer_profit_sharing: Decimal
+    hours_worked: Decimal | None
+    overtime_hours: Decimal | None
+    notes: str | None
+    attachments: list[PaySlipAttachmentRead] = Field(default_factory=list)
+
+
+class PensionProfileCreateOrUpdate(BaseModel):
+    birth_year: int = Field(default=1990, ge=1930, le=2020)
+    target_retirement_age: int = Field(default=64, ge=50, le=75)
+    validated_quarters: int = Field(default=40, ge=0, le=300)
+    required_quarters: int = Field(default=172, ge=1, le=300)
+    estimated_monthly_pension: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    target_monthly_income: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class PensionProfileRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    birth_year: int
+    target_retirement_age: int
+    validated_quarters: int
+    required_quarters: int
+    estimated_monthly_pension: Decimal
+    target_monthly_income: Decimal
+    notes: str | None
+
+
+class WorkSummary(BaseModel):
+    active_contracts_count: int
+    latest_net_after_tax: Decimal
+    ytd_taxable_net: Decimal
+    ytd_net_after_tax: Decimal
+    ytd_gross: Decimal
+    ytd_bonuses: Decimal
+    ytd_profit_sharing: Decimal
+    average_pas_rate: Decimal
+    estimated_pension: Decimal
+    validated_quarters: int
+    required_quarters: int
+
 
 
 class GoalContributionRead(BaseModel):

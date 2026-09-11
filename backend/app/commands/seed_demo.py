@@ -54,6 +54,9 @@ from ..models import (
     Holding,
     Household,
     HouseholdMember,
+    PaySlip,
+    PaySlipAttachment,
+    PensionProfile,
     PortfolioSnapshot,
     RealEstateAsset,
     RealEstateAttachment,
@@ -61,6 +64,7 @@ from ..models import (
     RecurringSeries,
     RecurringSeriesAttachment,
     SharedAccountLink,
+    WorkContract,
 )
 from ..snapshot_import import parse_snapshot_tsv
 
@@ -88,6 +92,9 @@ class SeedResult:
     recurring_attachments: int
     debt_attachments: int
     real_estate_attachments: int
+    contracts: int
+    payslips: int
+    payslip_attachments: int
 
 
 def _guard_data_dir() -> None:
@@ -131,6 +138,7 @@ async def _remove_attachment_files(session: AsyncSession) -> None:
         RecurringSeriesAttachment,
         DebtAttachment,
         RealEstateAttachment,
+        PaySlipAttachment,
     ):
         stored_paths = (await session.scalars(select(model.stored_path))).all()
         for stored_path in stored_paths:
@@ -401,7 +409,7 @@ async def _seed(
         category_id=salaire.id,
         frequency="monthly",
         next_due=add_month(anchor, 1).replace(day=1),
-        amount=money("3000.00"),
+        amount=money("3126.50"),
         amount_type="fixed",
         status="active",
         recurring_type="salary",
@@ -487,7 +495,7 @@ async def _seed(
         custom_type="Carburant",
     )
     extra_income_series = RecurringSeries(
-        label="Revenu complementaire demo",
+        label="Revenu complémentaire démo",
         account_id=boursobank_checking.id,
         category_id=salaire.id,
         frequency="monthly",
@@ -495,7 +503,8 @@ async def _seed(
         amount=money("500.00"),
         amount_type="fixed",
         status="active",
-        recurring_type="salary",
+        recurring_type="other",
+        custom_type="Revenu complémentaire",
     )
     boursobank_expense_series = RecurringSeries(
         label="Courses compte Boursobank demo",
@@ -804,6 +813,123 @@ async def _seed(
 
     total_categories = await session.scalar(select(func.count()).select_from(Category))
     total_recurring = await session.scalar(select(func.count()).select_from(RecurringSeries))
+
+    # --- Work module seeding ------------------------------------------------ #
+    current_contract = WorkContract(
+        employer="Tech Corp Solutions",
+        position="Lead Développeur Fullstack",
+        contract_type="CDI",
+        start_date=date(2021, 9, 1),
+        gross_annual_salary=money("52000.00"),
+        work_percentage=100,
+        payment_period_months=12,
+        recurring_series_id=salary_series.id,
+        status="active",
+        notes="CDI cadre avec forfait jours, participation & PEE",
+    )
+    previous_contract = WorkContract(
+        employer="Studio Numérique Démo",
+        position="Développeur fullstack",
+        contract_type="CDD",
+        start_date=date(2019, 9, 1),
+        end_date=date(2021, 8, 31),
+        gross_annual_salary=money("42000.00"),
+        work_percentage=100,
+        payment_period_months=12,
+        status="ended",
+        notes="Expérience professionnelle entièrement synthétique",
+    )
+    session.add_all([current_contract, previous_contract])
+    await session.flush()
+
+    payslip_periods = [
+        (
+            "2026-09", money("4333.33"), money("3550.00"), money("3380.00"),
+            Decimal("7.50"), money("253.50"), money("3126.50"), money("0.00"),
+            money("1200.00"), money("0.00")
+        ),
+        (
+            "2026-08", money("4333.33"), money("3550.00"), money("3380.00"),
+            Decimal("7.50"), money("253.50"), money("3126.50"), money("0.00"),
+            money("1200.00"), money("0.00")
+        ),
+        (
+            "2026-07", money("4333.33"), money("3550.00"), money("3380.00"),
+            Decimal("7.50"), money("253.50"), money("3126.50"), money("0.00"),
+            money("1200.00"), money("0.00")
+        ),
+        (
+            "2026-06", money("4333.33"), money("5550.00"), money("5380.00"),
+            Decimal("7.50"), money("403.50"), money("4976.50"), money("2000.00"),
+            money("1200.00"), money("1500.00")
+        ),
+        (
+            "2026-05", money("4333.33"), money("3550.00"), money("3380.00"),
+            Decimal("7.50"), money("253.50"), money("3126.50"), money("0.00"),
+            money("1200.00"), money("0.00")
+        ),
+        (
+            "2026-04", money("4333.33"), money("3550.00"), money("3380.00"),
+            Decimal("7.50"), money("253.50"), money("3126.50"), money("0.00"),
+            money("1200.00"), money("0.00")
+        ),
+    ]
+    payslips = []
+    for item in payslip_periods:
+        (
+            period, gross, taxable_net, net_before, pas_rate,
+            pas_amt, net_after, bonus, emp_contrib, profit_sharing
+        ) = item
+        sl = PaySlip(
+            contract_id=current_contract.id,
+            period=period,
+            gross_salary=gross,
+            taxable_net=taxable_net,
+            net_before_tax=net_before,
+            pas_rate=pas_rate,
+            pas_amount=pas_amt,
+            net_after_tax=net_after,
+            bonuses=bonus,
+            employer_contributions=emp_contrib,
+            employer_profit_sharing=profit_sharing,
+            hours_worked=Decimal("151.67"),
+            notes=None,
+        )
+        payslips.append(sl)
+    session.add_all(payslips)
+    await session.flush()
+
+    payslip_attachment_payload = (
+        b"Moulaga QA - bulletin de paie entierement synthetique.\n"
+        b"Aucune donnee bancaire ou personnelle reelle.\n"
+    )
+    original_name, stored_path, size = await _store_demo_file(
+        "bulletin-paie-2026-09-demo.txt",
+        payslip_attachment_payload,
+    )
+    created_attachment_paths.append(stored_path)
+    session.add(
+        PaySlipAttachment(
+            payslip_id=payslips[0].id,
+            original_name=original_name,
+            stored_path=stored_path,
+            content_type="text/plain",
+            size=size,
+        )
+    )
+
+    pension = PensionProfile(
+        birth_year=1990,
+        target_retirement_age=64,
+        validated_quarters=48,
+        required_quarters=172,
+        estimated_monthly_pension=money("2450.00"),
+        target_monthly_income=money("3000.00"),
+        notes="Estimation basée sur Relevé Individuel de Situation (RIS) Agirc-Arrco 2026",
+    )
+    session.add(pension)
+    await session.flush()
+
     return SeedResult(
         accounts=10,
         snapshots=snapshot_count,
@@ -820,6 +946,9 @@ async def _seed(
         recurring_attachments=len(recurring_attachments),
         debt_attachments=len(debt_attachments),
         real_estate_attachments=len(real_estate_attachments),
+        contracts=2,
+        payslips=len(payslips),
+        payslip_attachments=1,
     )
 
 
@@ -863,6 +992,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{result.recurring_attachments} piece(s) jointe(s) recurrente(s), "
         f"{result.debt_attachments} piece(s) jointe(s) de dette, "
         f"{result.real_estate_attachments} piece(s) jointe(s) immobiliere(s)."
+        f" {result.contracts} contrat(s), {result.payslips} fiche(s) de paie, "
+        f"{result.payslip_attachments} bulletin(s) joint(s)."
     )
     return 0
 

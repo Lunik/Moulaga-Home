@@ -9,6 +9,8 @@ export type BudgetTab =
 export type WealthTab = 'overview' | 'holdings' | 'real-estate' | 'debts'
 export type DocumentsTab = 'overview' | 'all' | 'missing'
 
+export type WorkTab = 'overview' | 'salary' | 'pension'
+
 export type Route =
   | { name: 'dashboard' }
   | { name: 'accounts' }
@@ -16,6 +18,7 @@ export type Route =
   | { name: 'budget'; tab: BudgetTab; focusId?: number }
   | { name: 'wealth'; tab: WealthTab; focusId?: number }
   | { name: 'documents'; tab: DocumentsTab }
+  | { name: 'work'; tab: WorkTab; focusId?: number }
   | { name: 'family' }
   | { name: 'settings' }
 
@@ -31,6 +34,7 @@ const legacyBudgetTabs: Record<string, BudgetTab> = {
 }
 const wealthTabs = new Set<WealthTab>(['overview', 'holdings', 'real-estate', 'debts'])
 const documentsTabs = new Set<DocumentsTab>(['overview', 'all', 'missing'])
+const workTabs = new Set<WorkTab>(['overview', 'salary', 'pension'])
 
 export function useRoute(): [Route, (route: Route) => void] {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash))
@@ -70,6 +74,8 @@ export function routeHash(route: Route): string {
       return `#/wealth/${route.tab}${route.focusId ? `/${route.focusId}` : ''}`
     case 'documents':
       return `#/documents/${route.tab}`
+    case 'work':
+      return `#/work/${route.tab}${route.focusId ? `/${route.focusId}` : ''}`
   }
 }
 
@@ -99,6 +105,14 @@ function parseHash(hash: string): Route {
   if (parts[0] === 'documents') {
     const tab = parts[1] as DocumentsTab
     return { name: 'documents', tab: documentsTabs.has(tab) ? tab : 'overview' }
+  }
+  if (parts[0] === 'work') {
+    const tab = parts[1] as WorkTab
+    if (workTabs.has(tab)) {
+      const focusId = positiveInteger(parts[2])
+      return focusId ? { name: 'work', tab, focusId } : { name: 'work', tab }
+    }
+    return { name: 'work', tab: 'overview' }
   }
   if (parts[0] === 'family') return { name: 'family' }
   if (parts[0] === 'settings') return { name: 'settings' }

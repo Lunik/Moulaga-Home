@@ -33,10 +33,12 @@ import {
   errorMessage,
   formatDate,
   formatMonth,
+  linkedEntityTargetId,
   localDateInputValue,
   money,
   signedMoney,
   type AmountDirection,
+  useLinkedEntityFocus,
 } from '../ui'
 
 const budgetTabs: Array<{
@@ -52,6 +54,7 @@ const budgetTabs: Array<{
 
 export function BudgetView({
   tab,
+  focusId,
   accounts,
   categories,
   navigate,
@@ -84,7 +87,12 @@ export function BudgetView({
       {tab === 'overview' && <BudgetOverviewPanel navigate={navigate} />}
       {tab === 'cashflow' && <RecurringFlowPanel categories={categories} />}
       {tab === 'recurring' && (
-        <RecurringPanel accounts={accounts} categories={categories} onRefresh={onRefresh} />
+        <RecurringPanel
+          accounts={accounts}
+          categories={categories}
+          focusId={focusId}
+          onRefresh={onRefresh}
+        />
       )}
       {tab === 'envelopes' && (
         <EnvelopesPanel categories={categories} onRefresh={onRefresh} />
@@ -289,10 +297,12 @@ function RecurringFlowPanel({ categories }: { categories: Category[] }) {
 function RecurringPanel({
   accounts,
   categories,
+  focusId,
   onRefresh,
 }: {
   accounts: Account[]
   categories: Category[]
+  focusId?: number
   onRefresh: () => Promise<void>
 }) {
   const queryClient = useQueryClient()
@@ -307,6 +317,7 @@ function RecurringPanel({
     queryKey: ['recurring-forecast', 3],
     queryFn: () => apiGet<RecurringForecastItem[]>('/recurring/forecast?months=3'),
   })
+  useLinkedEntityFocus('recurring', focusId, (series.data?.length ?? 0) > 0)
   const refresh = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
@@ -383,6 +394,7 @@ function RecurringPanel({
                 accountArchived={
                   accounts.find((account) => account.id === item.account_id)?.archived ?? false
                 }
+                focused={item.id === focusId}
                 item={item}
                 key={item.id}
                 onEdit={() => setEditing(item)}
@@ -400,11 +412,13 @@ function RecurringPanel({
 
 function RecurringRow({
   accountArchived,
+  focused,
   item,
   onEdit,
   onSaved,
 }: {
   accountArchived: boolean
+  focused: boolean
   item: RecurringSeries
   onEdit: () => void
   onSaved: () => Promise<void>
@@ -421,7 +435,11 @@ function RecurringRow({
   })
 
   return (
-    <article>
+    <article
+      className={focused ? 'linked-entity-target' : undefined}
+      id={linkedEntityTargetId('recurring', item.id)}
+      tabIndex={focused ? -1 : undefined}
+    >
       <span className="recurring-copy">
         <span>
           <strong>{item.label}</strong>

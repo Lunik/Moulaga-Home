@@ -8,6 +8,7 @@ export type IconName =
   | 'attachment'
   | 'arrow'
   | 'back'
+  | 'briefcase'
   | 'budget'
   | 'calendar'
   | 'check'
@@ -72,6 +73,12 @@ export function Icon({ name, className }: { name: IconName; className?: string }
     ),
     check: <path d="m5 12 4 4L19 6" />,
     close: <path d="m6 6 12 12M18 6 6 18" />,
+    briefcase: (
+      <>
+        <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+      </>
+    ),
     database: (
       <>
         <ellipse cx="12" cy="5" rx="8" ry="3" />
@@ -236,13 +243,13 @@ export function MetricCard({
   label,
   value,
   detail,
-  icon,
+  icon = 'grid',
   tone,
 }: {
   label: string
   value: string
   detail?: string
-  icon: IconName
+  icon?: IconName
   tone?: 'positive' | 'negative'
 }) {
   return (
@@ -358,6 +365,23 @@ export const FormInput = forwardRef<HTMLInputElement, ComponentPropsWithoutRef<'
     return <input {...props} {...passwordManagerIgnoreAttributes} ref={ref} />
   },
 )
+
+export function DatePicker({
+  type = 'date',
+  ...props
+}: Omit<ComponentPropsWithoutRef<'input'>, 'type'> & { type?: 'date' | 'month' }) {
+  return (
+    <span className="date-picker-control">
+      <input
+        {...props}
+        {...passwordManagerIgnoreAttributes}
+        className={props.className ? `date-picker-input ${props.className}` : 'date-picker-input'}
+        type={type}
+      />
+      <Icon className="date-picker-icon" name="calendar" />
+    </span>
+  )
+}
 
 export const FormSelect = forwardRef<HTMLSelectElement, ComponentPropsWithoutRef<'select'>>(
   function FormSelect(props, ref) {

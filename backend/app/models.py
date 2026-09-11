@@ -419,3 +419,86 @@ class GoalContribution(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     goal: Mapped[Goal] = relationship(back_populates="contributions")
+
+
+class WorkContract(Base):
+    __tablename__ = "work_contracts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employer: Mapped[str] = mapped_column(String(120))
+    position: Mapped[str] = mapped_column(String(120))
+    contract_type: Mapped[str] = mapped_column(String(32), default="CDI")
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    gross_annual_salary: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    payment_period_months: Mapped[int] = mapped_column(Integer, default=12)
+    work_percentage: Mapped[int] = mapped_column(Integer, default=100)
+    recurring_series_id: Mapped[int | None] = mapped_column(
+        ForeignKey("recurring_series.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    slips: Mapped[list[PaySlip]] = relationship(
+        back_populates="contract", cascade="all, delete-orphan"
+    )
+    recurring_series: Mapped[RecurringSeries | None] = relationship()
+
+
+class PaySlip(Base):
+    __tablename__ = "pay_slips"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int | None] = mapped_column(
+        ForeignKey("work_contracts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    period: Mapped[str] = mapped_column(String(7), index=True)  # YYYY-MM
+    gross_salary: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    taxable_net: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    net_before_tax: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    pas_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=ZERO)
+    pas_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    net_after_tax: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    bonuses: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    employer_contributions: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    employer_profit_sharing: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    hours_worked: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    overtime_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    contract: Mapped[WorkContract | None] = relationship(back_populates="slips")
+    attachments: Mapped[list[PaySlipAttachment]] = relationship(
+        back_populates="payslip", cascade="all, delete-orphan"
+    )
+
+
+class PaySlipAttachment(Base):
+    __tablename__ = "pay_slip_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    payslip_id: Mapped[int] = mapped_column(
+        ForeignKey("pay_slips.id", ondelete="CASCADE"), index=True
+    )
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(512), unique=True)
+    content_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    payslip: Mapped[PaySlip] = relationship(back_populates="attachments")
+
+
+class PensionProfile(Base):
+    __tablename__ = "pension_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    birth_year: Mapped[int] = mapped_column(Integer, default=1990)
+    target_retirement_age: Mapped[int] = mapped_column(Integer, default=64)
+    validated_quarters: Mapped[int] = mapped_column(Integer, default=40)
+    required_quarters: Mapped[int] = mapped_column(Integer, default=172)
+    estimated_monthly_pension: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    target_monthly_income: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
