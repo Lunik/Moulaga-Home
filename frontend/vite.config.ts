@@ -78,11 +78,7 @@ export default defineConfig({
               ) {
                 return false
               }
-              const transactionRead = url.pathname === '/api/transactions'
-                || /^\/api\/transactions\/\d+(?:\/|$)/.test(url.pathname)
-              return !transactionRead
-                && url.pathname !== '/api/categorization/inbox'
-                && url.pathname !== '/api/health'
+              return url.pathname !== '/api/health'
                 && !url.pathname.includes('/attachments')
                 && !url.pathname.endsWith('/download')
             },

@@ -5,8 +5,6 @@ export type BudgetTab =
   | 'cashflow'
   | 'recurring'
   | 'envelopes'
-  | 'categorize'
-  | 'transactions'
 
 export type WealthTab = 'overview' | 'holdings' | 'real-estate' | 'debts'
 
@@ -24,11 +22,11 @@ const budgetTabs = new Set<BudgetTab>([
   'cashflow',
   'recurring',
   'envelopes',
-  'categorize',
-  'transactions',
 ])
 // Categories used to have their own "Configuration" tab; envelopes now cover both.
-const legacyBudgetTabs: Record<string, BudgetTab> = { manage: 'envelopes' }
+const legacyBudgetTabs: Record<string, BudgetTab> = {
+  manage: 'envelopes',
+}
 const wealthTabs = new Set<WealthTab>(['overview', 'holdings', 'real-estate', 'debts'])
 
 export function useRoute(): [Route, (route: Route) => void] {

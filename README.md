@@ -1,48 +1,45 @@
 # Moulaga
 
-Application auto-hebergee de budget, cashflow et suivi patrimonial. Toutes les donnees restent dans
-une base SQLite locale et persistante.
+Application auto-hebergee de suivi de comptes, budget recurrent et patrimoine. Toutes les donnees
+restent dans une base SQLite locale et persistante.
 
 ## Fonctionnalites
 
-- tableau de bord des soldes, revenus, depenses et budget restant, avec activite recente,
-  comparaison mensuelle et synthese du patrimoine net ;
+- tableau de bord dont les soldes proviennent des derniers releves de comptes et dont les revenus,
+  depenses, budget disponible, flux Sankey et prochaines echeances proviennent des series
+  recurrentes actives ;
 - comptes groupes par etablissement et entite regionale, avec selecteur de banque,
   numero ou identifiant facultatif, historique, releves avec pieces jointes locales,
   configurations de livrets et positions ;
-- registre pagine des transactions avec pieces jointes locales ajoutables des la creation,
-  creation et edition en modale, deplacement entre comptes, suppression et filtres ;
 - cycle budgetaire configurable, enveloppes plafonnees ou non avec budgets parents repartis entre
   leurs sous-categories et reliquat automatique « Autres », report lors de leur suppression,
-  cashflow Sankey colore par categorie avec selection rapide du mois ou de l'annee ;
-- categories deplacables dans la hierarchie, archivage protecteur de l'historique,
-  restauration et regles deterministes a plusieurs motifs ;
-- boite de categorisation et suggestions entierement locales ;
-- series recurrentes typees et modifiables, assurances credit avec taux et import TSV
-  d'echeancier, detection avec validation des propositions et echeancier previsionnel ;
+  projection graphique des flux recurrents avec selection rapide du cycle ou de l'annee ;
+- categories deplacables dans la hierarchie, archivage protecteur et restauration ;
+- series recurrentes typees, modifiables et accompagnees de pieces jointes locales, avec
+  echeancier previsionnel ;
 - dettes creees et modifiees en modale, association a une serie recurrente, import TSV
   d'echeancier pour les credits, liens navigables entre biens, dettes et series recurrentes,
   biens immobiliers avec quote-part et emprunt associe, positions, valorisations,
   contributions et performance du portefeuille ;
 - foyers locaux, roles, comptes partages et objectifs communs ;
 - themes clair/sombre/systeme, formats de date et styles de navigation ;
-- identites marchandes locales par monogramme et couleur, sans appel externe ;
 - PWA installable avec interface, graphiques et tuiles de synthese disponibles hors ligne.
+
+Les derniers releves sont la source des soldes ; les series recurrentes actives, hors virements,
+sont la source des indicateurs et graphiques budgetaires. Moulaga ne conserve aucun registre
+d'operations unitaires.
 
 La correspondance avec les 26 maquettes et l'ordre d'audit iteratif des fonctionnalites sont
 decrits dans [ROADMAP.md](ROADMAP.md).
 
 ## Confidentialite
 
-Le fichier `Banque_v3.numbers`, les exports CSV et les bases SQLite contiennent des donnees
-confidentielles. Ils ne doivent jamais etre copies dans le depot ou les logs.
+Les exports bancaires et les bases SQLite contiennent des donnees confidentielles. Ils ne doivent
+jamais etre copies dans le depot ou les logs.
 
-- la migration Banque_v3 est une commande one-shot, jamais une route API ;
-- la categorisation dite privee utilise uniquement les regles et l'historique SQLite local ;
 - aucune donnee bancaire n'est envoyee a un modele ou un service tiers ;
-- les identites marchandes sont saisies et stockees localement, sans telechargement de logo ;
 - les donnees de test et de demonstration sont entierement synthetiques.
-- les pieces jointes des transactions et releves sont conservees sous
+- les pieces jointes des releves, recurrents, dettes et biens sont conservees sous
   `MOULAGA_DATA_DIR/attached` dans des chemins haches ; elles restent sensibles et hors du depot Git.
 
 ## Demarrage Docker
@@ -96,9 +93,8 @@ les vues compilees, puis precharge les donnees des graphiques et tuiles courante
 
 Les lectures visuelles utilisent le reseau en priorite et la derniere reponse locale en cas
 d'indisponibilite de l'instance. Les filtres et periodes deja consultes sont egalement conserves.
-Les registres de transactions, la boite de categorisation et les pieces jointes ne sont
-volontairement pas stockes pour le mode hors ligne. Les modifications restent reservees au mode
-connecte.
+Les pieces jointes ne sont volontairement pas stockees pour le mode hors ligne. Les modifications
+restent reservees au mode connecte.
 
 ## Base persistante et migrations
 
@@ -110,7 +106,9 @@ SQLite devient la source de verite apres la reprise initiale. Au demarrage, Moul
 1. inspecte la version du schema avec `PRAGMA user_version` ;
 2. cree une sauvegarde horodatee avant toute modification d'une base existante ;
 3. applique les ajouts non destructifs necessaires ;
-4. conserve les comptes, transactions et relations historiques.
+4. lors du passage au schema sans registre, materialise le dernier solde historique dans un releve,
+   puis retire les anciennes tables et leurs pieces jointes ;
+5. conserve les comptes, relevés, recurrents et relations patrimoniales.
 
 Pour une sauvegarde manuelle coherente :
 
@@ -121,44 +119,6 @@ docker compose start moulaga
 ```
 
 La copie est sensible et doit rester hors du depot.
-
-## Migration initiale de Banque_v3
-
-1. Exporter localement `Banque_v3.numbers` au format CSV.
-2. Arreter Moulaga.
-3. Executer la migration sur le fichier local.
-4. Redemarrer Moulaga puis conserver SQLite comme source de verite.
-
-Avec l'environnement Python :
-
-```bash
-docker compose stop moulaga
-cd backend
-MOULAGA_DATA_DIR=../data .venv/bin/moulaga-migrate-banque-v3 \
-  "/chemin/prive/banque.csv" --account "Compte courant"
-cd ..
-docker compose start moulaga
-```
-
-Avec Docker, sans copier le CSV dans le depot :
-
-```bash
-docker compose stop moulaga
-docker compose run --rm \
-  -v "/chemin/absolu/banque.csv:/import/banque.csv:ro" \
-  moulaga moulaga-migrate-banque-v3 /import/banque.csv --account "Compte courant"
-docker compose start moulaga
-```
-
-Colonnes reconnues :
-
-- `Date` : `YYYY-MM-DD`, `DD/MM/YYYY` ou `DD-MM-YYYY` ;
-- `Libelle` / `Description` ;
-- `Montant`, ou `Debit` + `Credit` ;
-- `Categorie` facultative.
-
-La migration est atomique et idempotente : une ligne invalide annule l'ensemble, et une relance ne
-duplique pas les transactions.
 
 ## Donnees fictives pour la QA
 
@@ -184,8 +144,9 @@ MOULAGA_DATA_DIR=/tmp/moulaga-demo \
 ```
 
 Cette seed fournit des scenarios synthetiques pour chaque fonctionnalite, notamment les comptes
-actifs et archives, l'epargne et sa projection, les positions, les transferts, la pagination, les
-releves et les pieces jointes. Toute nouvelle fonctionnalite doit enrichir la seed et
+actifs et archives, les soldes issus des releves, les budgets et flux issus des series recurrentes,
+l'epargne et sa projection, les positions, les transferts, la pagination et les pieces jointes.
+Toute nouvelle fonctionnalite doit enrichir la seed et
 `backend/tests/test_seed_demo.py` dans le meme changement.
 
 Ne jamais activer `MOULAGA_DEMO_MODE` ni utiliser `--reset` contre une base utilisateur.

@@ -20,11 +20,10 @@ et de tous les etats importants visibles dans l'application.
 
 1. Reperer les donnees, etats et routes necessaires au parcours modifie.
 2. Ajouter dans `backend/app/commands/seed_demo.py` un scenario synthetique coherent qui rend le
-   parcours directement visible. Couvrir les seuils fonctionnels reels, par exemple plus de 100
-   mouvements si la page pagine a 100.
+   parcours directement visible. Couvrir les seuils fonctionnels reels et les etats limites.
 3. Reutiliser les relations et helpers du produit plutot que fabriquer une representation propre a
-   la seed. Les soldes, transferts, archives et pieces jointes doivent respecter les memes
-   invariants que l'API.
+   la seed. Les soldes doivent provenir des releves, les budgets des series recurrentes, et les
+   transferts, archives et pieces jointes doivent respecter les memes invariants que l'API.
 4. Generer les eventuelles pieces jointes uniquement a l'execution sous `MOULAGA_DATA_DIR`, avec un
    contenu explicitement synthetique. Ne jamais committer de fichier bancaire ou de fichier genere.
 5. Preserver les protections de la commande : dossier `/data` refuse hors

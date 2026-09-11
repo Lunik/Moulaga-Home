@@ -79,7 +79,6 @@ class AccountRead(AccountCreate):
     id: int
     archived: bool = False
     balance: Decimal = Decimal("0.00")
-    transaction_count: int = 0
 
 
 class AccountUpdate(BaseModel):
@@ -222,7 +221,6 @@ class InstitutionHistoryPoint(BaseModel):
 
 class AccountDetail(AccountRead):
     history: list[AccountHistoryPoint] = Field(default_factory=list)
-    transaction_count: int = 0
 
 
 # --------------------------------------------------------------------------- #
@@ -247,7 +245,7 @@ class CategoryRead(CategoryCreate):
     id: int
     archived: bool = False
     is_default: bool = False
-    spent_this_month: Decimal = Decimal("0.00")
+    planned_this_month: Decimal = Decimal("0.00")
 
 
 class CategoryUpdate(BaseModel):
@@ -269,62 +267,6 @@ class CategoryBudgetUpdate(BaseModel):
 
 class CategoryRemovalResult(BaseModel):
     action: str = Field(pattern="^(archived|deleted)$")
-    transaction_count: int
-
-
-# --------------------------------------------------------------------------- #
-# Transactions
-# --------------------------------------------------------------------------- #
-class TransactionCreate(BaseModel):
-    booked_at: date
-    description: str = Field(min_length=1, max_length=500)
-    amount: Decimal = Field(**_MONEY)
-    account_id: int
-    category_id: int | None = None
-    notes: str | None = Field(default=None, max_length=1000)
-
-    @field_validator("description")
-    @classmethod
-    def strip_description(cls, value: str) -> str:
-        return _strip_required(value)
-
-
-class TransactionUpdate(BaseModel):
-    booked_at: date | None = None
-    description: str | None = Field(default=None, min_length=1, max_length=500)
-    amount: Decimal | None = Field(default=None, **_MONEY)
-    account_id: int | None = None
-    category_id: int | None = None
-    notes: str | None = Field(default=None, max_length=1000)
-
-    @field_validator("description")
-    @classmethod
-    def strip_description(cls, value: str | None) -> str | None:
-        return _strip_required(value) if value is not None else None
-
-
-class TransactionRead(TransactionCreate):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    account_name: str = ""
-    category_name: str | None = None
-    category_kind: str | None = None
-    transfer_group: str | None = None
-    attachment_count: int = 0
-
-
-class TransactionAttachmentRead(BaseModel):
-    id: int
-    transaction_id: int
-    original_name: str
-    storage_path: str
-    content_type: str | None
-    size: int
-
-
-class TransactionCount(BaseModel):
-    count: int
 
 
 # --------------------------------------------------------------------------- #
@@ -337,7 +279,6 @@ class Overview(BaseModel):
     net_current_month: Decimal
     budget_current_month: Decimal
     budget_remaining: Decimal
-    uncategorized_count: int
 
 
 class MonthlyPoint(BaseModel):
@@ -365,10 +306,6 @@ class PreferencesRead(BaseModel):
     date_format: str
     navigation_style: str
     budget_cycle_start_day: int
-    local_merchant_identities: bool
-    private_categorization_enabled: bool
-    private_categorization_mode: str
-    private_categorization_confidence: Decimal
 
 
 class PreferencesUpdate(BaseModel):
@@ -379,12 +316,6 @@ class PreferencesUpdate(BaseModel):
     )
     navigation_style: str | None = Field(default=None, pattern="^(sidebar|topbar|compact)$")
     budget_cycle_start_day: int | None = Field(default=None, ge=1, le=28)
-    local_merchant_identities: bool | None = None
-    private_categorization_enabled: bool | None = None
-    private_categorization_mode: str | None = Field(
-        default=None, pattern="^(off|suggest|auto)$"
-    )
-    private_categorization_confidence: Decimal | None = Field(default=None, ge=0, le=1)
 
 
 # --------------------------------------------------------------------------- #
@@ -403,9 +334,8 @@ class BudgetCycleOverview(BaseModel):
     net: Decimal
     budget_total: Decimal
     budget_remaining: Decimal
-    uncategorized_count: int
-    envelope_spent: Decimal
-    envelope_remaining: Decimal
+    envelope_planned: Decimal
+    envelope_available: Decimal
     upcoming_recurring_amount: Decimal
     upcoming_recurring_count: int
     savings_contributions: Decimal
@@ -417,9 +347,9 @@ class EnvelopeRead(BaseModel):
     color: str
     parent_id: int | None = None
     budget: Decimal | None
-    direct_spent: Decimal = Decimal("0.00")
-    spent: Decimal
-    remaining: Decimal | None
+    direct_planned: Decimal = Decimal("0.00")
+    planned: Decimal
+    available: Decimal | None
     children_budget: Decimal = Decimal("0.00")
     remainder_budget: Decimal | None = None
 
@@ -436,109 +366,8 @@ class HierarchicalSpendingNode(BaseModel):
     category_id: int | None
     category_name: str
     amount: Decimal
-    transaction_count: int
+    occurrence_count: int
     children: list[HierarchicalSpendingNode] = Field(default_factory=list)
-
-
-# --------------------------------------------------------------------------- #
-# Categorization rules / inbox / suggestions
-# --------------------------------------------------------------------------- #
-def _clean_rule_patterns(values: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        pattern = _strip_required(value)
-        if len(pattern) > 200:
-            raise ValueError("Un motif ne peut pas depasser 200 caracteres")
-        normalized = pattern.casefold()
-        if normalized not in seen:
-            cleaned.append(pattern)
-            seen.add(normalized)
-    if not cleaned:
-        raise ValueError("Au moins un motif est requis")
-    return cleaned
-
-
-class RuleCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    match_type: str = Field(default="keyword", pattern="^(keyword|beneficiary)$")
-    pattern: str | None = Field(default=None, min_length=1, max_length=200)
-    patterns: list[str] = Field(default_factory=list, max_length=20)
-    category_id: int
-    priority: int = Field(default=100, ge=0, le=10000)
-    enabled: bool = True
-
-    @field_validator("name")
-    @classmethod
-    def strip_text(cls, value: str) -> str:
-        return _strip_required(value)
-
-    @model_validator(mode="after")
-    def normalize_patterns(self) -> RuleCreate:
-        self.patterns = _clean_rule_patterns(
-            self.patterns or ([self.pattern] if self.pattern is not None else [])
-        )
-        self.pattern = self.patterns[0]
-        return self
-
-
-class RuleUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=120)
-    match_type: str | None = Field(default=None, pattern="^(keyword|beneficiary)$")
-    pattern: str | None = Field(default=None, min_length=1, max_length=200)
-    patterns: list[str] | None = Field(default=None, min_length=1, max_length=20)
-    category_id: int | None = None
-    priority: int | None = Field(default=None, ge=0, le=10000)
-    enabled: bool | None = None
-
-    @field_validator("name")
-    @classmethod
-    def strip_optional_name(cls, value: str | None) -> str | None:
-        return _strip_required(value) if value is not None else None
-
-    @model_validator(mode="after")
-    def normalize_patterns(self) -> RuleUpdate:
-        if self.patterns is not None:
-            self.patterns = _clean_rule_patterns(self.patterns)
-            self.pattern = self.patterns[0]
-        elif self.pattern is not None:
-            self.patterns = _clean_rule_patterns([self.pattern])
-            self.pattern = self.patterns[0]
-        return self
-
-
-class RuleRead(BaseModel):
-    id: int
-    name: str
-    match_type: str
-    pattern: str
-    patterns: list[str]
-    category_id: int
-    priority: int
-    enabled: bool
-
-
-class RuleApplyResult(BaseModel):
-    updated: int
-    scanned: int
-
-
-class InboxItem(BaseModel):
-    transaction_id: int
-    booked_at: date
-    description: str
-    amount: Decimal
-    account_id: int
-
-
-class SuggestionResult(BaseModel):
-    transaction_id: int
-    category_id: int | None
-    category_name: str | None
-    confidence: Decimal
-    explanation: str
-    source: str  # rule|history|none
-    applied: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -566,7 +395,6 @@ class RecurringCreate(BaseModel):
     credit_insurance_rate: Decimal | None = Field(
         default=None, ge=0, le=100, max_digits=6, decimal_places=3
     )
-    confidence: Decimal = Field(default=Decimal("1.00"), ge=0, le=1)
 
     @field_validator("label")
     @classmethod
@@ -604,7 +432,6 @@ class RecurringUpdate(BaseModel):
     credit_insurance_rate: Decimal | None = Field(
         default=None, ge=0, le=100, max_digits=6, decimal_places=3
     )
-    confidence: Decimal | None = Field(default=None, ge=0, le=1)
 
     @field_validator("label")
     @classmethod
@@ -635,7 +462,6 @@ class RecurringRead(BaseModel):
     recurring_type: str
     custom_type: str | None
     credit_insurance_rate: Decimal | None
-    confidence: Decimal
     account_name: str = ""
     category_name: str | None = None
     attachment_count: int = 0
@@ -650,26 +476,6 @@ class RecurringSeriesAttachmentRead(BaseModel):
     size: int
 
 
-class DetectionProposal(BaseModel):
-    proposal_key: str
-    kind: str = Field(pattern="^(series|change)$")
-    series_id: int | None = None
-    label: str
-    account_id: int
-    account_name: str
-    category_id: int | None
-    category_name: str | None
-    frequency: str
-    next_due: date
-    amount: Decimal
-    amount_type: str
-    confidence: Decimal
-
-
-class DetectionSelection(BaseModel):
-    proposal_keys: list[str] = Field(default_factory=list, max_length=500)
-
-
 class ForecastPoint(BaseModel):
     series_id: int
     label: str
@@ -678,25 +484,6 @@ class ForecastPoint(BaseModel):
     account_name: str = ""
     category_name: str | None = None
     status: str = "active"
-
-
-class RecurringChangeRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    series_id: int
-    change_type: str
-    detected_amount: Decimal | None
-    detected_next_due: date | None
-    status: str
-    note: str | None
-    series_label: str = ""
-    series_status: str = ""
-
-
-class DetectResult(BaseModel):
-    created_series: int
-    created_changes: int
 
 
 # --------------------------------------------------------------------------- #
@@ -1129,38 +916,6 @@ class GoalContributionCreate(BaseModel):
     occurred_on: date
     member_id: int | None = None
     note: str | None = Field(default=None, max_length=200)
-
-
-# --------------------------------------------------------------------------- #
-# Merchant identities (fully local; never fetched from any network service)
-# --------------------------------------------------------------------------- #
-class MerchantIdentityCreate(BaseModel):
-    label: str = Field(min_length=1, max_length=120)
-    pattern: str = Field(min_length=1, max_length=200)
-    monogram: str = Field(default="", max_length=4)
-    color: str = Field(default="#64748b", pattern=HEX_COLOR)
-
-    @field_validator("label", "pattern")
-    @classmethod
-    def strip_text(cls, value: str) -> str:
-        return _strip_required(value)
-
-
-class MerchantIdentityUpdate(BaseModel):
-    label: str | None = Field(default=None, min_length=1, max_length=120)
-    pattern: str | None = Field(default=None, min_length=1, max_length=200)
-    monogram: str | None = Field(default=None, max_length=4)
-    color: str | None = Field(default=None, pattern=HEX_COLOR)
-
-
-class MerchantIdentityRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    label: str
-    pattern: str
-    monogram: str
-    color: str
 
 
 class GoalContributionRead(BaseModel):

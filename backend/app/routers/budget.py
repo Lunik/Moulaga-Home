@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Select, case, func, or_, select
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from ..account_access import require_account
 from ..account_balances import account_balances
 from ..category_budgeting import (
     ParentBudgetTooSmall,
@@ -20,7 +18,8 @@ from ..category_budgeting import (
 from ..common import add_month, local_today, money
 from ..db import get_session
 from ..institutions import institution_fields
-from ..models import Account, Category, Transaction
+from ..models import Account, Category
+from ..recurring_budget import recurring_budget_occurrences
 from ..schemas import (
     DEPRECATED_ACCOUNT_TYPES,
     AccountCreate,
@@ -31,9 +30,6 @@ from ..schemas import (
     CategoryRead,
     MonthlyPoint,
     Overview,
-    TransactionCount,
-    TransactionCreate,
-    TransactionRead,
 )
 
 router = APIRouter(tags=["budget"])
@@ -50,7 +46,6 @@ async def list_accounts(
         statement = statement.where(Account.archived.is_(False))
     rows = (await session.execute(statement)).scalars().all()
     balances = await account_balances(session, through=as_of)
-    transaction_counts = await _account_transaction_counts(session)
     return [
         AccountRead.model_validate(account).model_copy(
             update={
@@ -59,7 +54,6 @@ async def list_accounts(
                     account.institution,
                     account.regional_entity,
                 ),
-                "transaction_count": transaction_counts.get(account.id, 0),
             }
         )
         for account in rows
@@ -99,10 +93,10 @@ async def create_account(payload: AccountCreate, session: AsyncSession = Depends
 @router.get("/categories", response_model=list[CategoryRead])
 async def list_categories(session: AsyncSession = Depends(get_session)) -> list[CategoryRead]:
     rows = (await session.execute(select(Category).order_by(Category.kind, Category.name))).scalars().all()
-    spent = await _current_month_category_spend(session)
+    planned = await _current_month_category_plan(session)
     return [
         CategoryRead.model_validate(category).model_copy(
-            update={"spent_this_month": spent.get(category.id, Decimal("0.00"))}
+            update={"planned_this_month": planned.get(category.id, Decimal("0.00"))}
         )
         for category in rows
     ]
@@ -152,68 +146,10 @@ async def update_category_budget(
     await ensure_ancestor_budgets(session, category.parent_id)
     await session.commit()
     await session.refresh(category)
-    spent = await _current_month_category_spend(session)
+    planned = await _current_month_category_plan(session)
     return CategoryRead.model_validate(category).model_copy(
-        update={"spent_this_month": spent.get(category.id, Decimal("0.00"))}
+        update={"planned_this_month": planned.get(category.id, Decimal("0.00"))}
     )
-
-
-@router.get("/transactions", response_model=list[TransactionRead])
-async def list_transactions(
-    start: date | None = None,
-    end: date | None = None,
-    account_id: int | None = None,
-    category_id: int | None = None,
-    uncategorized: bool = False,
-    search: str | None = Query(default=None, max_length=120),
-    limit: int = Query(default=200, ge=1, le=1000),
-    offset: int = Query(default=0, ge=0),
-    session: AsyncSession = Depends(get_session),
-) -> list[TransactionRead]:
-    statement = (
-        _transaction_query()
-        .order_by(Transaction.booked_at.desc(), Transaction.id.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    statement = _apply_transaction_filters(
-        statement, start, end, account_id, category_id, uncategorized, search
-    )
-    rows = (await session.execute(statement)).scalars().all()
-    return [_transaction_read(row) for row in rows]
-
-
-@router.get("/transactions/count", response_model=TransactionCount)
-async def count_transactions(
-    start: date | None = None,
-    end: date | None = None,
-    account_id: int | None = None,
-    category_id: int | None = None,
-    uncategorized: bool = False,
-    search: str | None = Query(default=None, max_length=120),
-    session: AsyncSession = Depends(get_session),
-) -> TransactionCount:
-    statement = select(func.count()).select_from(Transaction)
-    statement = _apply_transaction_filters(
-        statement, start, end, account_id, category_id, uncategorized, search
-    )
-    total = await session.scalar(statement)
-    return TransactionCount(count=int(total or 0))
-
-
-@router.post("/transactions", response_model=TransactionRead, status_code=201)
-async def create_transaction(
-    payload: TransactionCreate, session: AsyncSession = Depends(get_session)
-) -> TransactionRead:
-    await require_account(session, payload.account_id, writable=True)
-    if payload.category_id is not None:
-        await _require_category(session, payload.category_id)
-    transaction = Transaction(**payload.model_dump())
-    session.add(transaction)
-    await session.commit()
-    statement = _transaction_query().where(Transaction.id == transaction.id)
-    created = (await session.execute(statement)).scalar_one()
-    return _transaction_read(created)
 
 
 @router.get("/overview", response_model=Overview)
@@ -223,45 +159,30 @@ async def overview(
 ) -> Overview:
     today = as_of or local_today()
     month_start = _month_start(today)
+    month_end = add_month(month_start, 1) - timedelta(days=1)
     balances = await account_balances(session, through=today)
-    income = await session.scalar(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.booked_at >= month_start,
-            Transaction.booked_at <= today,
-            Transaction.amount > 0,
-            Transaction.transfer_group.is_(None),
-        )
+    occurrences = await recurring_budget_occurrences(
+        session,
+        month_start,
+        month_end,
     )
-    expenses = await session.scalar(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.booked_at >= month_start,
-            Transaction.booked_at <= today,
-            Transaction.amount < 0,
-            Transaction.transfer_group.is_(None),
-        )
+    income = sum(
+        (occurrence.amount for occurrence in occurrences if occurrence.amount > 0),
+        Decimal("0"),
+    )
+    expenses = sum(
+        (-occurrence.amount for occurrence in occurrences if occurrence.amount < 0),
+        Decimal("0"),
     )
     categories = (await session.execute(select(Category))).scalars().all()
-    uncategorized = await session.scalar(
-        select(func.count()).select_from(Transaction).where(
-            Transaction.booked_at >= month_start,
-            Transaction.booked_at <= today,
-            Transaction.category_id.is_(None),
-            Transaction.transfer_group.is_(None),
-            Transaction.account_id.in_(
-                select(Account.id).where(Account.archived.is_(False))
-            ),
-        )
-    )
-    expenses_abs = abs(Decimal(expenses or 0))
     budget_total = root_budget_total(categories)
     return Overview(
         balance=money(sum(balances.values(), Decimal("0.00"))),
         income_current_month=money(income),
-        expenses_current_month=money(expenses_abs),
-        net_current_month=money(Decimal(income or 0) + Decimal(expenses or 0)),
+        expenses_current_month=money(expenses),
+        net_current_month=money(income - expenses),
         budget_current_month=money(budget_total),
-        budget_remaining=money(budget_total - expenses_abs),
-        uncategorized_count=int(uncategorized or 0),
+        budget_remaining=money(budget_total - expenses),
     )
 
 
@@ -271,165 +192,101 @@ async def monthly_stats(
     session: AsyncSession = Depends(get_session),
 ) -> list[MonthlyPoint]:
     today = as_of or local_today()
-    current_month_start = _month_start(today)
-    oldest_month_start = add_month(current_month_start, -11)
-    month_expr = func.strftime("%Y-%m", Transaction.booked_at)
-    income_expr = func.sum(case((Transaction.amount > 0, Transaction.amount), else_=0))
-    expense_expr = func.sum(case((Transaction.amount < 0, Transaction.amount), else_=0))
-    rows = (
-        await session.execute(
-            select(month_expr, income_expr, expense_expr)
-            .where(
-                Transaction.transfer_group.is_(None),
-                Transaction.booked_at >= oldest_month_start,
-                Transaction.booked_at <= today,
-            )
-            .group_by(month_expr)
-            .order_by(month_expr.desc())
-            .limit(12)
-        )
-    ).all()
-    points = [
+    first_month = _month_start(today)
+    last_month = add_month(first_month, 11)
+    end = add_month(last_month, 1) - timedelta(days=1)
+    occurrences = await recurring_budget_occurrences(session, first_month, end)
+    totals = {
+        add_month(first_month, offset).strftime("%Y-%m"): [
+            Decimal("0"),
+            Decimal("0"),
+        ]
+        for offset in range(12)
+    }
+    for occurrence in occurrences:
+        month = occurrence.due_date.strftime("%Y-%m")
+        if occurrence.amount > 0:
+            totals[month][0] += occurrence.amount
+        elif occurrence.amount < 0:
+            totals[month][1] -= occurrence.amount
+    return [
         MonthlyPoint(
-            month=row[0],
-            income=Decimal(row[1] or 0),
-            expenses=abs(Decimal(row[2] or 0)),
-            net=Decimal(row[1] or 0) + Decimal(row[2] or 0),
+            month=month,
+            income=money(income),
+            expenses=money(expenses),
+            net=money(income - expenses),
         )
-        for row in rows
+        for month, (income, expenses) in totals.items()
     ]
-    return list(reversed(points))
 
 
 @router.get("/stats/categories", response_model=list[CategoryBreakdown])
 async def category_stats(session: AsyncSession = Depends(get_session)) -> list[CategoryBreakdown]:
     today = local_today()
     month_start = _month_start(today)
-    rows = (
-        await session.execute(
-            select(Category.id, Category.name, func.sum(Transaction.amount), Category.monthly_budget)
-            .join(Transaction, Transaction.category_id == Category.id)
-            .where(
-                Transaction.booked_at >= month_start,
-                Transaction.booked_at <= today,
-                Transaction.amount < 0,
-                Transaction.transfer_group.is_(None),
-            )
-            .group_by(Category.id)
-            .order_by(func.sum(Transaction.amount))
-        )
-    ).all()
-    uncategorized = await session.scalar(
-        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
-            Transaction.booked_at >= month_start,
-            Transaction.booked_at <= today,
-            Transaction.amount < 0,
-            Transaction.category_id.is_(None),
-            Transaction.transfer_group.is_(None),
-        )
+    month_end = add_month(month_start, 1) - timedelta(days=1)
+    occurrences = await recurring_budget_occurrences(
+        session,
+        month_start,
+        month_end,
     )
+    spent: dict[int | None, Decimal] = {}
+    for occurrence in occurrences:
+        if occurrence.amount >= 0:
+            continue
+        spent[occurrence.category_id] = money(
+            spent.get(occurrence.category_id, Decimal("0")) - occurrence.amount
+        )
+    categories = {
+        category.id: category
+        for category in (await session.execute(select(Category))).scalars().all()
+    }
     breakdown = [
         CategoryBreakdown(
-            category_id=row[0],
-            category_name=row[1],
-            amount=abs(Decimal(row[2] or 0)),
-            budget=row[3],
+            category_id=category_id,
+            category_name=categories[category_id].name,
+            amount=amount,
+            budget=categories[category_id].monthly_budget,
         )
-        for row in rows
+        for category_id, amount in sorted(
+            (
+                (category_id, amount)
+                for category_id, amount in spent.items()
+                if category_id is not None and category_id in categories
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
     ]
+    uncategorized = spent.get(None, Decimal("0"))
     if uncategorized:
         breakdown.append(
             CategoryBreakdown(
                 category_id=None,
                 category_name="Sans categorie",
-                amount=abs(Decimal(uncategorized)),
+                amount=uncategorized,
             )
         )
     return breakdown
 
 
-def _apply_transaction_filters(
-    statement: Select[tuple[Transaction]],
-    start: date | None,
-    end: date | None,
-    account_id: int | None,
-    category_id: int | None,
-    uncategorized: bool,
-    search: str | None,
-) -> Select[tuple[Transaction]]:
-    if start:
-        statement = statement.where(Transaction.booked_at >= start)
-    if end:
-        statement = statement.where(Transaction.booked_at <= end)
-    if account_id:
-        statement = statement.where(Transaction.account_id == account_id)
-    if uncategorized:
-        statement = statement.where(
-            Transaction.category_id.is_(None),
-            Transaction.transfer_group.is_(None),
-            Transaction.account_id.in_(
-                select(Account.id).where(Account.archived.is_(False))
-            ),
-        )
-    elif category_id:
-        statement = statement.where(Transaction.category_id == category_id)
-    if search:
-        like = f"%{search.strip()}%"
-        statement = statement.where(or_(Transaction.description.ilike(like), Transaction.notes.ilike(like)))
-    return statement
-
-
-def _transaction_query() -> Select[tuple[Transaction]]:
-    return select(Transaction).options(
-        selectinload(Transaction.account),
-        selectinload(Transaction.category),
-        selectinload(Transaction.attachments),
-    )
-
-
-def _transaction_read(transaction: Transaction) -> TransactionRead:
-    return TransactionRead.model_validate(transaction).model_copy(
-        update={
-            "account_name": transaction.account.name,
-            "category_name": transaction.category.name if transaction.category else None,
-            "category_kind": transaction.category.kind if transaction.category else None,
-            "attachment_count": len(transaction.attachments),
-        }
-    )
-
-
-async def _require_category(session: AsyncSession, category_id: int) -> None:
-    if await session.get(Category, category_id) is None:
-        raise HTTPException(status_code=404, detail="Categorie introuvable")
-
-
-async def _account_transaction_counts(session: AsyncSession) -> dict[int, int]:
-    rows = (
-        await session.execute(
-            select(Transaction.account_id, func.count(Transaction.id)).group_by(
-                Transaction.account_id
-            )
-        )
-    ).all()
-    return {row[0]: int(row[1]) for row in rows}
-
-
-async def _current_month_category_spend(session: AsyncSession) -> dict[int, Decimal]:
+async def _current_month_category_plan(session: AsyncSession) -> dict[int, Decimal]:
     today = local_today()
     month_start = _month_start(today)
-    rows = (
-        await session.execute(
-            select(Transaction.category_id, func.sum(Transaction.amount))
-            .where(
-                Transaction.booked_at >= month_start,
-                Transaction.booked_at <= today,
-                Transaction.amount < 0,
-                Transaction.transfer_group.is_(None),
-            )
-            .group_by(Transaction.category_id)
+    month_end = add_month(month_start, 1) - timedelta(days=1)
+    occurrences = await recurring_budget_occurrences(
+        session,
+        month_start,
+        month_end,
+    )
+    planned: dict[int, Decimal] = {}
+    for occurrence in occurrences:
+        if occurrence.amount >= 0 or occurrence.category_id is None:
+            continue
+        planned[occurrence.category_id] = money(
+            planned.get(occurrence.category_id, Decimal("0")) - occurrence.amount
         )
-    ).all()
-    return {row[0]: abs(Decimal(row[1] or 0)) for row in rows if row[0] is not None}
+    return planned
 
 
 def _month_start(day: date) -> date:

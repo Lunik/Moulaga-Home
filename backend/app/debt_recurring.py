@@ -35,7 +35,6 @@ def build_debt_recurring_series_repayment(debt: Debt) -> RecurringSeries:
         amount_type="fixed",
         status="active",
         recurring_type="loan_payment",
-        confidence=Decimal("1.00"),
     )
 
 
@@ -52,7 +51,6 @@ def build_debt_recurring_series_insurance(debt: Debt) -> RecurringSeries:
         amount_type="fixed",
         status="active",
         recurring_type="credit_insurance",
-        confidence=Decimal("1.00"),
     )
 
 

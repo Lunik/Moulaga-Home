@@ -12,6 +12,7 @@ interface WarmSummary {
 }
 
 let registrationPromise: Promise<ServiceWorkerRegistration | null> | null = null
+let updateServiceWorker: ((reloadPage?: boolean) => Promise<void>) | null = null
 let warmupInFlight: Promise<void> | null = null
 let connectivityMonitorStarted = false
 let serverOnline = navigator.onLine
@@ -26,8 +27,11 @@ export function registerPwa(): void {
   }
 
   registrationPromise = new Promise((resolve) => {
-    registerSW({
+    updateServiceWorker = registerSW({
       immediate: true,
+      onNeedRefresh: () => {
+        void updateServiceWorker?.(true)
+      },
       onRegisteredSW: (_serviceWorkerUrl, registration) => {
         resolve(registration ?? null)
       },
@@ -84,8 +88,6 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
     `/accounts${queryString({ include_archived: true, as_of: anchorDate })}`,
     '/categories?include_archived=true',
     '/preferences',
-    '/merchants',
-    '/rules',
     `/overview${queryString({ as_of: anchorDate })}`,
     `/stats/monthly${queryString({ as_of: anchorDate })}`,
     `/budget/overview${queryString({ on: anchorDate })}`,
@@ -94,7 +96,6 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
     '/recurring',
     '/recurring/forecast?months=1',
     '/recurring/forecast?months=3',
-    '/recurring/changes',
     '/portfolio/summary',
     '/portfolio/allocation',
     '/portfolio/performance',
@@ -138,10 +139,6 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
       `/accounts/${account.id}`,
       `/accounts/${account.id}/snapshots`,
       `/holdings${queryString({ account_id: account.id })}`,
-      `/transactions/count${queryString({
-        account_id: account.id,
-        uncategorized: true,
-      })}`,
     ]),
     ...households.map((household) => (
       `/households/${household.id}/shared-accounts`

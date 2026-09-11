@@ -15,7 +15,6 @@ def load_app(tmp_path, monkeypatch):
     """Reload the application against a fresh temporary data directory."""
     monkeypatch.setenv("MOULAGA_DATA_DIR", str(tmp_path))
 
-    import app.commands.import_banque_v3
     import app.common
     import app.config
     import app.db
@@ -26,11 +25,8 @@ def load_app(tmp_path, monkeypatch):
     import app.routers.budgets
     import app.routers.categories
     import app.routers.household
-    import app.routers.merchants
     import app.routers.preferences
     import app.routers.recurring
-    import app.routers.rules
-    import app.routers.transactions
     import app.routers.wealth
 
     importlib.reload(app.config)
@@ -39,21 +35,17 @@ def load_app(tmp_path, monkeypatch):
     importlib.reload(app.common)
     for module in (
         app.routers.budget,
-        app.routers.transactions,
         app.routers.accounts,
         app.routers.categories,
         app.routers.preferences,
         app.routers.budgets,
-        app.routers.rules,
         app.routers.recurring,
         app.routers.wealth,
         app.routers.household,
-        app.routers.merchants,
     ):
         importlib.reload(module)
     importlib.reload(app.main)
-    importlib.reload(app.commands.import_banque_v3)
-    return app.main, app.commands.import_banque_v3
+    return app.main, None
 
 
 @pytest.fixture

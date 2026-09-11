@@ -8,7 +8,6 @@ Ce répertoire centralise les consignes et compétences partagées par les clien
 .copilot/
 ├── instructions.md
 ├── skills/
-│   ├── budget-import-check/
 │   ├── demo-seed-check/
 │   ├── local-demo/
 │   └── web-build-test/
@@ -24,8 +23,8 @@ Ce répertoire centralise les consignes et compétences partagées par les clien
 
 ## Quand utiliser une skill
 
-Invocation via `skill: "demo-seed-check"`, `skill: "web-build-test"`,
-`skill: "budget-import-check"` ou `skill: "local-demo"` dans un chat Copilot.
+Invocation via `skill: "demo-seed-check"`, `skill: "web-build-test"` ou
+`skill: "local-demo"` dans un chat Copilot.
 
 ## Règles
 

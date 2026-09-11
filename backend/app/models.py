@@ -1,8 +1,7 @@
 """Database models for Moulaga.
 
-The persistent schema is the single source of truth after the one-shot
-Banque_v3 migration. Every column stores validated, non-sensitive data and
-monetary amounts always use ``Numeric(12, 2)`` (two decimals).
+The persistent SQLite schema stores validated local data, and monetary amounts
+always use ``Numeric(12, 2)`` (two decimals).
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
-    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -55,10 +53,6 @@ class Account(Base):
     legal_cap: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-    transactions: Mapped[list[Transaction]] = relationship(
-        back_populates="account",
-        cascade="all, delete-orphan",
-    )
     snapshots: Mapped[list[BalanceSnapshot]] = relationship(
         back_populates="account",
         cascade="all, delete-orphan",
@@ -119,52 +113,7 @@ class Category(Base):
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    transactions: Mapped[list[Transaction]] = relationship(back_populates="category")
     parent: Mapped[Category | None] = relationship(remote_side="Category.id")
-
-
-class Transaction(Base):
-    __tablename__ = "transactions"
-    __table_args__ = (UniqueConstraint("source_hash", name="uq_transactions_source_hash"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    booked_at: Mapped[date] = mapped_column(Date, index=True)
-    description: Mapped[str] = mapped_column(Text)
-    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), index=True)
-    account_id: Mapped[int] = mapped_column(
-        ForeignKey("accounts.id", ondelete="CASCADE"), index=True
-    )
-    category_id: Mapped[int | None] = mapped_column(
-        ForeignKey("categories.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    transfer_group: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-    account: Mapped[Account] = relationship(back_populates="transactions")
-    category: Mapped[Category | None] = relationship(back_populates="transactions")
-    attachments: Mapped[list[TransactionAttachment]] = relationship(
-        back_populates="transaction",
-        cascade="all, delete-orphan",
-    )
-
-
-class TransactionAttachment(Base):
-    __tablename__ = "transaction_attachments"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    transaction_id: Mapped[int] = mapped_column(
-        ForeignKey("transactions.id", ondelete="CASCADE"), index=True
-    )
-    original_name: Mapped[str] = mapped_column(String(255))
-    stored_path: Mapped[str] = mapped_column(String(512), unique=True)
-    content_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
-    size: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-    transaction: Mapped[Transaction] = relationship(back_populates="attachments")
 
 
 class Preferences(Base):
@@ -178,35 +127,9 @@ class Preferences(Base):
     date_format: Mapped[str] = mapped_column(String(20), default="localized")
     navigation_style: Mapped[str] = mapped_column(String(16), default="sidebar")
     budget_cycle_start_day: Mapped[int] = mapped_column(Integer, default=1)
-    local_merchant_identities: Mapped[bool] = mapped_column(Boolean, default=False)
-    private_categorization_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    private_categorization_mode: Mapped[str] = mapped_column(String(16), default="off")
-    private_categorization_confidence: Mapped[Decimal] = mapped_column(
-        Numeric(3, 2), default=Decimal("0.60")
-    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
-
-
-class CategorizationRule(Base):
-    """Deterministic rule mapping a description/beneficiary to a category."""
-
-    __tablename__ = "categorization_rules"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(120))
-    match_type: Mapped[str] = mapped_column(String(16), default="keyword")  # keyword|beneficiary
-    pattern: Mapped[str] = mapped_column(String(200))
-    patterns_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    category_id: Mapped[int] = mapped_column(
-        ForeignKey("categories.id", ondelete="CASCADE"), index=True
-    )
-    priority: Mapped[int] = mapped_column(Integer, default=100)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-    category: Mapped[Category] = relationship()
 
 
 class RecurringSeries(Base):
@@ -230,15 +153,10 @@ class RecurringSeries(Base):
     credit_insurance_rate: Mapped[Decimal | None] = mapped_column(
         Numeric(6, 3), nullable=True
     )
-    confidence: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("1.00"))
-    match_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     account: Mapped[Account] = relationship()
     category: Mapped[Category | None] = relationship()
-    changes: Mapped[list[RecurringChange]] = relationship(
-        back_populates="series", cascade="all, delete-orphan"
-    )
     attachments: Mapped[list[RecurringSeriesAttachment]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
@@ -258,25 +176,6 @@ class RecurringSeriesAttachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     series: Mapped[RecurringSeries] = relationship(back_populates="attachments")
-
-
-class RecurringChange(Base):
-    """A detected drift in a recurring series awaiting accept/reject."""
-
-    __tablename__ = "recurring_changes"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    series_id: Mapped[int] = mapped_column(
-        ForeignKey("recurring_series.id", ondelete="CASCADE"), index=True
-    )
-    change_type: Mapped[str] = mapped_column(String(16), default="amount")  # amount|schedule
-    detected_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    detected_next_due: Mapped[date | None] = mapped_column(Date, nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
-    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-    series: Mapped[RecurringSeries] = relationship(back_populates="changes")
 
 
 class Debt(Base):
@@ -436,20 +335,6 @@ class PortfolioSnapshot(Base):
     period: Mapped[str] = mapped_column(String(7), index=True)  # YYYY-MM
     market_value: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=ZERO)
     cost_basis: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=ZERO)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-
-class MerchantIdentity(Base):
-    """A fully-local merchant label. No external logo/URL is ever stored or
-    fetched: only a user-provided monogram and color."""
-
-    __tablename__ = "merchant_identities"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    label: Mapped[str] = mapped_column(String(120))
-    pattern: Mapped[str] = mapped_column(String(200), index=True)
-    monogram: Mapped[str] = mapped_column(String(4), default="")
-    color: Mapped[str] = mapped_column(String(16), default="#64748b")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

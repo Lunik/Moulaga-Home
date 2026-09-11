@@ -19,10 +19,7 @@ import type {
   AccountInstitutionHistoryPoint,
   AccountSnapshot,
   AccountSnapshotImportResult,
-  Category,
   Holding,
-  Transaction,
-  TransactionCount,
 } from '../api/types'
 import { supportsHoldings } from '../accountCapabilities'
 import { AttachmentManager } from '../AttachmentManager'
@@ -31,12 +28,9 @@ import {
   institutionOptions,
   regionalEntitySuggestions,
 } from '../institutions'
-import { useOnlineStatus } from '../pwa'
 import type { Route } from '../routing'
 import { calculateSavingsProjection } from '../savingsProjection'
 import {
-  AmountDirectionToggle,
-  CategorizationSummary,
   EmptyState,
   Field,
   FormInput,
@@ -47,12 +41,9 @@ import {
   Modal,
   Panel,
   StatusBadge,
-  type TransactionDirection,
   chartTooltipStyle,
   compactMoney,
-  directedAmount,
   errorMessage,
-  formatDate,
   localDateInputValue,
   money,
   signedMoney,
@@ -188,10 +179,6 @@ export function AccountsView({
     return account.archived === showArchived && (typeFilter === 'all' || account.type === typeFilter)
   })
   const total = visibleAccounts.reduce((sum, account) => sum + Number(account.balance), 0)
-  const transactionCount = visibleAccounts.reduce(
-    (sum, account) => sum + account.transaction_count,
-    0,
-  )
   const availableTypes = new Set(accounts.map((account) => account.type))
   const types = [
     ...accountTypeFilterOrder.filter((type) => availableTypes.has(type)),
@@ -230,7 +217,7 @@ export function AccountsView({
   return (
     <div className="view-stack">
       <section className="section-intro">
-        <p>Soldes, historiques et relevés mensuels stockés dans votre base locale.</p>
+        <p>Les derniers relevés mensuels pilotent les soldes et leurs historiques.</p>
         <button className="primary-button" type="button" onClick={() => setShowForm((current) => !current)}>
           <Icon name="plus" /> Ajouter un compte
         </button>
@@ -248,11 +235,11 @@ export function AccountsView({
 
       <section className="balance-hero compact-hero">
         <div>
-          <p className="eyebrow">Total des comptes affichés</p>
+          <p className="eyebrow">Total des derniers soldes relevés</p>
           <p className="hero-value">{money(total)}</p>
           <div className="hero-detail">
             <span><Icon name="accounts" />{visibleAccounts.length} compte{visibleAccounts.length === 1 ? '' : 's'}</span>
-            <span><Icon name="receipt" />{transactionCount} transaction{transactionCount === 1 ? '' : 's'}</span>
+            <span><Icon name="calendar" />Soldes issus des derniers relevés</span>
           </div>
         </div>
       </section>
@@ -468,7 +455,7 @@ function AccountCard({
       </div>
       <strong className="account-balance">{money(account.balance)}</strong>
       <div className="account-meta">
-        <span>{account.transaction_count} transaction{account.transaction_count === 1 ? '' : 's'}</span>
+        <span>Solde relevé</span>
         <span>Voir le détail <Icon name="arrow" /></span>
       </div>
     </button>
@@ -478,43 +465,22 @@ function AccountCard({
 export function AccountDetailView({
   accountId,
   accounts,
-  categories,
   navigate,
   onRefresh,
 }: {
   accountId: number
   accounts: Account[]
-  categories: Category[]
   navigate: (route: Route) => void
   onRefresh: () => Promise<void>
 }) {
   const queryClient = useQueryClient()
-  const isOnline = useOnlineStatus()
-  const transactionPageSize = 100
-  const [transactionPage, setTransactionPage] = useState(0)
   const account = useQuery({
     queryKey: ['account', accountId],
     queryFn: () => apiGet<AccountDetail>(`/accounts/${accountId}`),
   })
-  const transactions = useQuery({
-    queryKey: ['transactions', 'account', accountId, transactionPage],
-    queryFn: () => apiGet<Transaction[]>(`/transactions${queryString({
-      account_id: accountId,
-      limit: transactionPageSize,
-      offset: transactionPage * transactionPageSize,
-    })}`),
-    enabled: isOnline,
-  })
   const snapshots = useQuery({
     queryKey: ['account-snapshots', accountId],
     queryFn: () => apiGet<AccountSnapshot[]>(`/accounts/${accountId}/snapshots`),
-  })
-  const uncategorizedCount = useQuery({
-    queryKey: ['transaction-count', 'account', accountId, 'uncategorized'],
-    queryFn: () => apiGet<TransactionCount>(`/transactions/count${queryString({
-      account_id: accountId,
-      uncategorized: true,
-    })}`),
   })
   const positionsEnabled = supportsHoldings(account.data?.type ?? '')
   const positions = useQuery({
@@ -522,32 +488,23 @@ export function AccountDetailView({
     queryFn: () => apiGet<Holding[]>(`/holdings${queryString({ account_id: accountId })}`),
     enabled: positionsEnabled,
   })
-  const [showTransaction, setShowTransaction] = useState(false)
   const [showSnapshot, setShowSnapshot] = useState(false)
   const [showSnapshotImport, setShowSnapshotImport] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
   const [showArchiveModal, setShowArchiveModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [transferTargetId, setTransferTargetId] = useState('')
-  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
   const errors = [
     account.error,
-    isOnline ? transactions.error : null,
     snapshots.error,
-    uncategorizedCount.error,
     positionsEnabled ? positions.error : null,
   ].filter(Boolean)
-
-  useEffect(() => setTransactionPage(0), [accountId])
 
   const refreshDetail = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['account', accountId] }),
-      queryClient.invalidateQueries({ queryKey: ['transactions', 'account', accountId] }),
       queryClient.invalidateQueries({ queryKey: ['account-snapshots', accountId] }),
       queryClient.invalidateQueries({ queryKey: ['holdings', 'account', accountId] }),
-      queryClient.invalidateQueries({ queryKey: ['transaction-count', 'account', accountId] }),
-      queryClient.invalidateQueries({ queryKey: ['transaction-count'] }),
       onRefresh(),
     ])
   }
@@ -567,8 +524,6 @@ export function AccountDetailView({
       setShowDeleteModal(false)
       setShowEdit(false)
       setShowSnapshot(false)
-      setShowTransaction(false)
-      setEditingTransaction(null)
       await refreshDetail()
     },
   })
@@ -672,7 +627,7 @@ export function AccountDetailView({
           <div className="modal-warning">
             <Icon name="alert" />
             <p>
-              Un compte contenant des transactions, relevés, positions ou liens ne peut pas être
+              Un compte contenant des relevés, séries récurrentes, positions ou liens ne peut pas être
               supprimé. Dans ce cas, choisissez l'archivage.
             </p>
           </div>
@@ -707,7 +662,7 @@ export function AccountDetailView({
             <div className="modal-warning warning">
               <Icon name="alert" />
               <p>
-                Ce compte possède encore un solde de <strong>{money(account.data.balance)}</strong>.
+                Le dernier relevé de ce compte indique <strong>{money(account.data.balance)}</strong>.
                 Vérifiez-le avant de poursuivre.
               </p>
             </div>
@@ -748,18 +703,6 @@ export function AccountDetailView({
         </Modal>
       )}
 
-      {editingTransaction && !readOnly && (
-        <TransactionEditModal
-          categories={categories}
-          transaction={editingTransaction}
-          onClose={() => setEditingTransaction(null)}
-          onSaved={async () => {
-            setEditingTransaction(null)
-            await refreshDetail()
-          }}
-        />
-      )}
-
       {showSnapshot && !readOnly && (
         <Modal
           title="Nouveau relevé"
@@ -794,24 +737,6 @@ export function AccountDetailView({
         </Modal>
       )}
 
-      {showTransaction && !readOnly && (
-        <Modal
-          title="Nouvelle transaction"
-          description="Ajoutez un dépôt ou un retrait sur ce compte."
-          onClose={() => setShowTransaction(false)}
-        >
-          <AccountTransactionForm
-            account={account.data}
-            categories={categories}
-            onCancel={() => setShowTransaction(false)}
-            onSaved={async () => {
-              await refreshDetail()
-              setShowTransaction(false)
-            }}
-          />
-        </Modal>
-      )}
-
       {showEdit && !readOnly && (
         <EditAccountForm
           account={account.data}
@@ -830,7 +755,7 @@ export function AccountDetailView({
           <StatusBadge>{accountType(account.data.type)}</StatusBadge>
           {account.data.archived && <StatusBadge tone="warning">Archivé</StatusBadge>}
         </div>
-        <p>Solde actuel</p>
+        <p>{snapshotChartData.length > 0 ? 'Dernier solde relevé' : 'Solde initial'}</p>
         <strong>{money(account.data.balance)}</strong>
         <small>
           {accountInstitutionLabel(account.data) || 'Établissement non renseigné'}
@@ -919,76 +844,8 @@ export function AccountDetailView({
         )}
       </Panel>
 
-      <Panel
-        title="Transactions"
-        subtitle={`${account.data.transaction_count} mouvement${account.data.transaction_count === 1 ? '' : 's'}`}
-        action={!readOnly && isOnline ? (
-          <button
-            className="primary-button small-button"
-            type="button"
-            onClick={() => setShowTransaction(true)}
-          >
-            <Icon name="plus" /> Ajouter une transaction
-          </button>
-        ) : undefined}
-      >
-        {!readOnly && isOnline && (uncategorizedCount.data?.count ?? 0) > 0 && (
-          <CategorizationSummary
-            detail={`${uncategorizedCount.data?.count ?? 0} mouvement${(uncategorizedCount.data?.count ?? 0) === 1 ? '' : 's'} sans catégorie sur ce compte`}
-            onCategorize={() => navigate({ name: 'budget', tab: 'categorize' })}
-          />
-        )}
-        {isOnline ? (
-          <>
-            <div className="data-table-wrap">
-              <table className="transaction-table">
-                <thead><tr><th>Date</th><th>Libellé</th><th>Catégorie</th><th className="amount-column">Montant</th><th /></tr></thead>
-                <tbody>
-                  {transactions.data?.map((transaction) => (
-                    <AccountTransactionRow
-                      key={transaction.id}
-                      transaction={transaction}
-                      onEdit={() => setEditingTransaction(transaction)}
-                      onSaved={refreshDetail}
-                      readOnly={readOnly}
-                    />
-                  ))}
-                </tbody>
-              </table>
-              {(transactions.data?.length ?? 0) === 0 && <EmptyState icon="receipt" text="Aucune transaction sur ce compte." />}
-            </div>
-            {account.data.transaction_count > transactionPageSize && (
-              <div className="pagination">
-                <button
-                  className="secondary-button small-button"
-                  type="button"
-                  disabled={transactionPage === 0}
-                  onClick={() => setTransactionPage((current) => current - 1)}
-                >
-                  <Icon name="back" />Précédent
-                </button>
-                <span>
-                  Page {transactionPage + 1} sur {Math.ceil(account.data.transaction_count / transactionPageSize)}
-                </span>
-                <button
-                  className="secondary-button small-button"
-                  type="button"
-                  disabled={(transactionPage + 1) * transactionPageSize >= account.data.transaction_count}
-                  onClick={() => setTransactionPage((current) => current + 1)}
-                >
-                  Suivant<Icon name="arrow" />
-                </button>
-              </div>
-            )}
-          </>
-        ) : (
-          <EmptyState
-            icon="receipt"
-            title="Transactions indisponibles hors ligne"
-            text="Les soldes, relevés, positions et graphiques de ce compte restent consultables."
-          />
-        )}
-        {!readOnly && <div className="account-delete-action">
+      {!readOnly && (
+        <div className="account-delete-action">
           <button
             className="text-button destructive-button"
             type="button"
@@ -997,9 +854,12 @@ export function AccountDetailView({
           >
             <Icon name="trash" /> Supprimer ce compte
           </button>
-          <small>La suppression est disponible uniquement si le compte ne contient aucun historique ni lien.</small>
-        </div>}
-      </Panel>
+          <small>
+            La suppression est disponible uniquement si le compte ne contient aucun relevé,
+            récurrent, actif, dette, objectif ou partage.
+          </small>
+        </div>
+      )}
     </div>
   )
 }
@@ -1117,177 +977,6 @@ function SnapshotRow({
       )}
       {remove.error && <span className="form-error row-error">{errorMessage(remove.error)}</span>}
     </div>
-  )
-}
-
-function AccountTransactionRow({
-  transaction,
-  onEdit,
-  onSaved,
-  readOnly,
-}: {
-  transaction: Transaction
-  onEdit: () => void
-  onSaved: () => Promise<void>
-  readOnly: boolean
-}) {
-  const [showAttachments, setShowAttachments] = useState(false)
-  const linkedTransfer = transaction.transfer_group !== null
-  const remove = useMutation({
-    mutationFn: () => apiDelete(`/transactions/${transaction.id}`),
-    onSuccess: onSaved,
-  })
-  return (
-    <>
-      <tr>
-        <td data-label="Date">{formatDate(transaction.booked_at)}</td>
-        <td data-label="Libellé">
-          <strong>{transaction.description}</strong>
-          {transaction.notes && <small>{transaction.notes}</small>}
-        </td>
-        <td data-label="Catégorie">
-          {linkedTransfer ? <StatusBadge>Transfert interne</StatusBadge> : transaction.category_name ?? 'Sans catégorie'}
-        </td>
-        <td
-          data-label="Montant"
-          className={`amount-column ${Number(transaction.amount) >= 0 ? 'positive' : 'negative'}`}
-        >
-          {signedMoney(transaction.amount)}
-        </td>
-        <td data-label="Actions" className="row-actions">
-          {(!readOnly || transaction.attachment_count > 0) && (
-            <button
-              className="icon-action attachment-button"
-              type="button"
-              aria-label={`Pièces jointes${transaction.attachment_count > 0 ? ` (${transaction.attachment_count})` : ''}`}
-              aria-expanded={showAttachments}
-              onClick={() => setShowAttachments((current) => !current)}
-            >
-              <Icon name="attachment" />
-              {transaction.attachment_count > 0 && (
-                <span className="attachment-count-badge">{transaction.attachment_count}</span>
-              )}
-            </button>
-          )}
-          {!readOnly && (
-            <>
-              <button
-                className="icon-action"
-                type="button"
-                aria-label="Modifier la transaction"
-                disabled={linkedTransfer}
-                title={linkedTransfer ? "Un transfert lié n'est pas modifiable" : undefined}
-                onClick={onEdit}
-              >
-                <Icon name="edit" />
-              </button>
-              <button
-                className="icon-action"
-                type="button"
-                aria-label="Supprimer la transaction"
-                disabled={linkedTransfer || remove.isPending}
-                title={linkedTransfer ? "Un transfert lié n'est pas supprimable individuellement" : undefined}
-                onClick={() => {
-                  if (window.confirm('Supprimer définitivement cette transaction ?')) remove.mutate()
-                }}
-              >
-                <Icon name="trash" />
-              </button>
-            </>
-          )}
-          {remove.error && <span className="form-error">{errorMessage(remove.error)}</span>}
-        </td>
-      </tr>
-      {showAttachments && (
-        <tr className="attachment-table-row">
-          <td colSpan={5}>
-            <AttachmentManager
-              owner={{ kind: 'transaction', transactionId: transaction.id }}
-              readOnly={readOnly}
-            />
-          </td>
-        </tr>
-      )}
-    </>
-  )
-}
-
-function TransactionEditModal({
-  transaction,
-  categories,
-  onClose,
-  onSaved,
-}: {
-  transaction: Transaction
-  categories: Category[]
-  onClose: () => void
-  onSaved: () => Promise<void>
-}) {
-  const [bookedAt, setBookedAt] = useState(transaction.booked_at)
-  const [description, setDescription] = useState(transaction.description)
-  const [direction, setDirection] = useState<TransactionDirection>(
-    Number(transaction.amount) >= 0 ? 'deposit' : 'withdrawal',
-  )
-  const [amount, setAmount] = useState(String(Math.abs(Number(transaction.amount))))
-  const [categoryId, setCategoryId] = useState(String(transaction.category_id ?? ''))
-  const [notes, setNotes] = useState(transaction.notes ?? '')
-  const update = useMutation({
-    mutationFn: () => apiPatch<Transaction>(`/transactions/${transaction.id}`, {
-      booked_at: bookedAt,
-      description,
-      amount: directedAmount(amount, direction),
-      category_id: categoryId ? Number(categoryId) : null,
-      notes: notes || null,
-    }),
-    onSuccess: onSaved,
-  })
-  const formId = `transaction-edit-${transaction.id}`
-  return (
-    <Modal
-      title="Modifier la transaction"
-      description="Mettez à jour les informations du mouvement."
-      onClose={onClose}
-      actions={(
-        <>
-          <button className="primary-button" type="submit" form={formId} disabled={update.isPending}>
-            Enregistrer
-          </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
-        </>
-      )}
-    >
-      <form
-        className="modal-form"
-        id={formId}
-        onSubmit={(event: FormEvent) => {
-          event.preventDefault()
-          update.mutate()
-        }}
-      >
-        <AmountDirectionToggle value={direction} onChange={setDirection} />
-        <Field label="Date">
-          <FormInput type="date" value={bookedAt} onChange={(event) => setBookedAt(event.target.value)} required />
-        </Field>
-        <Field label="Libellé">
-          <FormInput value={description} onChange={(event) => setDescription(event.target.value)} required />
-        </Field>
-        <Field label="Montant">
-          <FormInput type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
-        </Field>
-        <Field label="Catégorie">
-          <FormSelect value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
-            <option value="">Sans catégorie</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>{category.name}</option>
-            ))}
-          </FormSelect>
-        </Field>
-        <Field label="Note">
-          <FormTextarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} />
-        </Field>
-        {update.error && <p className="form-error">{errorMessage(update.error)}</p>}
-      </form>
-    </Modal>
   )
 }
 
@@ -1680,7 +1369,7 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
             ))}
           </FormSelect>
         </Field>
-        <Field label="Solde actuel"><FormInput type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} required /></Field>
+        <Field label="Solde du mois en cours"><FormInput type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} required /></Field>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
           <button className="primary-button" type="submit" disabled={mutation.isPending}>Enregistrer</button>
@@ -1757,59 +1446,6 @@ function InstitutionField({
         </>
       </Field>
     </>
-  )
-}
-
-function AccountTransactionForm({
-  account,
-  categories,
-  onCancel,
-  onSaved,
-}: {
-  account: Account
-  categories: Category[]
-  onCancel: () => void
-  onSaved: () => Promise<void>
-}) {
-  const [date, setDate] = useState(localDateInputValue)
-  const [description, setDescription] = useState('')
-  const [direction, setDirection] = useState<TransactionDirection>('withdrawal')
-  const [amount, setAmount] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const mutation = useMutation({
-    mutationFn: () => apiPost<Transaction>('/transactions', {
-      booked_at: date,
-      description,
-      amount: directedAmount(amount, direction),
-      account_id: account.id,
-      category_id: categoryId ? Number(categoryId) : null,
-      notes: null,
-    }),
-    onSuccess: onSaved,
-  })
-  return (
-    <div className="account-transaction-form">
-      <AmountDirectionToggle value={direction} onChange={setDirection} />
-      <form className="inline-form" onSubmit={(event: FormEvent) => {
-        event.preventDefault()
-        mutation.mutate()
-      }}>
-        <Field label="Date"><FormInput type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></Field>
-        <Field label="Libellé"><FormInput value={description} onChange={(event) => setDescription(event.target.value)} required /></Field>
-        <Field label="Montant"><FormInput type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
-        <Field label="Catégorie">
-          <FormSelect value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
-            <option value="">Sans catégorie</option>
-            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-          </FormSelect>
-        </Field>
-        <div className="form-buttons">
-          <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
-          <button className="primary-button" type="submit" disabled={mutation.isPending}>Ajouter</button>
-        </div>
-      </form>
-      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </div>
   )
 }
 

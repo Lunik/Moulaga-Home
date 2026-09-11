@@ -6,7 +6,6 @@ import type { StoredAttachment } from './api/types'
 import { FormInput, Icon, errorMessage } from './ui'
 
 export type AttachmentOwner =
-  | { kind: 'transaction'; transactionId: number }
   | { kind: 'snapshot'; accountId: number; snapshotId: number }
   | { kind: 'recurring'; seriesId: number }
   | { kind: 'debt'; debtId: number }
@@ -20,12 +19,6 @@ interface AttachmentConfig {
 
 function attachmentConfig(owner: AttachmentOwner): AttachmentConfig {
   switch (owner.kind) {
-    case 'transaction':
-      return {
-        resourcePath: `/transactions/${owner.transactionId}`,
-        attachmentQueryKey: ['transaction-attachments', owner.transactionId],
-        parentQueryKeys: [['transactions'], ['transaction-ledger']],
-      }
     case 'snapshot':
       return {
         resourcePath: `/accounts/${owner.accountId}/snapshots/${owner.snapshotId}`,
