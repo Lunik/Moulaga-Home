@@ -1,8 +1,6 @@
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Cell,
   Pie,
@@ -16,23 +14,22 @@ import {
 import { apiGet, queryString } from '../api/client'
 import type {
   Account,
+  CashflowFlow,
+  Category,
   Debt,
-  MerchantIdentity,
-  MonthlyPoint,
   NetWorthPoint,
   NetWorthSummary,
   Overview,
   PortfolioSummary,
-  Transaction,
+  RecurringForecastItem,
 } from '../api/types'
 import { accountInstitutionLabel } from '../institutions'
+import { RecurringCashflowSankey } from '../RecurringCashflowSankey'
 import type { Route } from '../routing'
 import {
-  CategorizationSummary,
   EmptyState,
   Icon,
   InstitutionLogo,
-  MerchantAvatar,
   MetricCard,
   Panel,
   ProgressBar,
@@ -41,6 +38,7 @@ import {
   errorMessage,
   formatDate,
   formatMonth,
+  initials,
   localDateInputValue,
   money,
   shortMonthYear,
@@ -51,15 +49,11 @@ import { useQuery } from '@tanstack/react-query'
 const colors = ['#16c79a', '#615fff', '#1da9e8', '#f97316', '#8758f6', '#ec4899']
 
 export function DashboardView({
-  externalError,
-  isOnline,
-  merchants,
+  categories,
   onRefresh,
   navigate,
 }: {
-  externalError?: unknown
-  isOnline: boolean
-  merchants: MerchantIdentity[]
+  categories: Category[]
   onRefresh: () => Promise<void>
   navigate: (route: Route) => void
 }) {
@@ -74,9 +68,18 @@ export function DashboardView({
     queryFn: () => apiGet<Overview>(`/overview${queryString({ as_of: today })}`),
     networkMode: 'always',
   })
-  const monthlyStats = useQuery({
-    queryKey: ['monthly-stats', today],
-    queryFn: () => apiGet<MonthlyPoint[]>(`/stats/monthly${queryString({ as_of: today })}`),
+  const sourceFlows = useQuery({
+    queryKey: ['budget-cashflow', today, 'cycle', 'source'],
+    queryFn: () => apiGet<CashflowFlow[]>(
+      `/budget/cashflow${queryString({ on: today, period: 'cycle', by: 'source' })}`,
+    ),
+    networkMode: 'always',
+  })
+  const categoryFlows = useQuery({
+    queryKey: ['budget-cashflow', today, 'cycle', 'category'],
+    queryFn: () => apiGet<CashflowFlow[]>(
+      `/budget/cashflow${queryString({ on: today, period: 'cycle', by: 'category' })}`,
+    ),
     networkMode: 'always',
   })
   const netWorth = useQuery({
@@ -99,24 +102,31 @@ export function DashboardView({
     queryFn: () => apiGet<Debt[]>('/debts'),
     networkMode: 'always',
   })
-  const recentTransactions = useQuery({
-    queryKey: ['dashboard-transactions', today],
-    queryFn: () => apiGet<Transaction[]>(`/transactions${queryString({ end: today, limit: 6 })}`),
-    enabled: isOnline,
+  const recurringForecast = useQuery({
+    queryKey: ['recurring-forecast', 3],
+    queryFn: () => apiGet<RecurringForecastItem[]>('/recurring/forecast?months=3'),
+    networkMode: 'always',
   })
-  const requiredQueries = [accounts, overview, monthlyStats]
-  const optionalQueries = [netWorth, history, portfolio, debts, recentTransactions]
+  const requiredQueries = [accounts, overview]
+  const optionalQueries = [
+    sourceFlows,
+    categoryFlows,
+    netWorth,
+    history,
+    portfolio,
+    debts,
+    recurringForecast,
+  ]
   const firstError = requiredQueries
     .filter((query) => query.data === undefined)
     .map((query) => query.error)
     .find(Boolean)
   const isLoading = requiredQueries.some((query) => query.data === undefined && query.isPending)
-  const partialError = externalError ?? [...requiredQueries, ...optionalQueries]
+  const partialError = [...requiredQueries, ...optionalQueries]
     .map((query) => query.error)
     .find(Boolean)
   const accountItems = accounts.data
   const overviewData = overview.data
-  const monthlyPoints = monthlyStats.data
 
   if (firstError) {
     return <DashboardLoadError message={errorMessage(firstError)} onRefresh={onRefresh} />
@@ -124,7 +134,7 @@ export function DashboardView({
   if (isLoading) {
     return <div className="loading-card" role="status" aria-live="polite">Chargement du tableau de bord…</div>
   }
-  if (!accountItems || !overviewData || !monthlyPoints) {
+  if (!accountItems || !overviewData) {
     return <DashboardLoadError message="Les données reçues sont incomplètes." onRefresh={onRefresh} />
   }
 
@@ -166,11 +176,14 @@ export function DashboardView({
     ...point,
     net_worth: Number(point.net_worth) < 0 ? Number(point.net_worth) : null,
   }))
-  const monthlyData = monthlyPoints.map((point) => ({
-    ...point,
-    income: Number(point.income),
-    expenses: Number(point.expenses),
-  }))
+  const recurringIncome = (sourceFlows.data ?? []).reduce(
+    (total, flow) => total + Number(flow.inflow),
+    0,
+  )
+  const recurringExpenses = (categoryFlows.data ?? []).reduce(
+    (total, flow) => total + Number(flow.outflow),
+    0,
+  )
   const budgetRemaining = Number(overviewData.budget_remaining)
 
   return (
@@ -219,81 +232,48 @@ export function DashboardView({
           label="Solde total"
           value={money(overviewData.balance)}
           detail={archivedAccountCount > 0
-            ? `${activeAccounts.length} actif${activeAccounts.length === 1 ? '' : 's'} · ${archivedAccountCount} archivé${archivedAccountCount === 1 ? '' : 's'} inclus`
-            : `${activeAccounts.length} compte${activeAccounts.length === 1 ? '' : 's'} actif${activeAccounts.length === 1 ? '' : 's'}`}
+            ? `Derniers relevés · ${activeAccounts.length} actif${activeAccounts.length === 1 ? '' : 's'} · ${archivedAccountCount} archivé${archivedAccountCount === 1 ? '' : 's'} inclus`
+            : `Derniers relevés · ${activeAccounts.length} compte${activeAccounts.length === 1 ? '' : 's'} actif${activeAccounts.length === 1 ? '' : 's'}`}
           icon="accounts"
           tone={Number(overviewData.balance) < 0 ? 'negative' : undefined}
         />
         <MetricCard
-          label="Revenus du mois"
+          label="Revenus récurrents"
           value={money(overviewData.income_current_month)}
-          detail={`Solde net : ${signedMoney(overviewData.net_current_month)}`}
+          detail={`Solde prévisionnel : ${signedMoney(overviewData.net_current_month)}`}
           icon="trend"
           tone="positive"
         />
         <MetricCard
-          label="Dépenses du mois"
+          label="Dépenses récurrentes"
           value={money(overviewData.expenses_current_month)}
-          detail="Hors transferts internes"
+          detail="Budget mensuel · hors virements"
           icon="receipt"
           tone="negative"
         />
         <MetricCard
-          label="Budget restant"
+          label="Budget disponible"
           value={signedMoney(overviewData.budget_remaining)}
-          detail={`sur ${money(overviewData.budget_current_month)}`}
+          detail={`après récurrents · sur ${money(overviewData.budget_current_month)}`}
           icon="budget"
           tone={budgetRemaining < 0 ? 'negative' : 'positive'}
         />
       </section>
 
-      {isOnline && overviewData.uncategorized_count > 0 && (
-        <CategorizationSummary
-          detail={`${overviewData.uncategorized_count} mouvement${overviewData.uncategorized_count === 1 ? '' : 's'} sans catégorie`}
-          onCategorize={() => navigate({ name: 'budget', tab: 'categorize' })}
-        />
-      )}
-
       <Panel
-        title="Revenus et dépenses"
-        subtitle="12 derniers mois, hors transferts internes"
+        title="Flux récurrents"
+        subtitle={`Entrées ${money(recurringIncome)} · Sorties ${money(recurringExpenses)} · Solde ${signedMoney(recurringIncome - recurringExpenses)}`}
         action={(
-          <button className="secondary-button small-button" type="button" onClick={() => navigate({ name: 'budget', tab: 'overview' })}>
-            Ouvrir le budget <Icon name="arrow" />
+          <button className="secondary-button small-button" type="button" onClick={() => navigate({ name: 'budget', tab: 'cashflow' })}>
+            Ouvrir le cashflow <Icon name="arrow" />
           </button>
         )}
       >
-        <div className="chart-container">
-          {monthlyData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                accessibilityLayer
-                aria-label="Comparaison mensuelle des revenus et des dépenses"
-                data={monthlyData}
-                margin={{ top: 12, right: 10, left: -8, bottom: 0 }}
-              >
-                <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
-                <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={shortMonthYear} />
-                <YAxis axisLine={false} padding={{ top: 12 }} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
-                <Tooltip
-                  contentStyle={chartTooltipStyle}
-                  formatter={(value) => money(Number(value))}
-                  labelFormatter={(value) => formatMonth(String(value))}
-                />
-                <Bar dataKey="income" name="Revenus" fill="#16c79a" maxBarSize={28} radius={[5, 5, 0, 0]} />
-                <Bar dataKey="expenses" name="Dépenses" fill="#615fff" maxBarSize={28} radius={[5, 5, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyState icon="trend" text="Les premiers mouvements construiront cette comparaison." />
-          )}
-        </div>
-        {monthlyData.length > 0 && (
-          <div className="chart-legend" aria-hidden="true">
-            <span><i className="legend-line" />Revenus</span>
-            <span><i className="legend-line expenses" />Dépenses</span>
-          </div>
-        )}
+        <RecurringCashflowSankey
+          categories={categories}
+          categoryFlows={categoryFlows.data ?? []}
+          sourceFlows={sourceFlows.data ?? []}
+        />
       </Panel>
 
       <section className="dashboard-grid">
@@ -338,7 +318,7 @@ export function DashboardView({
             )}
           </div>
         </Panel>
-        <Panel title="Répartition des comptes" subtitle={`${allocation.length} compte${allocation.length === 1 ? '' : 's'} avec un solde positif`}>
+        <Panel title="Répartition des comptes" subtitle={`${allocation.length} compte${allocation.length === 1 ? '' : 's'} avec un dernier relevé positif`}>
           <div className="distribution-layout">
             <div className="donut-container">
               {allocation.length > 0 ? (
@@ -402,7 +382,7 @@ export function DashboardView({
       <section className="dashboard-grid lower-grid">
         <Panel
           title="Comptes"
-          subtitle="Soldes disponibles"
+          subtitle="Derniers soldes relevés"
           action={(
             <button className="secondary-button small-button" type="button" onClick={() => navigate({ name: 'accounts' })}>
               Tous les comptes <Icon name="arrow" />
@@ -429,44 +409,38 @@ export function DashboardView({
           )}
         </Panel>
         <Panel
-          title="Activité récente"
-          subtitle="Derniers mouvements"
-          action={isOnline ? (
-            <button className="secondary-button small-button" type="button" onClick={() => navigate({ name: 'budget', tab: 'transactions' })}>
-              Voir le registre <Icon name="arrow" />
+          title="Échéances récurrentes"
+          subtitle="Prochains revenus et prélèvements planifiés"
+          action={(
+            <button className="secondary-button small-button" type="button" onClick={() => navigate({ name: 'budget', tab: 'recurring' })}>
+              Voir les récurrents <Icon name="arrow" />
             </button>
-          ) : undefined}
+          )}
         >
-          {!isOnline ? (
-            <EmptyState
-              icon="receipt"
-              title="Registre non conservé hors ligne"
-              text="Les graphiques et les synthèses restent disponibles, contrairement aux listes de transactions."
-            />
-          ) : recentTransactions.data === undefined ? (
-            <div className="chart-loading" role={recentTransactions.isPending ? 'status' : undefined}>
-              {recentTransactions.isPending ? 'Chargement des mouvements…' : 'Activité temporairement indisponible.'}
+          {recurringForecast.data === undefined ? (
+            <div className="chart-loading" role={recurringForecast.isPending ? 'status' : undefined}>
+              {recurringForecast.isPending ? 'Chargement des échéances…' : 'Prévision temporairement indisponible.'}
             </div>
-          ) : recentTransactions.data.length > 0 ? (
+          ) : recurringForecast.data.length > 0 ? (
             <div className="data-list dashboard-data-list">
-              {recentTransactions.data.map((transaction) => (
+              {recurringForecast.data.slice(0, 6).map((item) => (
                 <button
                   type="button"
-                  key={transaction.id}
-                  onClick={() => navigate({ name: 'account', accountId: transaction.account_id })}
+                  key={`${item.series_id}-${item.due_date}`}
+                  onClick={() => navigate({ name: 'budget', tab: 'recurring', focusId: item.series_id })}
                 >
-                  <MerchantAvatar description={transaction.description} identities={merchants} />
-                  <span><strong>{transaction.description}</strong><small>{transaction.category_name ?? 'Sans catégorie'} · {formatDate(transaction.booked_at)}</small></span>
-                  <strong className={Number(transaction.amount) >= 0 ? 'positive' : 'negative'}>{signedMoney(transaction.amount)}</strong>
+                  <span className="entity-avatar">{initials(item.label)}</span>
+                  <span><strong>{item.label}</strong><small>{item.category_name ?? item.account_name} · {formatDate(item.due_date)}</small></span>
+                  <strong className={Number(item.amount) >= 0 ? 'positive' : 'negative'}>{signedMoney(item.amount)}</strong>
                 </button>
               ))}
             </div>
           ) : (
             <EmptyState
-              icon="receipt"
-              title="Aucun mouvement"
-              text="Les transactions les plus récentes apparaîtront ici."
-              action={<button className="primary-button" type="button" onClick={() => navigate({ name: 'budget', tab: 'transactions' })}>Ouvrir le registre</button>}
+              icon="recurring"
+              title="Aucune échéance"
+              text="Les prochaines séries récurrentes apparaîtront ici."
+              action={<button className="primary-button" type="button" onClick={() => navigate({ name: 'budget', tab: 'recurring' })}>Configurer les récurrents</button>}
             />
           )}
         </Panel>

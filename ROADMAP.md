@@ -1,180 +1,59 @@
 # Roadmap fonctionnelle
 
-Cette roadmap conserve la correspondance unitaire avec les 26 captures de reference. Les doublons
-visuels 21/22 et 1/26 partagent volontairement la meme implementation.
+Moulaga se concentre sur trois sources locales et explicites :
 
-## Epic d'audit fonctionnel iteratif
+- les releves mensuels pour les soldes de comptes et les liquidites ;
+- les series recurrentes pour les revenus, depenses, enveloppes et projections ;
+- les valorisations dediees pour les actifs, biens immobiliers et dettes.
 
-L'audit fonctionnel doit partir des features structurantes et remonter progressivement vers les
-features niche. Chaque palier n'est audite en profondeur que si le precedent est juge
-suffisamment sain.
+## Socle
 
-Constat attendu a chaque etape :
+- [x] Demarrage autonome avec FastAPI, React et SQLite.
+- [x] Sauvegarde automatique avant toute migration structurelle.
+- [x] Themes, formats de date et styles de navigation.
+- [x] PWA avec prechargement des vues de synthese.
+- [x] Seed de demonstration synthetique et isolee.
 
-- OK
-- ecart
-- arbitrage produit
+## Comptes et releves
 
-Mode operatoire :
+- [x] Creation, edition, archivage et restauration des comptes.
+- [x] Groupement par etablissement et entite regionale.
+- [x] Releves mensuels saisis ou importes en TSV.
+- [x] Pieces jointes locales des releves dans des chemins haches.
+- [x] Historique des soldes par compte et par etablissement.
+- [x] Projection des livrets a partir des soldes mensuels et du taux configure.
+- [x] Transfert du dernier solde releve lors de l'archivage.
 
-- auditer un palier a la fois ;
-- extraire les ecarts avant de passer au suivant ;
-- transformer immediatement les ecarts en tickets actionnables ;
-- conserver le label `Beta` dans l'IHM tant que la surface n'est pas validee dans le journal d'audit ;
-- garder les features niche et les garanties specifiques pour la fin.
+## Budget recurrent
 
-### Paliers d'audit
+- [x] Cycle budgetaire configurable.
+- [x] CRUD manuel des series recurrentes et de leurs statuts.
+- [x] Frequences hebdomadaire, mensuelle, trimestrielle et annuelle.
+- [x] Revenus, depenses et solde previsionnel du cycle.
+- [x] Projection mensuelle sur douze mois.
+- [x] Cashflow Sankey alimente par les comptes sources et categories recurrentes.
+- [x] Enveloppes hierarchiques, plafonds et budget disponible.
+- [x] Exclusion des virements entre comptes des indicateurs budgetaires.
+- [x] Pieces jointes locales des series recurrentes.
 
-1. **Socle applicatif**
-   - demarrage app ;
-   - persistance SQLite ;
-   - preferences globales ;
-   - navigation principale ;
-   - sante generale backend/frontend.
-2. **Donnees coeur**
-   - comptes ;
-   - categories ;
-   - transactions ;
-   - pagination du registre ;
-   - creation, edition et suppression.
-3. **Lecture metier de base**
-   - tableau de bord ;
-   - soldes ;
-   - revenus et depenses ;
-   - derniers mouvements ;
-   - coherence globale des chiffres.
-4. **Pilotage budgetaire**
-   - cycle budgetaire ;
-   - enveloppes ;
-   - cashflow ;
-   - hierarchie des categories ;
-   - ventilation des depenses.
-5. **Automatisation locale**
-   - regles ;
-   - boite de categorisation ;
-   - suggestions locales ;
-   - seuils et modes `off`, `suggest`, `auto`.
-6. **Recurrents**
-   - detection ;
-   - series ;
-   - changements ;
-   - previsions.
-7. **Patrimoine**
-   - actifs ;
-   - dettes ;
-   - contributions ;
-   - allocation ;
-   - performance ;
-   - absence de double comptage.
-8. **Partage local**
-   - foyer ;
-   - roles ;
-   - comptes partages ;
-   - objectifs communs.
-9. **Features niche et garanties**
-   - identites marchandes locales ;
-   - snapshots avances ;
-   - migration Banque_v3 ;
-   - atomicite et idempotence ;
-   - confidentialite.
+## Patrimoine
 
-### Journal d'audit
+- [x] Positions, contributions, allocation et performance.
+- [x] Dettes et association aux echeances recurrentes.
+- [x] Biens immobiliers, quote-parts et dettes associees.
+- [x] Patrimoine net courant et historique.
+- [x] Absence de double comptage des comptes d'investissement.
 
-#### Palier 2 - Comptes (2026-09-04)
+## Foyer
 
-Constats :
+- [x] Profils locaux et roles.
+- [x] Comptes partages avec dernier solde releve.
+- [x] Objectifs et contributions communes.
 
-- **OK** : creation, edition des metadonnees, archivage reversible, filtres par statut et type,
-  regroupement par etablissement, detail contextualise, positions, projections de livrets et
-  releves mensuels persistants ;
-- **ecarts corriges** : filtre API des archives, compteurs exacts sans plafond global, historique
-  pagine, mutations des transactions et releves, pieces jointes locales, transferts internes
-  neutres, validation des montants et periodes et suppression des snapshots devenus obsoletes lors
-  d'une regeneration ;
-- **arbitrages produit** :
-  - [ ] [#2 - strategie multi-devise](https://github.com/Lunik/Moulaga/issues/2) ;
-  - [ ] [#3 - semantique financiere des comptes archives](https://github.com/Lunik/Moulaga/issues/3).
+## Retrait du registre d'operations - 2026-09-10
 
-La gestion des comptes est suffisamment saine pour poursuivre l'audit du palier, sous reserve des
-deux arbitrages explicites ci-dessus.
-
-#### Palier 3 - Tableau de bord (2026-09-06)
-
-Constats :
-
-- **OK** : solde total, revenus et depenses du mois, budget restant, comparaison mensuelle,
-  patrimoine net, repartition des comptes, dettes, comptes actifs et derniers mouvements ;
-- **ecarts corriges** : indicateurs metier et historique mensuel reconnectes a leurs contrats API,
-  transferts internes et operations futures exclus des statistiques et de l'activite courantes,
-  historique patrimonial reconcilie avec la synthese, etats de chargement, d'erreur et vides rendus
-  explicites, libelles de performance clarifies et parcours vers les modules detailles ajoutes ;
-- **arbitrages produit** :
-  - [ ] [#2 - strategie multi-devise](https://github.com/Lunik/Moulaga/issues/2) ;
-  - [ ] [#3 - semantique financiere des comptes archives](https://github.com/Lunik/Moulaga/issues/3).
-
-Le tableau de bord est suffisamment sain pour retirer son label `Beta`, sous reserve des deux
-arbitrages transverses deja identifies.
-
-#### Palier 4 - Pilotage budgetaire (2026-09-06)
-
-Constats :
-
-- **OK** : apercu du cycle budgetaire (soldes, revenus, depenses, reste a vivre), enveloppes
-  budgetaires par cycle avec seuils et progression, cashflow Sankey en vue cycle ou annee,
-  hierarchie des categories avec ventilation des depenses, boite de categorisation et regles
-  deterministes, registre des transactions du module et configuration des categories ;
-- **ecarts corriges** : aucun ecart bloquant releve sur ce palier ;
-- **arbitrages produit** : aucun.
-
-Le pilotage budgetaire est suffisamment sain pour retirer le label `Beta` de la page Budget.
-
-## Phase 0 - Fondations
-
-- [x] 12. Preferences : theme, langue/locale, date et style de navigation.
-- [x] 13. Navigation principale responsive.
-- [x] Versionnement et sauvegarde automatique du schema SQLite.
-- [x] Registre pagine et mutations completes des transactions.
-
-## Phase 1 - Budget et comptes
-
-- [x] 4. Enveloppes budgetaires par cycle.
-- [x] 7. Jour de paie, cycle budgetaire et identites marchandes locales.
-- [x] 9. Categories, couleurs, archivage et sous-categories.
-- [x] 17. Creation, edition, archivage, filtres et regroupement des comptes par etablissement.
-- [x] 19. Vue multi-comptes sans double comptage.
-- [x] 20. Detail compte, historique, positions, projection des livrets et transactions contextualisees.
-- [x] 21. Releves mensuels idempotents.
-- [x] 22. Releves mensuels disponibles uniformement sur chaque compte.
-- [x] 23. Apercu complet du cycle budgetaire.
-- [x] 24. Cashflow Sankey en vue cycle ou annee.
-- [x] 25. Ventilation hierarchique et volumes de transactions.
-
-## Phase 2 - Automatisation locale
-
-- [x] 1. Detection et journal des changements recurrents.
-- [x] 2. Echeancier previsionnel multi-mois.
-- [x] 3. CRUD et statuts des series recurrentes.
-- [x] 6. Boite de categorisation, affectation et traitement groupe.
-- [x] 8. Suggestions locales, modes suggestion/auto et seuil de confiance.
-- [x] 10. Regles deterministes par beneficiaire ou mot-cle.
-- [x] 26. Meme detection de changements que le point 1.
-
-## Phase 3 - Patrimoine
-
-- [x] 5. Allocation epargne/investissement et contributions.
-- [x] 14. Tableau de bord du patrimoine net et historique.
-- [x] 15. Dettes, mensualites et progression.
-- [x] 16. Positions, recherche, filtres et valorisation.
-- [x] 18. Historique persistant des plus-values et moins-values.
-
-## Phase 4 - Partage local
-
-- [x] 11. Foyers, profils locaux, roles, comptes et objectifs partages.
-
-## Phase 5 - Validation
-
-- [x] Tests backend des migrations, calculs, autorisations et CRUD.
-- [x] Build et verification TypeScript du frontend.
-- [x] Validation visuelle desktop et mobile avec une base synthetique separee.
-- [x] Validation des themes clair/sombre et des navigations sidebar/topbar.
-- [x] Parcours transaction complet : creation, persistance et suppression confirmee.
+- [x] Solde historique materialise dans un releve avant migration.
+- [x] Anciennes tables et pieces jointes retirees apres sauvegarde.
+- [x] Routes, DTO, types, cache PWA et ecrans associes retires.
+- [x] Seed reconstruite sans donnees d'operations unitaires.
+- [x] Dashboard et budget reconnectes aux releves et series recurrentes.

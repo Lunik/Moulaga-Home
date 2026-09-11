@@ -40,10 +40,10 @@ exacts a valider.
 4. Annoncer au developpeur, en une reponse courte :
    - l'URL exacte affichee par le script ;
    - un lien profond par ecran impacte, par exemple `#/dashboard`, `#/accounts`,
-     `#/accounts/<id>`, `#/budget/transactions`, `#/budget/cashflow`, `#/budget/envelopes`,
+     `#/accounts/<id>`, `#/budget/recurring`, `#/budget/cashflow`, `#/budget/envelopes`,
      `#/wealth/holdings`, `#/wealth/real-estate`, `#/family`, `#/settings` ;
    - les etapes concretes de validation, y compris les etats limites semes (compte archive,
-     pagination, piece jointe, transfert, projection) ;
+     relevé source du solde, budget recurrent, pagination, piece jointe, transfert, projection) ;
    - la commande d'arret `./scripts/demo-local.sh stop`.
 5. Laisser l'instance active pendant la validation. Si le developpeur demande une correction,
    appliquer le correctif puis relancer `./scripts/demo-local.sh restart`.

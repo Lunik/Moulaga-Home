@@ -11,6 +11,8 @@ module performs a tiny, safe, idempotent reconciliation:
 * constrained tables are rebuilt transactionally when columns or constraints
   must change;
 * tables belonging to explicitly retired features are removed after the backup;
+* legacy ledger-derived balances are materialized before account statements
+  become authoritative;
 * a timestamped copy of the database file is taken *before* any structural
   change so an upgrade can never lose data.
 
@@ -22,7 +24,8 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import Connection, text
@@ -32,11 +35,16 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 16
 OBSOLETE_TABLES = frozenset(
     {
+        "categorization_rules",
         "debt_schedule_entries",
+        "merchant_identities",
+        "recurring_changes",
         "recurring_schedule_entries",
+        "transaction_attachments",
+        "transactions",
     }
 )
 
@@ -56,16 +64,10 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "annual_interest_rate": "NUMERIC(6, 3)",
         "legal_cap": "NUMERIC(12, 2)",
     },
-    "transactions": {
-        "transfer_group": "VARCHAR(64)",
-    },
     "categories": {
         "parent_id": "INTEGER REFERENCES categories(id)",
         "archived": "BOOLEAN DEFAULT 0 NOT NULL",
         "is_default": "BOOLEAN DEFAULT 0 NOT NULL",
-    },
-    "categorization_rules": {
-        "patterns_json": "TEXT",
     },
     "recurring_series": {
         "recurring_type": "VARCHAR(32) DEFAULT 'uncategorized' NOT NULL",
@@ -129,6 +131,24 @@ def _missing_tables(conn: Connection) -> set[str]:
 
 def _existing_obsolete_tables(conn: Connection) -> set[str]:
     return {table for table in OBSOLETE_TABLES if _table_exists(conn, table)}
+
+
+def _requires_balance_snapshot_backfill(conn: Connection, version: int) -> bool:
+    return (
+        version < 16
+        and _table_exists(conn, "accounts")
+        and _table_exists(conn, "transactions")
+    )
+
+
+def _retired_attachment_paths(conn: Connection) -> list[str]:
+    if not _table_exists(conn, "transaction_attachments"):
+        return []
+    return list(
+        conn.execute(
+            text("SELECT stored_path FROM transaction_attachments ORDER BY id")
+        ).scalars()
+    )
 
 
 def _apply_columns(conn: Connection, pending: dict[str, dict[str, str]]) -> None:
@@ -221,6 +241,63 @@ def _rebuild_real_estate_assets(conn: Connection) -> None:
         )
 
 
+def _backfill_current_balance_snapshots(conn: Connection) -> None:
+    """Preserve ledger-derived balances before statements become authoritative."""
+    current_day = date.today()
+    current_period = current_day.strftime("%Y-%m")
+    created_at = datetime.now().astimezone().isoformat()
+    account_rows = conn.execute(
+        text("SELECT id, initial_balance FROM accounts ORDER BY id")
+    ).all()
+
+    for account_id, initial_balance in account_rows:
+        latest_snapshot = conn.execute(
+            text(
+                "SELECT period, balance FROM balance_snapshots "
+                "WHERE account_id = :account_id AND period <= :current_period "
+                "ORDER BY period DESC LIMIT 1"
+            ),
+            {
+                "account_id": account_id,
+                "current_period": current_period,
+            },
+        ).first()
+        latest_period = latest_snapshot[0] if latest_snapshot is not None else None
+        balance = Decimal(
+            str(latest_snapshot[1] if latest_snapshot is not None else initial_balance)
+        )
+        transaction_total = conn.execute(
+            text(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+                "WHERE account_id = :account_id "
+                "AND booked_at <= :current_day "
+                "AND (:latest_period IS NULL "
+                "OR strftime('%Y-%m', booked_at) > :latest_period)"
+            ),
+            {
+                "account_id": account_id,
+                "current_day": current_day.isoformat(),
+                "latest_period": latest_period,
+            },
+        ).scalar_one()
+        balance += Decimal(str(transaction_total or 0))
+        conn.execute(
+            text(
+                "INSERT INTO balance_snapshots "
+                "(account_id, period, balance, created_at) "
+                "VALUES (:account_id, :period, :balance, :created_at) "
+                "ON CONFLICT(account_id, period) DO UPDATE "
+                "SET balance = excluded.balance"
+            ),
+            {
+                "account_id": account_id,
+                "period": current_period,
+                "balance": str(balance.quantize(Decimal("0.01"))),
+                "created_at": created_at,
+            },
+        )
+
+
 def _backup(db_path: Path, from_version: int) -> None:
     stamp = datetime.now().strftime("%Y%m%d%H%M%S")
     backup = db_path.with_name(f"{db_path.stem}.backup-{stamp}-v{from_version}.db")
@@ -243,9 +320,18 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         missing_tables = await conn.run_sync(_missing_tables)
         obsolete_tables = await conn.run_sync(_existing_obsolete_tables)
         requires_real_estate_rebuild = await conn.run_sync(_real_estate_requires_rebuild)
+        requires_balance_backfill = await conn.run_sync(
+            _requires_balance_snapshot_backfill,
+            int(version or 0),
+        )
+        retired_attachment_paths = await conn.run_sync(_retired_attachment_paths)
 
     if (
-        pending or missing_tables or obsolete_tables or requires_real_estate_rebuild
+        pending
+        or missing_tables
+        or obsolete_tables
+        or requires_real_estate_rebuild
+        or requires_balance_backfill
     ) and pre_existing and db_path is not None:
         _backup(db_path, int(version or 0))
 
@@ -254,10 +340,36 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         await conn.run_sync(_apply_columns, pending)
         if requires_real_estate_rebuild:
             await conn.run_sync(_rebuild_real_estate_assets)
+        if requires_balance_backfill:
+            await conn.run_sync(_backfill_current_balance_snapshots)
         for table in sorted(obsolete_tables):
             await conn.execute(text(f"DROP TABLE {table}"))
         await conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
         await conn.execute(text("PRAGMA optimize"))
 
-    if pending or missing_tables or obsolete_tables or requires_real_estate_rebuild:
+    if db_path is not None:
+        data_root = db_path.parent.resolve()
+        failed_attachment_removals = 0
+        for stored_path in retired_attachment_paths:
+            attachment_path = (data_root / stored_path).resolve()
+            if not attachment_path.is_relative_to(data_root):
+                failed_attachment_removals += 1
+                continue
+            try:
+                attachment_path.unlink(missing_ok=True)
+            except OSError:
+                failed_attachment_removals += 1
+        if failed_attachment_removals:
+            logger.warning(
+                "%s piece(s) jointe(s) de transactions n'ont pas pu etre supprimees",
+                failed_attachment_removals,
+            )
+
+    if (
+        pending
+        or missing_tables
+        or obsolete_tables
+        or requires_real_estate_rebuild
+        or requires_balance_backfill
+    ):
         logger.info("Schema mis a jour vers la version %s", SCHEMA_VERSION)

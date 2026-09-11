@@ -8,6 +8,7 @@ Ce dépôt cible une application auto-hébergée de budget personnel.
 - garder `README.md`, `AGENTS.md`, `.copilot/` et le code cohérents ;
 - préserver l'atomicite et l'idempotence de la migration initiale ;
 - garder SQLite comme source de verite persistante apres la migration.
+- garder les releves comme source des soldes et les series recurrentes comme source du budget.
 
 ## Vérification rapide
 

@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiGet } from './api/client'
-import type { Account, AppSettings, Category, MerchantIdentity, Transaction } from './api/types'
+import type { Account, AppSettings, Category } from './api/types'
 import { ViewErrorBoundary } from './ErrorBoundary'
 import { isRouteBeta } from './featureValidation'
 import { useOfflineDataWarmup, useOnlineStatus } from './pwa'
@@ -26,7 +26,7 @@ const navigation: Array<{
 }> = [
   { id: 'dashboard', label: 'Tableau de bord', caption: "Vue d'ensemble", icon: 'grid', route: { name: 'dashboard' } },
   { id: 'accounts', label: 'Comptes', caption: 'Soldes & relevés', icon: 'accounts', route: { name: 'accounts' } },
-  { id: 'budget', label: 'Budget', caption: 'Cashflow & récurrents', icon: 'budget', route: { name: 'budget', tab: 'overview' } },
+  { id: 'budget', label: 'Budget', caption: 'Prévisions récurrentes', icon: 'budget', route: { name: 'budget', tab: 'overview' } },
   { id: 'wealth', label: 'Patrimoine', caption: 'Actifs & dettes', icon: 'wealth', route: { name: 'wealth', tab: 'overview' } },
   { id: 'family', label: 'Famille', caption: 'Objectifs partagés', icon: 'family', route: { name: 'family' } },
   { id: 'settings', label: 'Paramètres', caption: 'Préférences locales', icon: 'settings', route: { name: 'settings' } },
@@ -45,21 +45,10 @@ export default function App() {
     queryKey: ['categories'],
     queryFn: () => apiGet<Category[]>('/categories?include_archived=true'),
   })
-  const transactions = useQuery({
-    queryKey: ['transactions'],
-    queryFn: () => apiGet<Transaction[]>('/transactions?limit=1000'),
-    enabled: isOnline,
-  })
   const settings = useQuery({
     queryKey: ['settings'],
     queryFn: () => apiGet<AppSettings>('/preferences'),
   })
-  const merchants = useQuery({
-    queryKey: ['merchants'],
-    queryFn: () => apiGet<MerchantIdentity[]>('/merchants'),
-    enabled: settings.data?.local_merchant_identities === true,
-  })
-
   configureUiPreferences(settings.data?.language, settings.data?.date_format)
   useAppearance(settings.data)
 
@@ -67,30 +56,26 @@ export default function App() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['accounts'] }),
       queryClient.invalidateQueries({ queryKey: ['categories'] }),
-      queryClient.invalidateQueries({ queryKey: ['transactions'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
+      queryClient.invalidateQueries({ queryKey: ['budget-envelopes'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-spending'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-cashflow'] }),
       queryClient.invalidateQueries({ queryKey: ['overview'] }),
       queryClient.invalidateQueries({ queryKey: ['monthly-stats'] }),
       queryClient.invalidateQueries({ queryKey: ['dashboard-accounts'] }),
-      queryClient.invalidateQueries({ queryKey: ['dashboard-transactions'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
       queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
       queryClient.invalidateQueries({ queryKey: ['debts'] }),
       queryClient.invalidateQueries({ queryKey: ['account-institution-history'] }),
+      queryClient.invalidateQueries({ queryKey: ['shared-accounts'] }),
     ])
   }
   const firstError = [
     accounts.error,
     categories.error,
-    isOnline ? transactions.error : null,
     settings.error,
-    settings.data?.local_merchant_identities ? merchants.error : null,
   ].find(Boolean)
-  const dashboardExternalError = settings.error
-    ?? (settings.data?.local_merchant_identities ? merchants.error : null)
   const pageTitle = titleForRoute(route)
   const activeSection = route.name === 'account' ? 'accounts' : route.name
 
@@ -121,9 +106,7 @@ export default function App() {
           <Suspense fallback={<div className="loading-card">Chargement de la vue…</div>}>
             {route.name === 'dashboard' && (
               <DashboardView
-                externalError={dashboardExternalError}
-                isOnline={isOnline}
-                merchants={settings.data?.local_merchant_identities ? merchants.data ?? [] : []}
+                categories={categories.data ?? []}
                 navigate={navigate}
                 onRefresh={refreshCore}
               />
@@ -139,7 +122,6 @@ export default function App() {
               <AccountDetailView
                 accountId={route.accountId}
                 accounts={accounts.data ?? []}
-                categories={categories.data ?? []}
                 navigate={navigate}
                 onRefresh={refreshCore}
               />
@@ -150,9 +132,6 @@ export default function App() {
                 focusId={route.focusId}
                 accounts={accounts.data ?? []}
                 categories={categories.data ?? []}
-                merchants={settings.data?.local_merchant_identities ? merchants.data ?? [] : []}
-                transactions={transactions.data ?? []}
-                settings={settings.data}
                 navigate={navigate}
                 onRefresh={refreshCore}
               />
@@ -253,7 +232,7 @@ function titleForRoute(route: Route): string {
     case 'account':
       return 'Détail du compte'
     case 'budget':
-      return 'Budget & Cashflow'
+      return 'Budget récurrent'
     case 'wealth':
       return 'Patrimoine'
     case 'family':

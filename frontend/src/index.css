@@ -715,6 +715,24 @@ textarea:focus-visible {
   font-size: 0.78rem;
 }
 
+.forecast-drawer.collapsed .panel-header {
+  margin-bottom: 0;
+}
+
+.forecast-drawer-toggle {
+  color: var(--muted);
+}
+
+.forecast-drawer-toggle .app-icon {
+  width: 1.15rem;
+  height: 1.15rem;
+  transition: transform 160ms ease;
+}
+
+.forecast-drawer-toggle[aria-expanded="true"] .app-icon {
+  transform: rotate(90deg);
+}
+
 .chart-container {
   position: relative;
   height: 18rem;
@@ -807,13 +825,18 @@ textarea:focus-visible {
   top: 50%;
   left: 50%;
   display: grid;
+  width: 60%;
   transform: translate(-50%, -50%);
   place-items: center;
+  text-align: center;
   pointer-events: none;
 }
 
 .donut-label strong {
-  font-size: 1.75rem;
+  max-width: 100%;
+  font-size: clamp(1.1rem, 3vw, 1.75rem);
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .donut-label span {
@@ -951,7 +974,7 @@ textarea:focus-visible {
   border: 0;
 }
 
-.transaction-avatar {
+.entity-avatar {
   display: grid;
   width: 2.35rem;
   height: 2.35rem;
@@ -1028,12 +1051,25 @@ textarea:focus-visible {
 }
 
 .account-filter-groups {
+  width: 100%;
+  min-width: 0;
   flex-wrap: wrap;
   justify-content: space-between;
 }
 
 .account-filter-groups .filter-tabs {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  overflow: visible;
   order: 1;
+}
+
+.account-filter-groups .filter-tabs button {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 0.75rem;
 }
 
 .account-type-filter-select {
@@ -3445,6 +3481,10 @@ textarea:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+.recurring-list > article {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
 .recurring-list > article:last-child,
 .change-list > article:last-child {
   border: 0;
@@ -3546,25 +3586,56 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-.forecast-groups section h3 {
+.forecast-groups > div > strong {
+  display: block;
   margin: 0 0 0.55rem;
   color: var(--muted);
   font-size: 0.72rem;
   text-transform: uppercase;
 }
 
-.forecast-groups section > div {
-  display: grid;
-  grid-template-columns: 2rem 0.55rem 1fr auto;
-  align-items: center;
-  gap: 0.65rem;
-  min-height: 2.4rem;
+.forecast-list {
+  display: flex;
+  flex-direction: column;
 }
 
-.forecast-groups section > div i {
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 999px;
+.forecast-list .entity-avatar,
+.recurring-list > article > .entity-avatar {
+  display: none;
+}
+
+.forecast-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  min-height: 3.25rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.forecast-list > div:last-child {
+  border-bottom: 0;
+}
+
+.forecast-item-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+
+.forecast-item-copy strong,
+.forecast-item-copy small {
+  overflow-wrap: anywhere;
+}
+
+.forecast-item-copy small {
+  color: var(--muted);
+}
+
+.forecast-list > div > strong:last-child {
+  white-space: nowrap;
+  text-align: right;
 }
 
 .categorization-list {
@@ -3943,12 +4014,6 @@ textarea:focus-visible {
 }
 
 .category-tree-row > .row-actions {
-  opacity: 0;
-  transition: opacity 150ms ease;
-}
-
-.category-tree-row:hover > .row-actions,
-.category-tree-row:focus-within > .row-actions {
   opacity: 1;
 }
 
@@ -4559,7 +4624,15 @@ html[data-theme="light"] .status-badge {
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
 
-  .recurring-list > article > .row-actions,
+  .recurring-list > article {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .recurring-list > article > .row-actions {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
   .recurring-list > article > .icon-action,
   .change-list > article > div {
     grid-column: 3;

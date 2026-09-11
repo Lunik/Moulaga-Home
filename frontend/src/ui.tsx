@@ -1,8 +1,6 @@
 import { forwardRef, useEffect } from 'react'
 import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from 'react'
 
-import type { MerchantIdentity } from './api/types'
-
 export type IconName =
   | 'accounts'
   | 'alert'
@@ -127,8 +125,10 @@ export function Icon({ name, className }: { name: IconName; className?: string }
     ),
     recurring: (
       <>
-        <path d="M20 7h-7a6 6 0 0 0-6 6v1" />
-        <path d="m17 4 3 3-3 3M4 17h7a6 6 0 0 0 6-6v-1M7 20l-3-3 3-3" />
+        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+        <path d="M3 3v5h5" />
+        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+        <path d="M16 16h5v5" />
       </>
     ),
     refresh: (
@@ -301,24 +301,24 @@ export function Modal({
   )
 }
 
-export type TransactionDirection = 'deposit' | 'withdrawal'
+export type AmountDirection = 'deposit' | 'withdrawal'
 
 export function AmountDirectionToggle({
   value,
   onChange,
 }: {
-  value: TransactionDirection
-  onChange: (value: TransactionDirection) => void
+  value: AmountDirection
+  onChange: (value: AmountDirection) => void
 }) {
   return (
-    <div className="amount-direction-toggle" role="group" aria-label="Type de mouvement">
+    <div className="amount-direction-toggle" role="group" aria-label="Sens du montant">
       <button
         className={value === 'deposit' ? 'active' : ''}
         type="button"
         aria-pressed={value === 'deposit'}
         onClick={() => onChange('deposit')}
       >
-        + Dépôt
+        + Revenu
       </button>
       <button
         className={value === 'withdrawal' ? 'active' : ''}
@@ -326,13 +326,13 @@ export function AmountDirectionToggle({
         aria-pressed={value === 'withdrawal'}
         onClick={() => onChange('withdrawal')}
       >
-        − Retrait
+        − Dépense
       </button>
     </div>
   )
 }
 
-export function directedAmount(value: string, direction: TransactionDirection): string {
+export function directedAmount(value: string, direction: AmountDirection): string {
   const absolute = Math.abs(Number(value))
   return String(direction === 'deposit' ? absolute : -absolute)
 }
@@ -371,27 +371,6 @@ export function Field({ label, children, hint }: { label: string; children: Reac
       {children}
       {hint && <small>{hint}</small>}
     </label>
-  )
-}
-
-export function CategorizationSummary({
-  detail,
-  onCategorize,
-}: {
-  detail: string
-  onCategorize: () => void
-}) {
-  return (
-    <div className="categorization-summary">
-      <span className="categorization-summary-icon"><Icon name="sparkle" /></span>
-      <span>
-        <strong>Transactions à catégoriser</strong>
-        <small>{detail}</small>
-      </span>
-      <button className="secondary-button small-button" type="button" onClick={onCategorize}>
-        Catégoriser <Icon name="arrow" />
-      </button>
-    </div>
   )
 }
 
@@ -475,26 +454,6 @@ export function BetaBadge() {
       title="Fonctionnalité en attente de validation"
     >
       Bêta
-    </span>
-  )
-}
-
-export function MerchantAvatar({
-  description,
-  identities,
-}: {
-  description: string
-  identities?: MerchantIdentity[]
-}) {
-  const normalized = description.toLocaleLowerCase('fr-FR')
-  const identity = identities?.find((item) => normalized.includes(item.pattern.toLocaleLowerCase('fr-FR')))
-  return (
-    <span
-      className="transaction-avatar"
-      style={identity ? { background: identity.color, color: '#fff' } : undefined}
-      title={identity?.label}
-    >
-      {identity?.monogram || initials(description)}
     </span>
   )
 }
@@ -617,8 +576,8 @@ export function signedMoney(value: string | number): string {
 
 export function compactMoney(value: number): string {
   const absolute = Math.abs(value)
-  if (absolute >= 1_000_000) return `${(value / 1_000_000).toLocaleString(activeLocale, { maximumFractionDigits: 1 })} M`
-  if (absolute >= 1_000) return `${(value / 1_000).toLocaleString(activeLocale, { maximumFractionDigits: 1 })} k`
+  if (absolute >= 1_000_000) return `${(value / 1_000_000).toLocaleString(activeLocale, { maximumFractionDigits: 1 })}\u202fM`
+  if (absolute >= 1_000) return `${(value / 1_000).toLocaleString(activeLocale, { maximumFractionDigits: 1 })}\u202fk`
   return new Intl.NumberFormat(activeLocale).format(value)
 }
 

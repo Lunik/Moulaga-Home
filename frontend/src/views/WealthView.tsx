@@ -247,6 +247,7 @@ function WealthOverview({
             <i>−</i>
             <span>Dettes <strong className="negative">{money(netWorth?.debts)}</strong></span>
           </div>
+          <small>Les liquidités proviennent des derniers relevés de comptes.</small>
         </div>
         <div className="wealth-performance">
           <span className={Number(summary?.gain ?? 0) >= 0 ? 'positive' : 'negative'}>
@@ -258,7 +259,7 @@ function WealthOverview({
       </section>
 
       <section className="dashboard-grid">
-        <Panel title="Évolution du patrimoine net" subtitle="Historique des actifs, dettes et patrimoine">
+        <Panel title="Évolution du patrimoine net" subtitle="Relevés de comptes et valorisations patrimoniales">
           <div className="chart-container tall-chart">
             {netWorthChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -1133,7 +1134,13 @@ function DebtsPanel({
       queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
       queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
       queryClient.invalidateQueries({ queryKey: ['recurring-forecast'] }),
+      queryClient.invalidateQueries({ queryKey: ['categories'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
+      queryClient.invalidateQueries({ queryKey: ['budget-envelopes'] }),
+      queryClient.invalidateQueries({ queryKey: ['budget-cashflow'] }),
+      queryClient.invalidateQueries({ queryKey: ['budget-spending'] }),
+      queryClient.invalidateQueries({ queryKey: ['overview'] }),
+      queryClient.invalidateQueries({ queryKey: ['monthly-stats'] }),
     ])
   }
 

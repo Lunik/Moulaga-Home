@@ -17,7 +17,6 @@ Moulaga est une application auto-hébergée de gestion de budget personnel, avec
 - backend FastAPI + SQLite
 - frontend React + Vite + Tailwind
 - stockage local des données sensibles dans `./data` ou `MOULAGA_DATA_DIR`
-- migration initiale one-shot d'un export CSV Numbers, jamais exposee par l'API
 
 ## Règles de confidentialité
 
@@ -38,23 +37,24 @@ cd frontend && npm run build && npm run lint
 ## Skills disponibles
 
 - `web-build-test` — vérifie backend + frontend après une modification
-- `budget-import-check` — vérifie la commande de migration bancaire initiale
 - `demo-seed-check` — maintient la seed synthétique comme catalogue exécutable des fonctionnalités
 - `local-demo` — lance la démonstration locale dans le dépôt pour la validation par le développeur
 
 ## Règles métier
 
-- Un compte, une catégorie et une transaction ont des règles claires et doivent rester cohérents.
+- Un compte, une catégorie et une série récurrente ont des règles claires et doivent rester cohérents.
 - Les montants représentent des valeurs décimales avec centimes.
-- La migration CSV doit etre atomique, idempotente et distincte de l'application interactive.
 - SQLite est la source de verite persistante pour toutes les operations suivantes.
-- Les chiffres affichés doivent rester cohérents entre overview, comptes et catégories.
+- Les derniers releves mensuels pilotent les soldes des comptes et les liquidites du patrimoine ;
+  aucun registre d'operations unitaires n'est conserve.
+- Les series recurrentes actives pilotent les revenus, depenses, enveloppes et graphiques
+  budgetaires ; les virements recurrents doivent en etre exclus.
+- Les chiffres affichés doivent rester cohérents entre overview, comptes, catégories et récurrents.
 - Les calculs de patrimoine et partages ne doivent jamais compter deux fois un montant.
-- Les transferts internes ne sont ni des revenus, ni des depenses, ni des operations a categoriser.
+- Les virements recurrents ne sont ni des revenus ni des depenses budgetaires.
 - Un compte archive est en lecture seule jusqu'a sa restauration explicite.
 - Les pieces jointes restent sous `MOULAGA_DATA_DIR/attached`, hors Git, dans des chemins haches.
 - Les projections de livrets reposent sur le taux du compte et n'anticipent aucun versement.
-- Aucune suggestion ou identite marchande ne doit appeler un service externe.
 - Toute fonctionnalite ajoutee ou modifiee doit avoir un scenario synthetique dans
   `backend/app/commands/seed_demo.py` et une assertion de contrat dans
   `backend/tests/test_seed_demo.py`.

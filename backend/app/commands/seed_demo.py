@@ -3,7 +3,7 @@
 This is a *visual QA* helper. It fills a configured, throwaway database with
 rich but entirely synthetic, non-PII data across every domain of the app. The
 same read models feed the PWA cache so every graph and summary can be checked
-offline without retaining the transaction ledger.
+offline without relying on an operation ledger.
 
 Safety rules:
 
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -34,7 +33,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..attachments import remove_attachment, store_attachment
-from ..common import add_month, get_preferences, money
+from ..common import add_month, money
 from ..config import settings
 from ..db import SessionLocal, engine, init_db
 from ..debt_recurring import (
@@ -46,7 +45,6 @@ from ..models import (
     BalanceSnapshot,
     BalanceSnapshotAttachment,
     Base,
-    CategorizationRule,
     Category,
     Contribution,
     Debt,
@@ -56,17 +54,13 @@ from ..models import (
     Holding,
     Household,
     HouseholdMember,
-    MerchantIdentity,
     PortfolioSnapshot,
     RealEstateAsset,
     RealEstateAttachment,
     RealEstateDebtLink,
-    RecurringChange,
     RecurringSeries,
     RecurringSeriesAttachment,
     SharedAccountLink,
-    Transaction,
-    TransactionAttachment,
 )
 from ..snapshot_import import parse_snapshot_tsv
 
@@ -80,12 +74,9 @@ class SeedError(RuntimeError):
 @dataclass(frozen=True)
 class SeedResult:
     accounts: int
-    transactions: int
     snapshots: int
     categories: int
-    rules: int
     recurring: int
-    changes: int
     debts: int
     real_estate_assets: int
     holdings: int
@@ -93,8 +84,6 @@ class SeedResult:
     households: int
     goals: int
     portfolio_snapshots: int
-    merchants: int
-    transaction_attachments: int
     snapshot_attachments: int
     recurring_attachments: int
     debt_attachments: int
@@ -117,7 +106,9 @@ def _guard_data_dir() -> None:
 async def _has_user_data(session: AsyncSession) -> bool:
     """True if the database holds more than the freshly-seeded baseline."""
     accounts = await session.scalar(select(func.count()).select_from(Account))
-    transactions = await session.scalar(select(func.count()).select_from(Transaction))
+    snapshots = await session.scalar(select(func.count()).select_from(BalanceSnapshot))
+    recurring = await session.scalar(select(func.count()).select_from(RecurringSeries))
+    debts = await session.scalar(select(func.count()).select_from(Debt))
     households = await session.scalar(select(func.count()).select_from(Household))
     holdings = await session.scalar(select(func.count()).select_from(Holding))
     real_estate_assets = await session.scalar(
@@ -125,7 +116,9 @@ async def _has_user_data(session: AsyncSession) -> bool:
     )
     return bool(
         (accounts or 0) > 1
-        or transactions
+        or snapshots
+        or recurring
+        or debts
         or households
         or holdings
         or real_estate_assets
@@ -134,7 +127,6 @@ async def _has_user_data(session: AsyncSession) -> bool:
 
 async def _remove_attachment_files(session: AsyncSession) -> None:
     for model in (
-        TransactionAttachment,
         BalanceSnapshotAttachment,
         RecurringSeriesAttachment,
         DebtAttachment,
@@ -143,6 +135,15 @@ async def _remove_attachment_files(session: AsyncSession) -> None:
         stored_paths = (await session.scalars(select(model.stored_path))).all()
         for stored_path in stored_paths:
             remove_attachment(stored_path)
+    icon_paths = (
+        await session.scalars(
+            select(RealEstateAsset.icon_path).where(
+                RealEstateAsset.icon_path.is_not(None)
+            )
+        )
+    ).all()
+    for icon_path in icon_paths:
+        remove_attachment(icon_path)
 
 
 async def _store_demo_file(filename: str, payload: bytes) -> tuple[str, str, int]:
@@ -184,12 +185,6 @@ async def _seed(
     session: AsyncSession,
     created_attachment_paths: list[str],
 ) -> SeedResult:
-    # Enable the privacy-gated local features so QA can view them.
-    prefs = await get_preferences(session)
-    prefs.local_merchant_identities = True
-    prefs.private_categorization_enabled = True
-    prefs.private_categorization_mode = "suggest"
-
     categories = {
         (category.name, category.kind): category
         for category in (await session.execute(select(Category))).scalars().all()
@@ -302,164 +297,12 @@ async def _seed(
     )
     await session.flush()
 
-    # --- Transactions across the last four cycles ------------------------- #
+    # --- Monthly balance statements --------------------------------------- #
     anchor = date.today().replace(day=1)
     months = [add_month(anchor, -offset) for offset in range(3, -1, -1)]
-    transaction_count = 0
-    checking_monthly_deltas = {month: Decimal("0.00") for month in months}
-    savings_monthly_deltas = {month: Decimal("0.00") for month in months}
-    boursobank_monthly_deltas = {month: Decimal("0.00") for month in months}
-    boursobank_monthly_expenses = (
-        money("-350.00"),
-        money("-350.00"),
-        money("-370.00"),
-        money("-330.00"),
-    )
-    receipt_transaction: Transaction | None = None
-    session.add(
-        Transaction(
-            booked_at=add_month(anchor, -18).replace(day=12),
-            description="Historique categorie archivee",
-            amount=money("-7.00"),
-            account_id=checking.id,
-            category_id=archived_category.id,
-        )
-    )
-    transaction_count += 1
-    for month_index, month in enumerate(months):
-        rows = [
-            (month.replace(day=1), "Salaire mensuel", money("2500.00"), salaire.id, None),
-            (month.replace(day=3), "Loyer", money("-750.00"), logement.id, None),
-            (
-                month.replace(day=6),
-                "Fournisseur ELECTRICITE",
-                money("-95.00"),
-                electricite.id,
-                None,
-            ),
-            (
-                month.replace(day=6),
-                "Abonnement INTERNET",
-                money("-39.99"),
-                internet.id,
-                None,
-            ),
-            (
-                month.replace(day=8),
-                "Achat SUPERMARCHE",
-                money("-84.30"),
-                courses.id,
-                "Ticket de caisse synthetique joint."
-                if month == months[-1]
-                else None,
-            ),
-            (month.replace(day=15), "Achat SUPERMARCHE", money("-61.20"), courses.id, None),
-            (month.replace(day=18), "Cinema", money("-24.00"), loisirs.id, None),
-            (month.replace(day=20), "Carburant STATION", money("-58.40"), transport.id, None),
-            (month.replace(day=22), "Paiement sans categorie", money("-12.50"), None, None),
-        ]
-        for booked_at, description, amount, category_id, notes in rows:
-            transaction = Transaction(
-                booked_at=booked_at,
-                description=description,
-                amount=amount,
-                account_id=checking.id,
-                category_id=category_id,
-                notes=notes,
-            )
-            session.add(transaction)
-            checking_monthly_deltas[month] += amount
-            if notes is not None:
-                receipt_transaction = transaction
-            transaction_count += 1
-
-        boursobank_rows = [
-            (
-                month.replace(day=5),
-                "Revenu complementaire demo",
-                money("500.00"),
-                salaire.id,
-            ),
-            (
-                month.replace(day=17),
-                "Courses compte Boursobank demo",
-                boursobank_monthly_expenses[month_index],
-                courses.id,
-            ),
-        ]
-        for booked_at, description, amount, category_id in boursobank_rows:
-            session.add(
-                Transaction(
-                    booked_at=booked_at,
-                    description=description,
-                    amount=amount,
-                    account_id=boursobank_checking.id,
-                    category_id=category_id,
-                )
-            )
-            boursobank_monthly_deltas[month] += amount
-            transaction_count += 1
-
-        # Enough ordinary ledger entries to exercise account-level pagination.
-        for index in range(17):
-            amount = money("-2.00")
-            session.add(
-                Transaction(
-                    booked_at=month.replace(day=9 + index),
-                    description=f"Achat quotidien demo {month:%m}-{index + 1:02d}",
-                    amount=amount,
-                    account_id=checking.id,
-                    category_id=loisirs.id,
-                )
-            )
-            checking_monthly_deltas[month] += amount
-            transaction_count += 1
-
-        transfer_amount = money("250.00")
-        transfer_group = f"demo-transfer-{month:%Y-%m}"
-        session.add_all(
-            [
-                Transaction(
-                    booked_at=month.replace(day=12),
-                    description="Transfert vers Livret epargne demo",
-                    amount=-transfer_amount,
-                    account_id=checking.id,
-                    transfer_group=transfer_group,
-                ),
-                Transaction(
-                    booked_at=month.replace(day=12),
-                    description="Transfert depuis Compte courant demo",
-                    amount=transfer_amount,
-                    account_id=savings.id,
-                    transfer_group=transfer_group,
-                ),
-            ]
-        )
-        checking_monthly_deltas[month] -= transfer_amount
-        savings_monthly_deltas[month] += transfer_amount
-        transaction_count += 2
-
-    archived_income = Transaction(
-        booked_at=months[0].replace(day=2),
-        description="Solde initial avant cloture",
-        amount=money("400.00"),
-        account_id=archived.id,
-        category_id=salaire.id,
-    )
-    archived_expense = Transaction(
-        booked_at=months[0].replace(day=24),
-        description="Cloture du compte demo",
-        amount=money("-400.00"),
-        account_id=archived.id,
-        notes="Compte conserve en lecture seule pour la QA.",
-    )
-    session.add_all([archived_income, archived_expense])
-    transaction_count += 2
-
-    # --- Monthly balance snapshots ----------------------------------------- #
-    checking_running = Decimal(checking.initial_balance)
-    savings_running = Decimal(savings.initial_balance)
-    boursobank_running = Decimal(boursobank_checking.initial_balance)
+    checking_snapshot_values = ("4700.00", "5000.00", "5300.00", "5562.44")
+    savings_snapshot_values = ("5250.00", "5500.00", "5750.00", "6000.00")
+    boursobank_snapshot_values = ("2240.00", "2390.00", "2580.00", "2750.00")
     life_insurance_snapshot_values = ("16700.00", "17450.00", "18100.00", "18500.00")
     additional_snapshot_series = [
         (life_insurance, life_insurance_snapshot_values),
@@ -493,23 +336,20 @@ async def _seed(
 
     latest_savings_snapshot: BalanceSnapshot | None = None
     for index, month in enumerate(months):
-        checking_running += checking_monthly_deltas[month]
-        savings_running += savings_monthly_deltas[month]
-        boursobank_running += boursobank_monthly_deltas[month]
         checking_snapshot = BalanceSnapshot(
             account_id=checking.id,
             period=month.strftime("%Y-%m"),
-            balance=money(checking_running),
+            balance=money(checking_snapshot_values[index]),
         )
         savings_snapshot = BalanceSnapshot(
             account_id=savings.id,
             period=month.strftime("%Y-%m"),
-            balance=money(savings_running),
+            balance=money(savings_snapshot_values[index]),
         )
         boursobank_snapshot = BalanceSnapshot(
             account_id=boursobank_checking.id,
             period=month.strftime("%Y-%m"),
-            balance=money(boursobank_running),
+            balance=money(boursobank_snapshot_values[index]),
         )
         additional_snapshots = [
             BalanceSnapshot(
@@ -554,26 +394,24 @@ async def _seed(
     session.add(archived_snapshot)
     snapshot_count += 1
 
-    # --- Categorization rules --------------------------------------------- #
-    session.add_all(
-        [
-            CategorizationRule(name="Supermarche", match_type="keyword", pattern="SUPERMARCHE",
-                               patterns_json=json.dumps(
-                                   ["SUPERMARCHE", "HYPERMARCHE", "EPICERIE"]
-                               ),
-                               category_id=courses.id, priority=200, enabled=True),
-            CategorizationRule(name="Station", match_type="keyword", pattern="STATION",
-                               category_id=transport.id, priority=150, enabled=True),
-        ]
+    # --- Recurring budget series ------------------------------------------ #
+    salary_series = RecurringSeries(
+        label="Salaire mensuel",
+        account_id=checking.id,
+        category_id=salaire.id,
+        frequency="monthly",
+        next_due=add_month(anchor, 1).replace(day=1),
+        amount=money("3000.00"),
+        amount_type="fixed",
+        status="active",
+        recurring_type="salary",
     )
-
-    # --- Recurring series + a pending drift change ------------------------ #
     rent_series = RecurringSeries(
         label="Loyer", account_id=checking.id, category_id=logement.id, frequency="monthly",
         next_due=add_month(months[-1], 1).replace(day=3), amount=money("-750.00"),
-        amount_type="fixed", status="active", recurring_type="rent", confidence=money("0.95"),
+        amount_type="fixed", status="active", recurring_type="rent",
     )
-    session.add(rent_series)
+    session.add_all([salary_series, rent_series])
     await session.flush()
     session.add(
         RecurringSeries(
@@ -586,7 +424,6 @@ async def _seed(
             amount_type="fixed",
             status="active",
             recurring_type="subscription",
-            confidence=money("1.00"),
         )
     )
     session.add(
@@ -600,7 +437,6 @@ async def _seed(
             amount_type="variable",
             status="active",
             recurring_type="energy",
-            confidence=money("0.85"),
         )
     )
     loan_series = RecurringSeries(
@@ -613,7 +449,6 @@ async def _seed(
         amount_type="fixed",
         status="active",
         recurring_type="loan_payment",
-        confidence=money("1.00"),
     )
     credit_insurance_series = RecurringSeries(
         label="Assurance · Pret immobilier demo",
@@ -626,7 +461,6 @@ async def _seed(
         status="active",
         recurring_type="credit_insurance",
         credit_insurance_rate=Decimal("0.320"),
-        confidence=money("1.00"),
     )
     custom_series = RecurringSeries(
         label="Cotisation associative",
@@ -639,17 +473,53 @@ async def _seed(
         status="active",
         recurring_type="other",
         custom_type="Cotisation associative",
-        confidence=money("1.00"),
     )
-    session.add_all([loan_series, credit_insurance_series, custom_series])
+    fuel_series = RecurringSeries(
+        label="Budget carburant",
+        account_id=checking.id,
+        category_id=transport.id,
+        frequency="monthly",
+        next_due=anchor.replace(day=20),
+        amount=money("-58.40"),
+        amount_type="variable",
+        status="active",
+        recurring_type="other",
+        custom_type="Carburant",
+    )
+    extra_income_series = RecurringSeries(
+        label="Revenu complementaire demo",
+        account_id=boursobank_checking.id,
+        category_id=salaire.id,
+        frequency="monthly",
+        next_due=anchor.replace(day=5),
+        amount=money("500.00"),
+        amount_type="fixed",
+        status="active",
+        recurring_type="salary",
+    )
+    boursobank_expense_series = RecurringSeries(
+        label="Courses compte Boursobank demo",
+        account_id=boursobank_checking.id,
+        category_id=courses.id,
+        frequency="monthly",
+        next_due=anchor.replace(day=17),
+        amount=money("-330.00"),
+        amount_type="variable",
+        status="active",
+        recurring_type="other",
+        custom_type="Courses",
+    )
+    session.add_all(
+        [
+            loan_series,
+            credit_insurance_series,
+            custom_series,
+            fuel_series,
+            extra_income_series,
+            boursobank_expense_series,
+        ]
+    )
     await session.flush()
-    session.add(
-        RecurringChange(
-            series_id=rent_series.id, change_type="amount", detected_amount=money("-780.00"),
-            detected_next_due=add_month(months[-1], 1).replace(day=3), status="pending",
-            note="Montant detecte different du montant enregistre",
-        )
-    )
 
     # --- Debts ------------------------------------------------------------- #
     mortgage = Debt(
@@ -799,19 +669,6 @@ async def _seed(
         )
         portfolio_snapshot_count += 1
 
-    # --- Local merchant identities (no logos or network fetch) ------------ #
-    session.add_all(
-        [
-            MerchantIdentity(label="Supermarche QA", pattern="SUPERMARCHE",
-                             monogram="SM", color="#0ea5e9"),
-            MerchantIdentity(label="Station QA", pattern="STATION",
-                             monogram="ST", color="#f59e0b"),
-            MerchantIdentity(label="Fournisseur Energie", pattern="ELECTRICITE",
-                             monogram="EN", color="#22c55e"),
-        ]
-    )
-    merchant_count = 3
-
     # --- Household + members + goals + sharing ---------------------------- #
     household = Household(name="Foyer QA")
     session.add(household)
@@ -839,33 +696,8 @@ async def _seed(
     )
 
     await session.flush()
-    if receipt_transaction is None or latest_savings_snapshot is None:
+    if latest_savings_snapshot is None:
         raise SeedError("Les donnees de demonstration des comptes sont incompletes.")
-
-    transaction_attachments = [
-        (
-            receipt_transaction,
-            "justificatif-courses-demo.txt",
-            b"Moulaga QA - justificatif de transaction entierement synthetique.\n",
-        ),
-        (
-            archived_expense,
-            "justificatif-compte-archive-demo.txt",
-            b"Moulaga QA - justificatif synthetique conserve en lecture seule.\n",
-        ),
-    ]
-    for transaction, filename, payload in transaction_attachments:
-        original_name, stored_path, size = await _store_demo_file(filename, payload)
-        created_attachment_paths.append(stored_path)
-        session.add(
-            TransactionAttachment(
-                transaction_id=transaction.id,
-                original_name=original_name,
-                stored_path=stored_path,
-                content_type="text/plain",
-                size=size,
-            )
-        )
 
     snapshot_attachments = [
         (
@@ -966,14 +798,12 @@ async def _seed(
         )
 
     total_categories = await session.scalar(select(func.count()).select_from(Category))
+    total_recurring = await session.scalar(select(func.count()).select_from(RecurringSeries))
     return SeedResult(
         accounts=10,
-        transactions=transaction_count,
         snapshots=snapshot_count,
         categories=int(total_categories or 0),
-        rules=2,
-        recurring=8,
-        changes=1,
+        recurring=int(total_recurring or 0),
         debts=4,
         real_estate_assets=2,
         holdings=3,
@@ -981,8 +811,6 @@ async def _seed(
         households=1,
         goals=1,
         portfolio_snapshots=portfolio_snapshot_count,
-        merchants=merchant_count,
-        transaction_attachments=len(transaction_attachments),
         snapshot_attachments=len(snapshot_attachments),
         recurring_attachments=len(recurring_attachments),
         debt_attachments=len(debt_attachments),
@@ -1019,15 +847,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Only counts are printed; the database path is intentionally never shown.
     print(
         "Donnees de demo generees: "
-        f"{result.accounts} comptes, {result.transactions} transactions, "
-        f"{result.snapshots} instantanes, {result.categories} categories, "
-        f"{result.rules} regles, {result.recurring} recurrence(s), "
-        f"{result.changes} changement(s), {result.debts} dette(s), "
+        f"{result.accounts} comptes, {result.snapshots} releves, "
+        f"{result.categories} categories, {result.recurring} recurrence(s), "
+        f"{result.debts} dette(s), "
         f"{result.real_estate_assets} bien(s) immobilier(s), "
         f"{result.holdings} actif(s), {result.contributions} versement(s), "
-        f"{result.portfolio_snapshots} valorisation(s), {result.merchants} identite(s), "
+        f"{result.portfolio_snapshots} valorisation(s), "
         f"{result.households} foyer, {result.goals} objectif, "
-        f"{result.transaction_attachments} justificatif(s) de transaction, "
         f"{result.snapshot_attachments} releve(s) joint(s), "
         f"{result.recurring_attachments} piece(s) jointe(s) recurrente(s), "
         f"{result.debt_attachments} piece(s) jointe(s) de dette, "

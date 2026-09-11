@@ -137,7 +137,7 @@ export function FamilyView({ accounts }: { accounts: Account[] }) {
           <section className="dashboard-grid">
             <Panel
               title="Comptes partagés"
-              subtitle="Un compte partagé n'est jamais compté deux fois."
+              subtitle="Derniers relevés disponibles, sans double comptage."
               action={activeActor && ['owner', 'admin'].includes(activeActor.role) ? (
                 <ShareAccountForm
                   accounts={accounts}
@@ -182,7 +182,7 @@ export function FamilyView({ accounts }: { accounts: Account[] }) {
               <div className="member-list">
                 {members.map((member) => (
                   <div key={member.id}>
-                    <span className="transaction-avatar">{initials(member.name)}</span>
+                    <span className="entity-avatar">{initials(member.name)}</span>
                     <span><strong>{member.name}</strong><small>Profil local</small></span>
                     <StatusBadge tone={member.role === 'owner' ? 'primary' : 'neutral'}>{roleLabel(member.role)}</StatusBadge>
                   </div>

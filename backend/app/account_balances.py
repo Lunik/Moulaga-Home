@@ -6,11 +6,11 @@ from collections.abc import Collection
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .common import money
-from .models import Account, BalanceSnapshot, Transaction
+from .models import Account, BalanceSnapshot
 
 
 async def account_balances(
@@ -19,7 +19,7 @@ async def account_balances(
     through: date | None = None,
     account_ids: Collection[int] | None = None,
 ) -> dict[int, Decimal]:
-    """Return balances based on the latest statement and later movements."""
+    """Return balances from the latest statement, falling back to opening balances."""
     ids = set(account_ids) if account_ids is not None else None
     if ids is not None and not ids:
         return {}
@@ -58,28 +58,6 @@ async def account_balances(
             continue
         latest_periods[account_id] = period
         balances[account_id] = Decimal(balance)
-
-    transaction_period = func.strftime("%Y-%m", Transaction.booked_at)
-    transaction_statement = select(
-        Transaction.account_id,
-        transaction_period,
-        func.sum(Transaction.amount),
-    ).group_by(Transaction.account_id, transaction_period)
-    if ids is not None:
-        transaction_statement = transaction_statement.where(
-            Transaction.account_id.in_(ids)
-        )
-    if through is not None:
-        transaction_statement = transaction_statement.where(
-            Transaction.booked_at <= through
-        )
-
-    for account_id, period, total in (
-        await session.execute(transaction_statement)
-    ).all():
-        latest_period = latest_periods.get(account_id)
-        if latest_period is None or period > latest_period:
-            balances[account_id] += Decimal(total or 0)
 
     return {
         account_id: money(balance)

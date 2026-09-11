@@ -19,11 +19,8 @@ from .routers import (
     budgets,
     categories,
     household,
-    merchants,
     preferences,
     recurring,
-    rules,
-    transactions,
     wealth,
 )
 
@@ -48,7 +45,7 @@ async def lifespan(_app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Moulaga",
-        description="Gestion personnelle de budget, comptes et transactions.",
+        description="Gestion personnelle de comptes, budgets recurrents et patrimoine.",
         version="1.1.0",
         lifespan=lifespan,
         docs_url="/api/docs",
@@ -65,16 +62,13 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(budget.router, prefix="/api")
-    app.include_router(transactions.router, prefix="/api")
     app.include_router(accounts.router, prefix="/api")
     app.include_router(categories.router, prefix="/api")
     app.include_router(preferences.router, prefix="/api")
     app.include_router(budgets.router, prefix="/api")
-    app.include_router(rules.router, prefix="/api")
     app.include_router(recurring.router, prefix="/api")
     app.include_router(wealth.router, prefix="/api")
     app.include_router(household.router, prefix="/api")
-    app.include_router(merchants.router, prefix="/api")
 
     @app.get("/api/health", tags=["systeme"])
     async def health() -> dict[str, str]:

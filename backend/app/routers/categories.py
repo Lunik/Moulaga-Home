@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete as sql_delete
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,27 +16,34 @@ from ..category_budgeting import (
     ensure_ancestor_budgets,
     validate_parent_budget,
 )
-from ..common import local_today, money
+from ..common import add_month, local_today, money
 from ..db import get_session
-from ..models import CategorizationRule, Category, RecurringSeries, Transaction
+from ..models import Category, RecurringSeries
+from ..recurring_budget import recurring_budget_occurrences
 from ..schemas import CategoryRead, CategoryRemovalResult, CategoryUpdate
 
 router = APIRouter(tags=["categories"])
 
 
-async def _spent_this_month(session: AsyncSession, category_id: int) -> Decimal:
+async def _planned_this_month(session: AsyncSession, category_id: int) -> Decimal:
     today = local_today()
     month_start = today.replace(day=1)
-    total = await session.scalar(
-        select(func.sum(Transaction.amount)).where(
-            Transaction.category_id == category_id,
-            Transaction.booked_at >= month_start,
-            Transaction.booked_at <= today,
-            Transaction.amount < 0,
-            Transaction.transfer_group.is_(None),
+    month_end = add_month(month_start, 1) - timedelta(days=1)
+    occurrences = await recurring_budget_occurrences(
+        session,
+        month_start,
+        month_end,
+    )
+    return money(
+        sum(
+            (
+                -occurrence.amount
+                for occurrence in occurrences
+                if occurrence.category_id == category_id and occurrence.amount < 0
+            ),
+            Decimal("0"),
         )
     )
-    return money(abs(Decimal(total or 0)))
 
 
 async def _would_create_cycle(
@@ -65,7 +73,7 @@ async def get_category(
     if category is None:
         raise HTTPException(status_code=404, detail="Categorie introuvable")
     return CategoryRead.model_validate(category).model_copy(
-        update={"spent_this_month": await _spent_this_month(session, category_id)}
+        update={"planned_this_month": await _planned_this_month(session, category_id)}
     )
 
 
@@ -112,7 +120,7 @@ async def update_category(
         raise HTTPException(status_code=409, detail="Cette categorie existe deja") from exc
     await session.refresh(category)
     return CategoryRead.model_validate(category).model_copy(
-        update={"spent_this_month": await _spent_this_month(session, category_id)}
+        update={"planned_this_month": await _planned_this_month(session, category_id)}
     )
 
 
@@ -122,7 +130,7 @@ async def archive_category(
     archived: bool = True,
     session: AsyncSession = Depends(get_session),
 ) -> CategoryRead:
-    """Archive a category while preserving its historical transaction links."""
+    """Archive a category while preserving its recurring and child links."""
     category = await session.get(Category, category_id)
     if category is None:
         raise HTTPException(status_code=404, detail="Categorie introuvable")
@@ -133,7 +141,7 @@ async def archive_category(
     await session.commit()
     await session.refresh(category)
     return CategoryRead.model_validate(category).model_copy(
-        update={"spent_this_month": await _spent_this_month(session, category_id)}
+        update={"planned_this_month": await _planned_this_month(session, category_id)}
     )
 
 
@@ -146,35 +154,23 @@ async def remove_category(
     if category is None:
         raise HTTPException(status_code=404, detail="Categorie introuvable")
 
-    transaction_count = int(
-        await session.scalar(
-            select(func.count()).select_from(Transaction).where(
-                Transaction.category_id == category_id
-            )
-        )
-        or 0
-    )
     linked_ids = [
         await session.scalar(
             select(model.id).where(column == category_id).limit(1)
         )
         for model, column in (
-            (CategorizationRule, CategorizationRule.category_id),
             (RecurringSeries, RecurringSeries.category_id),
             (Category, Category.parent_id),
         )
     ]
-    if transaction_count > 0 or any(linked_id is not None for linked_id in linked_ids):
+    if any(linked_id is not None for linked_id in linked_ids):
         category.archived = True
         await session.commit()
-        return CategoryRemovalResult(
-            action="archived",
-            transaction_count=transaction_count,
-        )
+        return CategoryRemovalResult(action="archived")
 
     await session.delete(category)
     await session.commit()
-    return CategoryRemovalResult(action="deleted", transaction_count=0)
+    return CategoryRemovalResult(action="deleted")
 
 
 @router.delete("/categories/{category_id}", status_code=204)
@@ -203,11 +199,10 @@ async def delete_category(
             detail="La categorie de destination doit avoir le meme type",
         )
 
-    for model in (Transaction, RecurringSeries, CategorizationRule):
-        await session.execute(
-            update(model)
-            .where(model.category_id == category_id)
-            .values(category_id=replacement_category_id)
-        )
+    await session.execute(
+        update(RecurringSeries)
+        .where(RecurringSeries.category_id == category_id)
+        .values(category_id=replacement_category_id)
+    )
     await session.execute(sql_delete(Category).where(Category.id == category_id))
     await session.commit()

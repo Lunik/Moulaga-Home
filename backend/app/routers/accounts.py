@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,7 +31,6 @@ from ..models import (
     Holding,
     RecurringSeries,
     SharedAccountLink,
-    Transaction,
 )
 from ..schemas import (
     DEPRECATED_ACCOUNT_TYPES,
@@ -81,11 +79,6 @@ async def _set_snapshot_balance(
 
 
 async def _account_read(session: AsyncSession, account: Account) -> AccountRead:
-    count = await session.scalar(
-        select(func.count()).select_from(Transaction).where(
-            Transaction.account_id == account.id
-        )
-    )
     return AccountRead.model_validate(account).model_copy(
         update={
             "balance": await _balance(session, account),
@@ -93,14 +86,12 @@ async def _account_read(session: AsyncSession, account: Account) -> AccountRead:
                 account.institution,
                 account.regional_entity,
             ),
-            "transaction_count": int(count or 0),
         }
     )
 
 
 async def _has_dependencies(session: AsyncSession, account_id: int) -> bool:
     for model in (
-        Transaction,
         BalanceSnapshot,
         RecurringSeries,
         Debt,
@@ -184,9 +175,6 @@ async def get_account(
             .order_by(BalanceSnapshot.period)
         )
     ).scalars().all()
-    count = await session.scalar(
-        select(func.count()).select_from(Transaction).where(Transaction.account_id == account_id)
-    )
     normalized_institution = institution_fields(
         account.institution,
         account.regional_entity,
@@ -209,7 +197,6 @@ async def get_account(
         history=[
             AccountHistoryPoint(period=s.period, balance=money(s.balance)) for s in snapshots
         ],
-        transaction_count=int(count or 0),
     )
     return detail
 
@@ -332,25 +319,6 @@ async def archive_account(
             )
         destination_balance = await _balance(session, destination)
         today = local_today()
-        transfer_group = uuid4().hex
-        session.add_all(
-            [
-                Transaction(
-                    booked_at=today,
-                    description=f"Transfert vers {destination.name}",
-                    amount=money(-balance),
-                    account_id=account.id,
-                    transfer_group=transfer_group,
-                ),
-                Transaction(
-                    booked_at=today,
-                    description=f"Transfert depuis {account.name}",
-                    amount=money(balance),
-                    account_id=destination.id,
-                    transfer_group=transfer_group,
-                ),
-            ]
-        )
         period = today.strftime("%Y-%m")
         await _set_snapshot_balance(session, account.id, period, Decimal("0.00"))
         await _set_snapshot_balance(
@@ -541,61 +509,6 @@ async def delete_snapshot(
     _remove_snapshot_files(snapshot)
     await session.delete(snapshot)
     await session.commit()
-
-
-@router.post("/accounts/{account_id}/snapshots/generate", response_model=list[BalanceSnapshotRead])
-async def generate_snapshots(
-    account_id: int, session: AsyncSession = Depends(get_session)
-) -> list[BalanceSnapshotRead]:
-    """Rebuild month-end cumulative snapshots from the ledger (idempotent)."""
-    account = await _require_account(session, account_id)
-    ensure_account_writable(account)
-    month_expr = func.strftime("%Y-%m", Transaction.booked_at)
-    rows = (
-        await session.execute(
-            select(month_expr, func.sum(Transaction.amount))
-            .where(Transaction.account_id == account_id)
-            .group_by(month_expr)
-            .order_by(month_expr)
-        )
-    ).all()
-
-    existing = {
-        snap.period: snap
-        for snap in (
-            await session.execute(
-                select(BalanceSnapshot)
-                .options(selectinload(BalanceSnapshot.attachments))
-                .where(BalanceSnapshot.account_id == account_id)
-            )
-        ).scalars().all()
-    }
-
-    running = Decimal(account.initial_balance)
-    for period, delta in rows:
-        running += Decimal(delta or 0)
-        snapshot = existing.get(period)
-        if snapshot is None:
-            snapshot = BalanceSnapshot(account_id=account_id, period=period)
-            session.add(snapshot)
-            existing[period] = snapshot
-        snapshot.balance = money(running)
-    generated_periods = {period for period, _delta in rows}
-    for period, snapshot in existing.items():
-        if period not in generated_periods:
-            _remove_snapshot_files(snapshot)
-            await session.delete(snapshot)
-    await session.commit()
-
-    refreshed = (
-        await session.execute(
-            select(BalanceSnapshot)
-            .options(selectinload(BalanceSnapshot.attachments))
-            .where(BalanceSnapshot.account_id == account_id)
-            .order_by(BalanceSnapshot.period)
-        )
-    ).scalars().all()
-    return [_snapshot_read(row) for row in refreshed]
 
 
 def _snapshot_attachment_read(

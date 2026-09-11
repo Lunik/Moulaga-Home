@@ -14,8 +14,8 @@ Le stack principal est :
 
 ## Données sensibles
 
-Le fichier `Banque_v3.numbers`, tout export bancaire CSV/DB et les pieces jointes de transactions
-sont sensibles et confidentiels. Ils doivent rester hors du dépôt Git.
+Tout export bancaire CSV/DB et toute piece jointe financiere sont sensibles et confidentiels. Ils
+doivent rester hors du dépôt Git.
 
 Règles :
 
@@ -30,12 +30,10 @@ Règles :
 ### Backend
 
 Les routes FastAPI sont decoupees par domaine dans `backend/app/routers/` : budget, comptes,
-transactions, categories, regles, recurrents, patrimoine, foyers, preferences et identites locales.
+categories, recurrents, patrimoine, foyers et preferences.
 
 Le schema persistant est dans `backend/app/models.py`, les DTO dans `backend/app/schemas.py` et le
 versionnement non destructif dans `backend/app/migrations.py`.
-La reprise historique de Banque_v3 est exclusivement une commande one-shot dans
-`backend/app/commands/import_banque_v3.py`; elle ne doit pas etre exposee par l'API.
 
 ### Frontend
 
@@ -44,26 +42,27 @@ routage URL dans `frontend/src/routing.ts` et les composants partages dans `fron
 
 Le dashboard doit montrer :
 
-- solde total
-- revenus du mois
-- dépenses du mois
-- budget restant
-- graphiques mensuels
-- derniers mouvements
+- solde total issu des derniers releves
+- revenus recurrents du mois
+- depenses recurrentes du mois
+- budget disponible apres recurrents
+- projection recurrente sur douze mois
+- prochaines echeances recurrentes
 
 ## Règles métier
 
 - Les montants doivent être stockés avec 2 décimales.
-- Les transactions sont groupees par compte et categorie et le registre complet est pagine.
-- La migration CSV initiale doit être atomique et idempotente.
-- Après cette migration, SQLite est la source de vérité et les mouvements sont saisis dans l'application.
+- Les derniers releves mensuels sont la source de verite des soldes ; sans releve, le solde initial
+  est utilise.
+- Les series recurrentes actives sont la source des revenus, depenses, enveloppes et graphiques
+  budgetaires. Les series de type `transfer` en sont exclues.
+- Aucun registre d'operations unitaires n'est conserve ou expose.
 - Les catégories peuvent être de type `income` ou `expense`.
 - Le budget mensuel d'une catégorie est facultatif.
 - Les liens partages et positions ne doivent jamais provoquer de double comptage.
-- Les transferts entre comptes sont lies, neutres pour le budget et exclus de la categorisation.
+- Le transfert d'un solde lors de l'archivage met directement a jour les releves des deux comptes.
 - Un compte archive est consultable et restaurable, mais toutes ses autres mutations sont refusees.
 - Les projections de livrets utilisent le taux configurable du compte et excluent les versements futurs.
-- Les suggestions, logos et identites marchandes ne doivent effectuer aucun appel reseau.
 - Les mutations d'un foyer exigent un acteur et un role suffisant.
 
 ## Seed de demonstration
@@ -107,6 +106,5 @@ Elle s'arrete avec `./scripts/demo-local.sh stop`.
 
 ## Important
 
-Si une modification touche la migration CSV ou les données bancaires, lire en priorité la commande
-one-shot et les tests de budget; la moindre erreur de parsing ou de déduplication a un impact direct
-sur la fiabilité du produit.
+Si une modification touche les releves ou les donnees bancaires, lire en priorite les tests de
+budget ; la moindre erreur de calcul a un impact direct sur la fiabilite du produit.

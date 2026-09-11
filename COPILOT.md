@@ -39,10 +39,9 @@ cd frontend && npm run build && npm run lint
 
 - Les données bancaires sont sensibles et hors dépôt.
 - La base SQLite vit dans `./data` / `MOULAGA_DATA_DIR`.
-- La migration CSV de Banque_v3 est une commande one-shot, pas une route API.
-- Apres la migration, SQLite est la source de verite pour les comptes et transactions.
-- La migration doit rester atomique et idempotente.
+- Les derniers releves SQLite sont la source des soldes et les series recurrentes actives sont la
+  source des syntheses budgetaires.
+- Aucun registre d'operations unitaires n'est stocke ni expose.
 - Les migrations de schema doivent sauvegarder une base existante avant modification.
-- La categorisation privee et les identites marchandes restent entierement locales.
 - La demonstration locale se lance avec `./scripts/demo-local.sh`, dans `.data/demo`, jamais sur `./data`.
 - `ROADMAP.md` trace les 26 surfaces fonctionnelles, leur validation et l'ordre d'audit iteratif.

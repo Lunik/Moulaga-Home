@@ -1,6 +1,6 @@
 [project]
 name = "moulaga-backend"
-version = "1.1.0"
+version = "1.2.0"
 description = "Self-hosted personal budget and money tracking API"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,7 +14,6 @@ dependencies = [
 ]
 
 [project.scripts]
-moulaga-migrate-banque-v3 = "app.commands.import_banque_v3:main"
 moulaga-seed-demo = "app.commands.seed_demo:main"
 
 [project.optional-dependencies]

@@ -7,7 +7,6 @@ export interface Overview {
   net_current_month: Money
   budget_current_month: Money
   budget_remaining: Money
-  uncategorized_count: number
 }
 
 export interface Account {
@@ -21,7 +20,6 @@ export interface Account {
   regional_entity: string | null
   account_number: string | null
   archived: boolean
-  transaction_count: number
   savings_product: string | null
   annual_interest_rate: string | null
   legal_cap: Money | null
@@ -55,7 +53,6 @@ export interface AccountInstitutionHistoryPoint {
 
 export interface AccountDetail extends Account {
   history: AccountHistoryPoint[]
-  transaction_count: number
 }
 
 export interface Category {
@@ -64,7 +61,7 @@ export interface Category {
   kind: 'income' | 'expense'
   color: string
   monthly_budget: Money | null
-  spent_this_month: Money
+  planned_this_month: Money
   parent_id: number | null
   archived: boolean
   is_default: boolean
@@ -72,22 +69,6 @@ export interface Category {
 
 export interface CategoryRemovalResult {
   action: 'archived' | 'deleted'
-  transaction_count: number
-}
-
-export interface Transaction {
-  id: number
-  booked_at: string
-  description: string
-  amount: Money
-  account_id: number
-  account_name: string
-  category_id: number | null
-  category_name: string | null
-  category_kind: 'income' | 'expense' | null
-  notes: string | null
-  transfer_group: string | null
-  attachment_count: number
 }
 
 export interface StoredAttachment {
@@ -98,16 +79,8 @@ export interface StoredAttachment {
   size: number
 }
 
-export interface TransactionAttachment extends StoredAttachment {
-  transaction_id: number
-}
-
 export interface AccountSnapshotAttachment extends StoredAttachment {
   snapshot_id: number
-}
-
-export interface TransactionCount {
-  count: number
 }
 
 export interface MonthlyPoint {
@@ -130,10 +103,6 @@ export interface AppSettings {
   date_format: 'localized' | 'day-month-year' | 'YYYY-MM-DD'
   navigation_style: 'sidebar' | 'topbar' | 'compact'
   budget_cycle_start_day: number
-  local_merchant_identities: boolean
-  private_categorization_enabled: boolean
-  private_categorization_mode: 'off' | 'suggest' | 'auto'
-  private_categorization_confidence: number
 }
 
 export interface BudgetCycle {
@@ -149,9 +118,8 @@ export interface BudgetOverview {
   net: Money
   budget_total: Money
   budget_remaining: Money
-  uncategorized_count: number
-  envelope_spent?: Money
-  envelope_remaining?: Money
+  envelope_planned: Money
+  envelope_available: Money
   upcoming_recurring_amount: Money
   upcoming_recurring_count: number
   savings_contributions: Money
@@ -163,9 +131,9 @@ export interface Envelope {
   color: string
   parent_id: number | null
   budget: Money | null
-  direct_spent: Money
-  spent: Money
-  remaining: Money | null
+  direct_planned: Money
+  planned: Money
+  available: Money | null
   children_budget: Money
   remainder_budget: Money | null
 }
@@ -182,37 +150,8 @@ export interface SpendingNode {
   category_id: number | null
   category_name: string
   amount: Money
-  transaction_count: number
+  occurrence_count: number
   children: SpendingNode[]
-}
-
-export interface CategorizationRule {
-  id: number
-  name: string
-  match_type: 'beneficiary' | 'keyword'
-  pattern: string
-  patterns: string[]
-  category_id: number
-  priority: number
-  enabled: boolean
-}
-
-export interface CategorizationSuggestion {
-  transaction_id: number
-  category_id: number | null
-  category_name: string | null
-  confidence: number
-  explanation: string
-  source: 'rule' | 'history' | 'none'
-  applied: boolean
-}
-
-export interface CategorizationInboxItem {
-  transaction_id: number
-  booked_at: string
-  description: string
-  amount: Money
-  account_id: number
 }
 
 export type RecurringType =
@@ -246,29 +185,7 @@ export interface RecurringSeries {
   recurring_type: RecurringType
   custom_type: string | null
   credit_insurance_rate: string | null
-  confidence: number
   attachment_count: number
-}
-
-export interface RecurringDetectionProposal {
-  proposal_key: string
-  kind: 'series' | 'change'
-  series_id: number | null
-  label: string
-  account_id: number
-  account_name: string
-  category_id: number | null
-  category_name: string | null
-  amount: Money
-  frequency: RecurringSeries['frequency']
-  next_due: string
-  amount_type: RecurringSeries['amount_type']
-  confidence: number
-}
-
-export interface RecurringDetectionResult {
-  created_series: number
-  created_changes: number
 }
 
 export interface RecurringForecastItem {
@@ -276,19 +193,10 @@ export interface RecurringForecastItem {
   label: string
   due_date: string
   amount: Money
+  account_name: string
+  category_name: string | null
   status?: 'active' | 'paused' | 'ended'
   color?: string
-}
-
-export interface RecurringChange {
-  id: number
-  series_id: number
-  series_label?: string
-  change_type: string
-  detected_amount: Money | null
-  detected_next_due: string | null
-  status: 'pending' | 'accepted' | 'rejected'
-  note: string | null
 }
 
 export interface Debt {
@@ -444,12 +352,4 @@ export interface GoalContribution {
   member_id: number | null
   member_name?: string
   note: string | null
-}
-
-export interface MerchantIdentity {
-  id: number
-  label: string
-  pattern: string
-  monogram: string
-  color: string
 }

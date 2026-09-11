@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Select, case, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..category_budgeting import (
@@ -20,9 +20,8 @@ from ..models import (
     Account,
     Category,
     Contribution,
-    RecurringSeries,
-    Transaction,
 )
+from ..recurring_budget import recurring_budget_occurrences
 from ..schemas import (
     BudgetCycleOverview,
     CashflowFlow,
@@ -52,32 +51,19 @@ async def _period_bounds(
     return await _bounds(session, on)
 
 
-def _in_cycle(statement: Select, start: date, end: date) -> Select:
-    return statement.where(
-        Transaction.booked_at >= start,
-        Transaction.booked_at <= end,
-        Transaction.transfer_group.is_(None),
-    )
-
-
 @router.get("/overview", response_model=BudgetCycleOverview)
 async def cycle_overview(
     on: date | None = None, session: AsyncSession = Depends(get_session)
 ) -> BudgetCycleOverview:
     start, end, start_day = await _bounds(session, on)
-    income = await session.scalar(
-        _in_cycle(
-            select(func.coalesce(func.sum(Transaction.amount), 0)).where(Transaction.amount > 0),
-            start,
-            end,
-        )
+    occurrences = await recurring_budget_occurrences(session, start, end)
+    income = sum(
+        (occurrence.amount for occurrence in occurrences if occurrence.amount > 0),
+        Decimal("0"),
     )
-    expenses = await session.scalar(
-        _in_cycle(
-            select(func.coalesce(func.sum(Transaction.amount), 0)).where(Transaction.amount < 0),
-            start,
-            end,
-        )
+    expenses = sum(
+        (-occurrence.amount for occurrence in occurrences if occurrence.amount < 0),
+        Decimal("0"),
     )
     categories = (
         await session.execute(
@@ -85,40 +71,21 @@ async def cycle_overview(
         )
     ).scalars().all()
     budget = root_budget_total(categories)
-    uncategorized = await session.scalar(
-        _in_cycle(
-            select(func.count()).select_from(Transaction).where(Transaction.category_id.is_(None)),
-            start,
-            end,
-        )
-    )
-    # A budget on a parent covers every transaction in its active subtree.
+    # A budget on a parent covers every recurring expense in its active subtree.
     covered_category_ids = budgeted_category_ids(categories)
-    envelope_spent_raw = Decimal("0")
-    if covered_category_ids:
-        envelope_spent_raw = await session.scalar(
-            select(func.coalesce(func.sum(-Transaction.amount), 0)).where(
-                Transaction.amount < 0,
-                Transaction.booked_at >= start,
-                Transaction.booked_at <= end,
-                Transaction.transfer_group.is_(None),
-                Transaction.category_id.in_(covered_category_ids),
-            )
-        )
-    recurring_rows = (
-        await session.execute(
-            select(RecurringSeries.amount).where(
-                RecurringSeries.status == "active",
-                RecurringSeries.next_due >= start,
-                RecurringSeries.next_due <= end,
-                RecurringSeries.amount.is_not(None),
-            )
-        )
-    ).all()
-    upcoming_recurring_amount = sum(
-        (Decimal(row[0]) for row in recurring_rows), Decimal("0")
+    envelope_planned_raw = sum(
+        (
+            -occurrence.amount
+            for occurrence in occurrences
+            if occurrence.amount < 0
+            and occurrence.category_id in covered_category_ids
+        ),
+        Decimal("0"),
     )
-    upcoming_recurring_count = len(recurring_rows)
+    recurring_amount = sum(
+        (occurrence.amount for occurrence in occurrences),
+        Decimal("0"),
+    )
     # Savings contributions recorded in-cycle (kept separate from expense flows).
     savings = await session.scalar(
         select(func.coalesce(func.sum(Contribution.amount), 0)).where(
@@ -126,9 +93,9 @@ async def cycle_overview(
         )
     )
     income_amount = money(income)
-    expenses_abs = money(abs(Decimal(expenses or 0)))
+    expenses_abs = money(expenses)
     budget_total = money(budget)
-    envelope_spent = money(envelope_spent_raw)
+    envelope_planned = money(envelope_planned_raw)
     return BudgetCycleOverview(
         cycle=CycleBounds(start=start, end=end, start_day=start_day),
         income=income_amount,
@@ -136,11 +103,10 @@ async def cycle_overview(
         net=money(income_amount - expenses_abs),
         budget_total=budget_total,
         budget_remaining=money(budget_total - expenses_abs),
-        uncategorized_count=int(uncategorized or 0),
-        envelope_spent=envelope_spent,
-        envelope_remaining=money(budget_total - envelope_spent),
-        upcoming_recurring_amount=money(upcoming_recurring_amount),
-        upcoming_recurring_count=upcoming_recurring_count,
+        envelope_planned=envelope_planned,
+        envelope_available=money(budget_total - envelope_planned),
+        upcoming_recurring_amount=money(recurring_amount),
+        upcoming_recurring_count=len(occurrences),
         savings_contributions=money(savings),
     )
 
@@ -159,24 +125,15 @@ async def envelopes(
     ).scalars().all()
     effective_parents = effective_parent_ids(categories)
     active_categories = [category for category in categories if not category.archived]
-    spent_rows = (
-        await session.execute(
-            select(Transaction.category_id, func.sum(-Transaction.amount))
-            .where(
-                Transaction.amount < 0,
-                Transaction.booked_at >= start,
-                Transaction.booked_at <= end,
-                Transaction.transfer_group.is_(None),
-                Transaction.category_id.is_not(None),
-            )
-            .group_by(Transaction.category_id)
+    occurrences = await recurring_budget_occurrences(session, start, end)
+    direct_planned_by_category: dict[int, Decimal] = {}
+    for occurrence in occurrences:
+        if occurrence.amount >= 0 or occurrence.category_id is None:
+            continue
+        direct_planned_by_category[occurrence.category_id] = money(
+            direct_planned_by_category.get(occurrence.category_id, Decimal("0"))
+            - occurrence.amount
         )
-    ).all()
-    direct_spent_by_category = {
-        category_id: money(spent)
-        for category_id, spent in spent_rows
-        if category_id is not None
-    }
     children_by_parent: dict[int, list[tuple[int, Decimal | None]]] = {}
     for category in active_categories:
         parent_id = effective_parents.get(category.id)
@@ -185,20 +142,20 @@ async def envelopes(
                 (category.id, category.monthly_budget)
             )
 
-    aggregate_spent_by_category: dict[int, Decimal] = {}
+    aggregate_planned_by_category: dict[int, Decimal] = {}
 
-    def aggregate_spent(category_id: int, visiting: set[int] | None = None) -> Decimal:
-        if category_id in aggregate_spent_by_category:
-            return aggregate_spent_by_category[category_id]
+    def aggregate_planned(category_id: int, visiting: set[int] | None = None) -> Decimal:
+        if category_id in aggregate_planned_by_category:
+            return aggregate_planned_by_category[category_id]
         current_visiting = set() if visiting is None else set(visiting)
         if category_id in current_visiting:
             return Decimal("0")
         current_visiting.add(category_id)
-        total = direct_spent_by_category.get(category_id, Decimal("0"))
+        total = direct_planned_by_category.get(category_id, Decimal("0"))
         for child_id, _child_budget in children_by_parent.get(category_id, []):
-            total += aggregate_spent(child_id, current_visiting)
-        aggregate_spent_by_category[category_id] = money(total)
-        return aggregate_spent_by_category[category_id]
+            total += aggregate_planned(child_id, current_visiting)
+        aggregate_planned_by_category[category_id] = money(total)
+        return aggregate_planned_by_category[category_id]
 
     result = []
     for category in active_categories:
@@ -207,10 +164,10 @@ async def envelopes(
             if category.monthly_budget is not None
             else None
         )
-        direct_spent_amount = direct_spent_by_category.get(
-            category.id, Decimal("0")
+        direct_planned_amount = direct_planned_by_category.get(
+            category.id, Decimal("0.00")
         )
-        spent_amount = aggregate_spent(category.id)
+        planned_amount = aggregate_planned(category.id)
         child_budgets = children_by_parent.get(category.id)
         children_budget = money(
             sum(
@@ -236,9 +193,9 @@ async def envelopes(
                 color=category.color,
                 parent_id=effective_parents.get(category.id),
                 budget=budget_amount,
-                direct_spent=direct_spent_amount,
-                spent=spent_amount,
-                remaining=money(budget_amount - spent_amount)
+                direct_planned=direct_planned_amount,
+                planned=planned_amount,
+                available=money(budget_amount - planned_amount)
                 if budget_amount is not None
                 else None,
                 children_budget=children_budget,
@@ -256,62 +213,66 @@ async def cashflow(
     session: AsyncSession = Depends(get_session),
 ) -> list[CashflowFlow]:
     start, end, _ = await _period_bounds(session, on, period)
-    inflow = func.coalesce(func.sum(case((Transaction.amount > 0, Transaction.amount), else_=0)), 0)
-    outflow = func.coalesce(
-        func.sum(case((Transaction.amount < 0, -Transaction.amount), else_=0)), 0
-    )
+    occurrences = await recurring_budget_occurrences(session, start, end)
 
     if by == "source":
-        rows = (
-            await session.execute(
-                _in_cycle(
-                    select(Account.id, Account.name, inflow, outflow).join(
-                        Transaction, Transaction.account_id == Account.id
-                    ),
-                    start,
-                    end,
-                )
-                .group_by(Account.id)
-                .order_by(Account.name)
+        accounts = {
+            account.id: account.name
+            for account in (await session.execute(select(Account))).scalars().all()
+        }
+        totals: dict[int, tuple[Decimal, Decimal]] = {}
+        for occurrence in occurrences:
+            income, expenses = totals.get(
+                occurrence.account_id,
+                (Decimal("0"), Decimal("0")),
             )
-        ).all()
+            if occurrence.amount > 0:
+                income += occurrence.amount
+            elif occurrence.amount < 0:
+                expenses -= occurrence.amount
+            totals[occurrence.account_id] = income, expenses
         return [
             CashflowFlow(
-                key=f"account:{row[0]}",
-                label=row[1],
-                inflow=money(row[2]),
-                outflow=money(row[3]),
-                net=money(Decimal(row[2] or 0) - Decimal(row[3] or 0)),
+                key=f"account:{account_id}",
+                label=accounts.get(account_id, ""),
+                inflow=money(income),
+                outflow=money(expenses),
+                net=money(income - expenses),
             )
-            for row in rows
+            for account_id, (income, expenses) in sorted(
+                totals.items(),
+                key=lambda item: accounts.get(item[0], "").casefold(),
+            )
         ]
 
-    rows = (
-        await session.execute(
-            select(Category.id, Category.name, inflow, outflow)
-            .select_from(Transaction)
-            .outerjoin(Category, Transaction.category_id == Category.id)
-            .where(
-                Transaction.booked_at >= start,
-                Transaction.booked_at <= end,
-                Transaction.transfer_group.is_(None),
-            )
-            .group_by(Category.id)
-            .order_by(Category.name)
+    categories = {
+        category.id: category.name
+        for category in (await session.execute(select(Category))).scalars().all()
+    }
+    totals_by_category: dict[int | None, tuple[Decimal, Decimal]] = {}
+    for occurrence in occurrences:
+        income, expenses = totals_by_category.get(
+            occurrence.category_id,
+            (Decimal("0"), Decimal("0")),
         )
-    ).all()
-    flows = []
-    for cat_id, name, inflow_v, outflow_v in rows:
-        flows.append(
-            CashflowFlow(
-                key=f"category:{cat_id}" if cat_id is not None else "category:none",
-                label=name or "Sans categorie",
-                inflow=money(inflow_v),
-                outflow=money(outflow_v),
-                net=money(Decimal(inflow_v or 0) - Decimal(outflow_v or 0)),
-            )
+        if occurrence.amount > 0:
+            income += occurrence.amount
+        elif occurrence.amount < 0:
+            expenses -= occurrence.amount
+        totals_by_category[occurrence.category_id] = income, expenses
+    return [
+        CashflowFlow(
+            key=f"category:{category_id}" if category_id is not None else "category:none",
+            label=categories.get(category_id, "Sans categorie"),
+            inflow=money(income),
+            outflow=money(expenses),
+            net=money(income - expenses),
         )
-    return flows
+        for category_id, (income, expenses) in sorted(
+            totals_by_category.items(),
+            key=lambda item: categories.get(item[0], "Sans categorie").casefold(),
+        )
+    ]
 
 
 @router.get("/spending", response_model=list[HierarchicalSpendingNode])
@@ -321,20 +282,19 @@ async def hierarchical_spending(
     session: AsyncSession = Depends(get_session),
 ) -> list[HierarchicalSpendingNode]:
     start, end, _ = await _period_bounds(session, on, period)
-    rows = (
-        await session.execute(
-            _in_cycle(
-                select(
-                    Transaction.category_id,
-                    func.sum(-Transaction.amount),
-                    func.count(),
-                ).where(Transaction.amount < 0),
-                start,
-                end,
-            ).group_by(Transaction.category_id)
+    occurrences = await recurring_budget_occurrences(session, start, end)
+    planned: dict[int | None, tuple[Decimal, int]] = {}
+    for occurrence in occurrences:
+        if occurrence.amount >= 0:
+            continue
+        amount, count = planned.get(
+            occurrence.category_id,
+            (Decimal("0"), 0),
         )
-    ).all()
-    spent = {row[0]: (money(row[1]), int(row[2] or 0)) for row in rows}
+        planned[occurrence.category_id] = (
+            money(amount - occurrence.amount),
+            count + 1,
+        )
 
     categories = (
         await session.execute(select(Category).where(Category.kind == "expense"))
@@ -345,28 +305,28 @@ async def hierarchical_spending(
 
     def build(category: Category) -> HierarchicalSpendingNode:
         children = [build(child) for child in by_parent.get(category.id, [])]
-        own_amount, own_count = spent.get(category.id, (Decimal("0.00"), 0))
+        own_amount, own_count = planned.get(category.id, (Decimal("0.00"), 0))
         total = own_amount + sum((child.amount for child in children), Decimal("0.00"))
-        total_count = own_count + sum(child.transaction_count for child in children)
+        total_count = own_count + sum(child.occurrence_count for child in children)
         return HierarchicalSpendingNode(
             category_id=category.id,
             category_name=category.name,
             amount=money(total),
-            transaction_count=total_count,
+            occurrence_count=total_count,
             children=sorted(children, key=lambda node: node.amount, reverse=True),
         )
 
     roots = [build(category) for category in by_parent.get(None, [])]
     nodes = sorted(roots, key=lambda node: node.amount, reverse=True)
 
-    uncategorized = spent.get(None)
+    uncategorized = planned.get(None)
     if uncategorized and (uncategorized[0] > 0 or uncategorized[1] > 0):
         nodes.append(
             HierarchicalSpendingNode(
                 category_id=None,
                 category_name="Sans categorie",
                 amount=uncategorized[0],
-                transaction_count=uncategorized[1],
+                occurrence_count=uncategorized[1],
             )
         )
     return nodes
