@@ -160,3 +160,68 @@ def test_fresh_database_omits_retired_tables_and_is_idempotent(tmp_path, monkeyp
     with TestClient(main.create_app()):
         pass
     assert list(tmp_path.glob("moulaga.backup-*.db")) == []
+
+
+def test_v16_database_drops_obsolete_recurring_columns(tmp_path, monkeypatch):
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        account_id = client.get("/api/accounts").json()[0]["id"]
+
+    db_path = tmp_path / "moulaga.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "ALTER TABLE recurring_series "
+            "ADD COLUMN confidence NUMERIC(3, 2) NOT NULL"
+        )
+        connection.execute(
+            "ALTER TABLE recurring_series ADD COLUMN match_key VARCHAR(64)"
+        )
+        connection.execute(
+            "CREATE INDEX ix_recurring_series_match_key "
+            "ON recurring_series (match_key)"
+        )
+        connection.execute(
+            "INSERT INTO recurring_series "
+            "(label, account_id, category_id, frequency, next_due, amount, "
+            "amount_type, status, recurring_type, custom_type, "
+            "credit_insurance_rate, created_at, confidence, match_key) "
+            "VALUES (?, ?, NULL, 'monthly', '2026-09-01', '1200.00', "
+            "'fixed', 'active', 'salary', NULL, NULL, "
+            "'2026-09-01 08:00:00', '0.95', 'legacy-salary')",
+            ("Salaire historique", account_id),
+        )
+        connection.execute("PRAGMA user_version = 16")
+
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        created = client.post(
+            "/api/recurring",
+            json={
+                "label": "Nouveau salaire",
+                "account_id": account_id,
+                "frequency": "monthly",
+                "next_due": "2026-09-11",
+                "amount": "100000.00",
+                "recurring_type": "salary",
+            },
+        )
+        assert created.status_code == 201
+        assert {item["label"] for item in client.get("/api/recurring").json()} == {
+            "Salaire historique",
+            "Nouveau salaire",
+        }
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(recurring_series)")
+        }
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    assert {"confidence", "match_key"}.isdisjoint(columns)
+    assert version >= 17
+    backups = list(tmp_path.glob("moulaga.backup-*.db"))
+    assert len(backups) == 1
+
+    with TestClient(main.create_app()):
+        pass
+    assert list(tmp_path.glob("moulaga.backup-*.db")) == backups

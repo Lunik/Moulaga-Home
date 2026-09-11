@@ -18,7 +18,7 @@ def test_migration_has_expected_columns():
     from app.migrations import EXPECTED_COLUMNS, SCHEMA_VERSION
 
     assert isinstance(EXPECTED_COLUMNS, dict)
-    assert SCHEMA_VERSION >= 16
+    assert SCHEMA_VERSION >= 17
     for _table, cols in EXPECTED_COLUMNS.items():
         assert isinstance(cols, dict)
         for col, ddl in cols.items():
