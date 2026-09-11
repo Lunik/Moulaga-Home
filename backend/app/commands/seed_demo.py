@@ -726,6 +726,11 @@ async def _seed(
 
     recurring_attachments = [
         (
+            salary_series,
+            "bulletin-salaire-demo.txt",
+            b"Moulaga QA - bulletin de salaire entierement synthetique.\n",
+        ),
+        (
             credit_insurance_series,
             "contrat-assurance-emprunteur-demo.txt",
             b"Moulaga QA - contrat recurrent entierement synthetique.\n",

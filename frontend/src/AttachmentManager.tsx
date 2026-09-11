@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiDelete, apiGet, apiUpload } from './api/client'
 import type { StoredAttachment } from './api/types'
-import { FormInput, Icon, errorMessage } from './ui'
+import { FormInput, Icon, errorMessage, formatFileSize } from './ui'
 
 export type AttachmentOwner =
   | { kind: 'snapshot'; accountId: number; snapshotId: number }
@@ -151,14 +151,4 @@ export function AttachmentManager({
       )}
     </div>
   )
-}
-
-function formatFileSize(size: number): string {
-  if (size >= 1024 * 1024) {
-    return `${(size / (1024 * 1024)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mio`
-  }
-  if (size >= 1024) {
-    return `${(size / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Kio`
-  }
-  return `${size} octet${size === 1 ? '' : 's'}`
 }

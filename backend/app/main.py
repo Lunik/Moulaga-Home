@@ -18,6 +18,7 @@ from .routers import (
     budget,
     budgets,
     categories,
+    documents,
     household,
     preferences,
     recurring,
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(budget.router, prefix="/api")
     app.include_router(accounts.router, prefix="/api")
     app.include_router(categories.router, prefix="/api")
+    app.include_router(documents.router, prefix="/api")
     app.include_router(preferences.router, prefix="/api")
     app.include_router(budgets.router, prefix="/api")
     app.include_router(recurring.router, prefix="/api")

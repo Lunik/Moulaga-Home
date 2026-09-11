@@ -14,6 +14,7 @@ export type IconName =
   | 'close'
   | 'database'
   | 'debt'
+  | 'documents'
   | 'edit'
   | 'family'
   | 'grid'
@@ -81,6 +82,12 @@ export function Icon({ name, className }: { name: IconName; className?: string }
       <>
         <circle cx="12" cy="12" r="9" />
         <path d="M8 9h8M8 15h8M10 7v10" />
+      </>
+    ),
+    documents: (
+      <>
+        <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H10l2 2h5.5A2.5 2.5 0 0 1 20 7.5v11A2.5 2.5 0 0 1 17.5 21h-11A2.5 2.5 0 0 1 4 18.5Z" />
+        <path d="M8 10h8M8 14h8M8 18h5" />
       </>
     ),
     edit: (
@@ -597,6 +604,16 @@ export function formatMonth(value: string | null | undefined): string {
   if (!value || !/^\d{4}-\d{2}$/.test(value)) return 'Période invalide'
   const [year, month] = value.split('-').map(Number)
   return new Intl.DateTimeFormat(activeLocale, { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1))
+}
+
+export function formatFileSize(size: number): string {
+  if (size >= 1024 * 1024) {
+    return `${(size / (1024 * 1024)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mio`
+  }
+  if (size >= 1024) {
+    return `${(size / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Kio`
+  }
+  return `${size} octet${size === 1 ? '' : 's'}`
 }
 
 export function shortMonth(value: string | null | undefined): string {

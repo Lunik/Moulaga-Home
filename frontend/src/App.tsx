@@ -13,6 +13,7 @@ const AccountsView = lazy(() => import('./views/AccountsView').then((module) => 
 const AccountDetailView = lazy(() => import('./views/AccountsView').then((module) => ({ default: module.AccountDetailView })))
 const BudgetView = lazy(() => import('./views/BudgetView').then((module) => ({ default: module.BudgetView })))
 const DashboardView = lazy(() => import('./views/DashboardView').then((module) => ({ default: module.DashboardView })))
+const DocumentsView = lazy(() => import('./views/DocumentsView').then((module) => ({ default: module.DocumentsView })))
 const FamilyView = lazy(() => import('./views/FamilyView').then((module) => ({ default: module.FamilyView })))
 const SettingsView = lazy(() => import('./views/SettingsView').then((module) => ({ default: module.SettingsView })))
 const WealthView = lazy(() => import('./views/WealthView').then((module) => ({ default: module.WealthView })))
@@ -28,6 +29,7 @@ const navigation: Array<{
   { id: 'accounts', label: 'Comptes', caption: 'Soldes & relevés', icon: 'accounts', route: { name: 'accounts' } },
   { id: 'budget', label: 'Budget', caption: 'Prévisions récurrentes', icon: 'budget', route: { name: 'budget', tab: 'overview' } },
   { id: 'wealth', label: 'Patrimoine', caption: 'Actifs & dettes', icon: 'wealth', route: { name: 'wealth', tab: 'overview' } },
+  { id: 'documents', label: 'Documents', caption: 'Pièces & justificatifs', icon: 'documents', route: { name: 'documents', tab: 'overview' } },
   { id: 'family', label: 'Famille', caption: 'Objectifs partagés', icon: 'family', route: { name: 'family' } },
   { id: 'settings', label: 'Paramètres', caption: 'Préférences locales', icon: 'settings', route: { name: 'settings' } },
 ]
@@ -67,6 +69,7 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
       queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
       queryClient.invalidateQueries({ queryKey: ['debts'] }),
+      queryClient.invalidateQueries({ queryKey: ['documents'] }),
       queryClient.invalidateQueries({ queryKey: ['account-institution-history'] }),
       queryClient.invalidateQueries({ queryKey: ['shared-accounts'] }),
     ])
@@ -143,6 +146,9 @@ export default function App() {
                 accounts={accounts.data ?? []}
                 navigate={navigate}
               />
+            )}
+            {route.name === 'documents' && (
+              <DocumentsView tab={route.tab} navigate={navigate} />
             )}
             {route.name === 'family' && <FamilyView accounts={accounts.data ?? []} />}
             {route.name === 'settings' && <SettingsView />}
@@ -235,6 +241,8 @@ function titleForRoute(route: Route): string {
       return 'Budget récurrent'
     case 'wealth':
       return 'Patrimoine'
+    case 'documents':
+      return 'Documents'
     case 'family':
       return 'Famille'
     case 'settings':
