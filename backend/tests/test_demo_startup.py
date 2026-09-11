@@ -67,7 +67,7 @@ def test_entrypoint_resets_while_demo_variable_is_enabled_then_preserves(tmp_pat
 
     _start_container_entrypoint(tmp_path, "true")
     assert "Modification temporaire" not in _account_names(database)
-    assert len([path for path in (tmp_path / "attached").rglob("*") if path.is_file()]) == 7
+    assert len([path for path in (tmp_path / "attached").rglob("*") if path.is_file()]) == 8
 
     with sqlite3.connect(database) as connection:
         connection.execute(

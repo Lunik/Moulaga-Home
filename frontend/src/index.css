@@ -1357,6 +1357,44 @@ textarea:focus-visible {
   opacity: 0.4;
 }
 
+.date-picker-control {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.field .date-picker-control input {
+  position: relative;
+  padding-right: 3.1rem;
+}
+
+.date-picker-control input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2.9rem;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.date-picker-icon {
+  position: absolute;
+  top: 50%;
+  right: 0.95rem;
+  width: 1rem;
+  height: 1rem;
+  color: var(--muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.date-picker-control:focus-within .date-picker-icon {
+  color: var(--text);
+}
+
 .color-input {
   padding: 0.3rem !important;
 }
@@ -2189,6 +2227,173 @@ textarea:focus-visible {
 .module-tabs svg {
   width: 1rem;
   height: 1rem;
+}
+
+.work-attachments {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.work-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.work-attachment a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  overflow: hidden;
+  max-width: 12rem;
+  color: var(--accent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-attachment .app-icon {
+  width: 0.85rem;
+}
+
+.work-attachment .icon-action {
+  width: 1.65rem;
+  height: 1.65rem;
+  min-height: 1.65rem;
+  border-radius: 0.5rem;
+}
+
+.work-attachment-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 1.75rem;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.work-file-input {
+  display: none;
+}
+
+.work-quarter-progress {
+  margin-top: 1.5rem;
+}
+
+.work-quarter-progress > p {
+  margin: 0 0 0.5rem;
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.work-pension-notes {
+  margin-top: 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.work-contract-list,
+.work-payslip-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.work-contract-card,
+.work-payslip-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 1rem;
+  min-height: 5.5rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.work-contract-card:last-child,
+.work-payslip-card:last-child {
+  border-bottom: 0;
+}
+
+.work-list-icon {
+  display: grid;
+  width: 2.7rem;
+  height: 2.7rem;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.work-list-icon .app-icon {
+  width: 1.15rem;
+}
+
+.work-list-copy,
+.work-list-copy > small,
+.work-list-value > small {
+  display: block;
+}
+
+.work-list-copy {
+  min-width: 0;
+}
+
+.work-list-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.work-list-copy > small {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.work-list-value {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.work-list-value > strong {
+  font-size: 1rem;
+}
+
+.work-list-value > small {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.modal-card:has(.work-modal-form) {
+  width: min(44rem, 100%);
+}
+
+.work-modal-form {
+  gap: 1rem;
+}
+
+.work-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.work-form-grid-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.work-modal-wide {
+  grid-column: 1 / -1;
 }
 
 .budget-tabs {
@@ -4285,6 +4490,38 @@ html[data-theme="light"] .status-badge {
 }
 
 @media (max-width: 680px) {
+  .work-contract-card,
+  .work-payslip-card {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 0.75rem;
+  }
+
+  .work-list-value {
+    grid-column: 2;
+    text-align: left;
+  }
+
+  .work-contract-card > .row-actions,
+  .work-payslip-card > .row-actions {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+  }
+
+  .work-form-grid,
+  .work-form-grid-three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .work-action-panel .panel-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .work-action-panel .panel-header > .primary-button {
+    width: 100%;
+  }
+
   .sidebar {
     padding-inline: 0.65rem;
   }
@@ -5048,6 +5285,12 @@ html[data-theme="light"] .status-badge {
   text-align: right;
 }
 
+.document-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .document-list-meta > span {
   font-size: 0.78rem;
 }
@@ -5153,7 +5396,7 @@ html[data-theme="light"] .document-file-icon {
     text-align: left;
   }
 
-  .document-list article > a {
+  .document-list-actions {
     grid-column: 3;
     grid-row: 1 / span 2;
   }
@@ -5183,11 +5426,15 @@ html[data-theme="light"] .document-file-icon {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .document-list article > a,
+  .document-list-actions,
   .missing-resource-list article > :last-child {
     width: 100%;
     grid-column: 1 / -1;
     grid-row: auto;
+  }
+
+  .document-list-actions > * {
+    flex: 1;
   }
 
   .document-list-meta {

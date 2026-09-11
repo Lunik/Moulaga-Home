@@ -79,7 +79,7 @@ export interface StoredAttachment {
   size: number
 }
 
-export type DocumentKind = 'snapshot' | 'recurring' | 'debt' | 'real_estate'
+export type DocumentKind = 'snapshot' | 'recurring' | 'debt' | 'real_estate' | 'payslip'
 
 export interface DocumentItem {
   id: number
@@ -401,4 +401,72 @@ export interface GoalContribution {
   member_id: number | null
   member_name?: string
   note: string | null
+}
+
+export interface WorkContract {
+  id: number
+  employer: string
+  position: string
+  contract_type: string
+  start_date: string
+  end_date: string | null
+  gross_annual_salary: Money
+  payment_period_months: number
+  work_percentage: number
+  recurring_series_id: number | null
+  status: 'active' | 'ended'
+  notes: string | null
+}
+
+export interface PaySlipAttachment {
+  id: number
+  payslip_id: number
+  original_name: string
+  stored_path: string
+  content_type: string | null
+  size: number
+}
+
+export interface PaySlip {
+  id: number
+  contract_id: number | null
+  period: string
+  gross_salary: Money
+  taxable_net: Money
+  net_before_tax: Money
+  pas_rate: string
+  pas_amount: Money
+  net_after_tax: Money
+  bonuses: Money
+  employer_contributions: Money
+  employer_profit_sharing: Money
+  hours_worked: string | null
+  overtime_hours: string | null
+  notes: string | null
+  attachments: PaySlipAttachment[]
+}
+
+export interface PensionProfile {
+  id: number
+  birth_year: number
+  target_retirement_age: number
+  validated_quarters: number
+  required_quarters: number
+  estimated_monthly_pension: Money
+  target_monthly_income: Money
+  notes: string | null
+}
+
+export interface WorkSummary {
+  active_contracts_count: number
+  latest_net_after_tax: Money
+  ytd_taxable_net: Money
+  ytd_net_after_tax: Money
+  ytd_gross: Money
+  ytd_bonuses: Money
+  ytd_profit_sharing: Money
+  average_pas_rate: string
+  estimated_pension: Money
+  validated_quarters: number
+  required_quarters: number
 }

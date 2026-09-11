@@ -33,6 +33,9 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.households == 1
     assert result.snapshot_attachments == 2
     assert result.recurring_attachments == 2
+    assert result.contracts == 2
+    assert result.payslips == 6
+    assert result.payslip_attachments == 1
 
     with TestClient(main.create_app()) as client:
         accounts = client.get("/api/accounts").json()
@@ -45,22 +48,50 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         recurring = client.get("/api/recurring").json()
         assert len(recurring) == 14
         assert any(item["amount_type"] == "variable" for item in recurring)
-        assert any(item["recurring_type"] == "salary" for item in recurring)
+        assert sum(item["recurring_type"] == "salary" for item in recurring) == 1
+        salary = next(item for item in recurring if item["label"] == "Salaire mensuel")
+        assert salary["amount"] == "3126.50"
+
+        contracts = client.get("/api/work/contracts").json()
+        assert len(contracts) == 2
+        current_contract = next(item for item in contracts if item["status"] == "active")
+        previous_contract = next(item for item in contracts if item["status"] == "ended")
+        assert current_contract["recurring_series_id"] == salary["id"]
+        assert current_contract["payment_period_months"] == 12
+        assert previous_contract["recurring_series_id"] is None
+        assert previous_contract["end_date"] == "2021-08-31"
+
+        payslips = client.get("/api/work/payslips").json()
+        assert len(payslips) == 6
+        assert payslips[0]["period"] == "2026-09"
+        assert payslips[0]["net_after_tax"] == salary["amount"]
+        assert len(payslips[0]["attachments"]) == 1
+
+        work_summary = client.get("/api/work/summary").json()
+        assert work_summary["active_contracts_count"] == 1
+        assert work_summary["latest_net_after_tax"] == salary["amount"]
 
         documents = client.get("/api/documents").json()
-        assert documents["stats"]["total_documents"] == 6
+        assert documents["stats"]["total_documents"] == 7
         assert documents["stats"]["missing_resources"] > 12
         assert {item["kind"] for item in documents["documents"]} == {
             "snapshot",
             "recurring",
             "debt",
             "real_estate",
+            "payslip",
         }
         assert any(
             item["original_name"] == "bulletin-salaire-demo.txt"
             for item in documents["documents"]
         )
-        assert len(documents["kinds"]) == 4
+        assert any(
+            item["kind"] == "payslip"
+            and item["original_name"] == "bulletin-paie-2026-09-demo.txt"
+            and item["reference"] == "2026-09"
+            for item in documents["documents"]
+        )
+        assert len(documents["kinds"]) == 5
 
         overview = client.get("/api/overview").json()
         assert float(overview["income_current_month"]) > 0
@@ -122,6 +153,15 @@ def test_seed_demo_attachments_are_downloadable(tmp_path, monkeypatch):
             f"{attachments[0]['id']}/download"
         ).status_code == 200
 
+        payslip_document = next(
+            document
+            for document in client.get("/api/documents").json()["documents"]
+            if document["kind"] == "payslip"
+        )
+        payslip_download = client.get(payslip_document["download_url"])
+        assert payslip_download.status_code == 200
+        assert b"entierement synthetique" in payslip_download.content
+
 
 def test_seed_demo_refuses_overwrite_and_reset_reseeds(tmp_path, monkeypatch):
     _, seed = _load_seed(tmp_path, monkeypatch)
@@ -129,7 +169,7 @@ def test_seed_demo_refuses_overwrite_and_reset_reseeds(tmp_path, monkeypatch):
     old_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(old_files) == 7
+    assert len(old_files) == 8
     with pytest.raises(seed.SeedError):
         asyncio.run(seed.seed_demo())
 
@@ -138,7 +178,7 @@ def test_seed_demo_refuses_overwrite_and_reset_reseeds(tmp_path, monkeypatch):
     new_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(new_files) == 7
+    assert len(new_files) == 8
 
 
 def test_seed_demo_refuses_default_data_dir(tmp_path, monkeypatch):

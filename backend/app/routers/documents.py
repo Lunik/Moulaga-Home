@@ -15,10 +15,13 @@ from ..models import (
     BalanceSnapshotAttachment,
     Debt,
     DebtAttachment,
+    PaySlip,
+    PaySlipAttachment,
     RealEstateAsset,
     RealEstateAttachment,
     RecurringSeries,
     RecurringSeriesAttachment,
+    WorkContract,
 )
 from ..schemas import (
     DocumentCenterRead,
@@ -36,6 +39,7 @@ KIND_LABELS: dict[DocumentKind, str] = {
     "recurring": "Récurrents",
     "debt": "Dettes",
     "real_estate": "Biens immobiliers",
+    "payslip": "Fiches de paie",
 }
 
 
@@ -169,6 +173,39 @@ async def document_center(
             )
         )
 
+    payslip_attachments = (
+        await session.execute(
+            select(PaySlipAttachment, PaySlip, WorkContract)
+            .join(PaySlip, PaySlip.id == PaySlipAttachment.payslip_id)
+            .outerjoin(WorkContract, WorkContract.id == PaySlip.contract_id)
+        )
+    ).all()
+    for attachment, payslip, contract in payslip_attachments:
+        covered_keys.add(("payslip", payslip.id))
+        documents.append(
+            DocumentRead(
+                id=attachment.id,
+                kind="payslip",
+                resource_id=payslip.id,
+                account_id=None,
+                resource_label=f"Bulletin de paie {payslip.period}",
+                resource_context=(
+                    f"{contract.employer} · {contract.position}"
+                    if contract
+                    else "Fiche de paie sans contrat associé"
+                ),
+                reference=payslip.period,
+                original_name=attachment.original_name,
+                content_type=attachment.content_type,
+                size=attachment.size,
+                created_at=attachment.created_at,
+                download_url=(
+                    f"/api/work/payslips/{payslip.id}/attachments/"
+                    f"{attachment.id}/download"
+                ),
+            )
+        )
+
     snapshots = (
         await session.execute(
             select(BalanceSnapshot, Account)
@@ -246,6 +283,30 @@ async def document_center(
                 label=asset.name,
                 context=asset.address or "Patrimoine immobilier",
                 reference=asset.acquired_on.isoformat() if asset.acquired_on else None,
+                can_upload=True,
+            )
+        )
+
+    payslips = (
+        await session.execute(
+            select(PaySlip, WorkContract)
+            .outerjoin(WorkContract, WorkContract.id == PaySlip.contract_id)
+            .order_by(PaySlip.period.desc(), PaySlip.id.desc())
+        )
+    ).all()
+    for payslip, contract in payslips:
+        resources.append(
+            DocumentResourceRead(
+                kind="payslip",
+                resource_id=payslip.id,
+                account_id=None,
+                label=f"Bulletin de paie {payslip.period}",
+                context=(
+                    f"{contract.employer} · {contract.position}"
+                    if contract
+                    else "Fiche de paie sans contrat associé"
+                ),
+                reference=payslip.period,
                 can_upload=True,
             )
         )
