@@ -703,7 +703,7 @@ class RealEstateAttachmentRead(BaseModel):
     size: int
 
 
-DocumentKind = Literal["snapshot", "recurring", "debt", "real_estate"]
+DocumentKind = Literal["snapshot", "recurring", "debt", "real_estate", "payslip"]
 
 
 class DocumentRead(BaseModel):

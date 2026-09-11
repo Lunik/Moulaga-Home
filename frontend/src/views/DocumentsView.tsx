@@ -48,6 +48,7 @@ const kindMeta: Record<DocumentKind, {
   recurring: { label: 'Récurrents', singular: 'Récurrent', icon: 'recurring' },
   debt: { label: 'Dettes', singular: 'Dette', icon: 'debt' },
   real_estate: { label: 'Biens immobiliers', singular: 'Bien immobilier', icon: 'home' },
+  payslip: { label: 'Fiches de paie', singular: 'Fiche de paie', icon: 'receipt' },
 }
 
 export function DocumentsView({
@@ -117,7 +118,7 @@ function DocumentsOverview({
             <p className="eyebrow">Centre documentaire local</p>
             <h2>Vos justificatifs, reliés à vos finances</h2>
             <p>
-              Retrouvez les pièces jointes de vos relevés, revenus, contrats,
+              Retrouvez les pièces jointes de vos relevés, revenus, fiches de paie,
               dettes et biens sans dupliquer les fichiers.
             </p>
           </div>
@@ -469,12 +470,16 @@ function resourceOwner(resource: DocumentResource): AttachmentOwner | null {
       return { kind: 'debt', debtId: resource.resource_id }
     case 'real_estate':
       return { kind: 'real-estate', assetId: resource.resource_id }
+    case 'payslip':
+      return { kind: 'payslip', payslipId: resource.resource_id }
   }
 }
 
 function formatReference(kind: DocumentKind, reference: string | null): string {
   if (!reference) return 'Sans date'
-  return kind === 'snapshot' ? formatMonth(reference) : formatDate(reference)
+  return kind === 'snapshot' || kind === 'payslip'
+    ? formatMonth(reference)
+    : formatDate(reference)
 }
 
 function percentage(value: number, total: number): number {

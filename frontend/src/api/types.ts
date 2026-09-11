@@ -79,7 +79,7 @@ export interface StoredAttachment {
   size: number
 }
 
-export type DocumentKind = 'snapshot' | 'recurring' | 'debt' | 'real_estate'
+export type DocumentKind = 'snapshot' | 'recurring' | 'debt' | 'real_estate' | 'payslip'
 
 export interface DocumentItem {
   id: number

@@ -81,10 +81,35 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
         att = res_att.json()
         att_id = att["id"]
 
-        # Download attachment
+        attachments = client.get(
+            f"/api/work/payslips/{payslip_id}/attachments"
+        ).json()
+        assert [item["id"] for item in attachments] == [att_id]
+
+        # Download attachment from both the Work view and the document center route
         res_dl = client.get(f"/api/work/attachments/{att_id}")
         assert res_dl.status_code == 200
         assert res_dl.content == file_payload
+        nested_download = client.get(
+            f"/api/work/payslips/{payslip_id}/attachments/{att_id}/download"
+        )
+        assert nested_download.status_code == 200
+        assert nested_download.content == file_payload
+
+        documents = client.get("/api/documents").json()
+        assert documents["stats"] == {
+            "total_documents": 1,
+            "total_size": len(file_payload),
+            "total_resources": 1,
+            "covered_resources": 1,
+            "missing_resources": 0,
+        }
+        assert documents["documents"][0]["kind"] == "payslip"
+        assert documents["documents"][0]["resource_id"] == payslip_id
+        assert documents["documents"][0]["reference"] == "2026-09"
+        assert documents["documents"][0]["download_url"].endswith(
+            f"/work/payslips/{payslip_id}/attachments/{att_id}/download"
+        )
 
         # Get pension profile (default created)
         pension = client.get("/api/work/pension").json()
@@ -105,8 +130,11 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
         assert res_p_up.json()["estimated_monthly_pension"] == "2600.00"
 
         # Delete attachment
-        del_att = client.delete(f"/api/work/attachments/{att_id}")
+        del_att = client.delete(
+            f"/api/work/payslips/{payslip_id}/attachments/{att_id}"
+        )
         assert del_att.status_code == 204
+        assert client.get("/api/documents").json()["stats"]["missing_resources"] == 1
 
         # Delete payslip
         del_slip = client.delete(f"/api/work/payslips/{payslip_id}")

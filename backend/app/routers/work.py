@@ -287,6 +287,89 @@ async def upload_payslip_attachment(
     return att
 
 
+@router.get(
+    "/payslips/{payslip_id}/attachments",
+    response_model=list[PaySlipAttachmentRead],
+)
+async def list_payslip_attachments(
+    payslip_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[PaySlipAttachment]:
+    if await session.get(PaySlip, payslip_id) is None:
+        raise HTTPException(status_code=404, detail="Fiche de paie non trouvee")
+    return list(
+        (
+            await session.scalars(
+                select(PaySlipAttachment)
+                .where(PaySlipAttachment.payslip_id == payslip_id)
+                .order_by(PaySlipAttachment.created_at.desc(), PaySlipAttachment.id.desc())
+            )
+        ).all()
+    )
+
+
+async def _require_payslip_attachment(
+    session: AsyncSession,
+    payslip_id: int,
+    attachment_id: int,
+) -> PaySlipAttachment:
+    attachment = (
+        await session.execute(
+            select(PaySlipAttachment).where(
+                PaySlipAttachment.id == attachment_id,
+                PaySlipAttachment.payslip_id == payslip_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Piece jointe non trouvee")
+    return attachment
+
+
+def _attachment_response(attachment: PaySlipAttachment) -> FileResponse:
+    file_path = attachment_path(attachment.stored_path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Fichier introuvable")
+    return FileResponse(
+        path=file_path,
+        filename=attachment.original_name,
+        media_type=attachment.content_type or "application/octet-stream",
+    )
+
+
+@router.get("/payslips/{payslip_id}/attachments/{attachment_id}/download")
+async def download_payslip_attachment(
+    payslip_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    attachment = await _require_payslip_attachment(
+        session,
+        payslip_id,
+        attachment_id,
+    )
+    return _attachment_response(attachment)
+
+
+@router.delete(
+    "/payslips/{payslip_id}/attachments/{attachment_id}",
+    status_code=204,
+)
+async def delete_nested_payslip_attachment(
+    payslip_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    attachment = await _require_payslip_attachment(
+        session,
+        payslip_id,
+        attachment_id,
+    )
+    remove_attachment(attachment.stored_path)
+    await session.delete(attachment)
+    await session.commit()
+
+
 @router.get("/attachments/{attachment_id}")
 async def get_payslip_attachment(
     attachment_id: int,
@@ -295,16 +378,7 @@ async def get_payslip_attachment(
     att = await session.get(PaySlipAttachment, attachment_id)
     if not att:
         raise HTTPException(status_code=404, detail="Piece jointe non trouvee")
-
-    file_path = attachment_path(att.stored_path)
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Fichier introuvable")
-
-    return FileResponse(
-        path=file_path,
-        filename=att.original_name,
-        media_type=att.content_type or "application/octet-stream",
-    )
+    return _attachment_response(att)
 
 
 @router.delete("/attachments/{attachment_id}", status_code=204)
