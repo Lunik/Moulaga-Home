@@ -79,6 +79,55 @@ export interface StoredAttachment {
   size: number
 }
 
+export type DocumentKind = 'snapshot' | 'recurring' | 'debt' | 'real_estate'
+
+export interface DocumentItem {
+  id: number
+  kind: DocumentKind
+  resource_id: number
+  account_id: number | null
+  resource_label: string
+  resource_context: string
+  reference: string | null
+  original_name: string
+  content_type: string | null
+  size: number
+  created_at: string
+  download_url: string
+}
+
+export interface DocumentResource {
+  kind: DocumentKind
+  resource_id: number
+  account_id: number | null
+  label: string
+  context: string
+  reference: string | null
+  can_upload: boolean
+}
+
+export interface DocumentKindSummary {
+  kind: DocumentKind
+  label: string
+  total_resources: number
+  covered_resources: number
+  missing_resources: number
+  document_count: number
+}
+
+export interface DocumentCenter {
+  stats: {
+    total_documents: number
+    total_size: number
+    total_resources: number
+    covered_resources: number
+    missing_resources: number
+  }
+  kinds: DocumentKindSummary[]
+  documents: DocumentItem[]
+  resources_without_documents: DocumentResource[]
+}
+
 export interface AccountSnapshotAttachment extends StoredAttachment {
   snapshot_id: number
 }

@@ -62,6 +62,55 @@ def test_statements_are_authoritative_for_accounts_and_net_worth(client):
     assert snapshots[0]["balance"] == "350.00"
 
 
+def test_document_center_indexes_missing_resources_and_uploaded_files(client):
+    account_id = _account_id(client)
+    statement = client.put(
+        f"/api/accounts/{account_id}/snapshots",
+        json={"period": "2026-08", "balance": "325.50"},
+    ).json()
+
+    initial = client.get("/api/documents")
+    assert initial.status_code == 200
+    assert initial.json()["stats"] == {
+        "total_documents": 0,
+        "total_size": 0,
+        "total_resources": 1,
+        "covered_resources": 0,
+        "missing_resources": 1,
+    }
+    assert initial.json()["resources_without_documents"][0] == {
+        "kind": "snapshot",
+        "resource_id": statement["id"],
+        "account_id": account_id,
+        "label": "Compte courant",
+        "context": "Relevé de compte",
+        "reference": "2026-08",
+        "can_upload": True,
+    }
+
+    upload = client.post(
+        f"/api/accounts/{account_id}/snapshots/{statement['id']}/attachments",
+        files={
+            "file": (
+                "releve-synthetique.txt",
+                b"Releve bancaire entierement synthetique.",
+                "text/plain",
+            )
+        },
+    )
+    assert upload.status_code == 201
+
+    indexed = client.get("/api/documents").json()
+    assert indexed["stats"]["covered_resources"] == 1
+    assert indexed["stats"]["missing_resources"] == 0
+    assert indexed["resources_without_documents"] == []
+    assert indexed["documents"][0]["original_name"] == "releve-synthetique.txt"
+    assert indexed["documents"][0]["download_url"].endswith(
+        f"/attachments/{upload.json()['id']}/download"
+    )
+    assert client.get(indexed["documents"][0]["download_url"]).status_code == 200
+
+
 def test_statement_import_is_atomic_and_upserts(client):
     account_id = _account_id(client)
     response = client.post(

@@ -7,6 +7,7 @@ export type BudgetTab =
   | 'envelopes'
 
 export type WealthTab = 'overview' | 'holdings' | 'real-estate' | 'debts'
+export type DocumentsTab = 'overview' | 'all' | 'missing'
 
 export type Route =
   | { name: 'dashboard' }
@@ -14,6 +15,7 @@ export type Route =
   | { name: 'account'; accountId: number }
   | { name: 'budget'; tab: BudgetTab; focusId?: number }
   | { name: 'wealth'; tab: WealthTab; focusId?: number }
+  | { name: 'documents'; tab: DocumentsTab }
   | { name: 'family' }
   | { name: 'settings' }
 
@@ -28,6 +30,7 @@ const legacyBudgetTabs: Record<string, BudgetTab> = {
   manage: 'envelopes',
 }
 const wealthTabs = new Set<WealthTab>(['overview', 'holdings', 'real-estate', 'debts'])
+const documentsTabs = new Set<DocumentsTab>(['overview', 'all', 'missing'])
 
 export function useRoute(): [Route, (route: Route) => void] {
   const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash))
@@ -65,6 +68,8 @@ export function routeHash(route: Route): string {
       return `#/budget/${route.tab}${route.focusId ? `/${route.focusId}` : ''}`
     case 'wealth':
       return `#/wealth/${route.tab}${route.focusId ? `/${route.focusId}` : ''}`
+    case 'documents':
+      return `#/documents/${route.tab}`
   }
 }
 
@@ -90,6 +95,10 @@ function parseHash(hash: string): Route {
       return focusId ? { name: 'wealth', tab, focusId } : { name: 'wealth', tab }
     }
     return { name: 'wealth', tab: 'overview' }
+  }
+  if (parts[0] === 'documents') {
+    const tab = parts[1] as DocumentsTab
+    return { name: 'documents', tab: documentsTabs.has(tab) ? tab : 'overview' }
   }
   if (parts[0] === 'family') return { name: 'family' }
   if (parts[0] === 'settings') return { name: 'settings' }

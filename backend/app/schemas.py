@@ -6,8 +6,9 @@ layer, and every request model performs strict server-side validation.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -692,6 +693,58 @@ class RealEstateAttachmentRead(BaseModel):
     storage_path: str
     content_type: str | None
     size: int
+
+
+DocumentKind = Literal["snapshot", "recurring", "debt", "real_estate"]
+
+
+class DocumentRead(BaseModel):
+    id: int
+    kind: DocumentKind
+    resource_id: int
+    account_id: int | None
+    resource_label: str
+    resource_context: str
+    reference: str | None
+    original_name: str
+    content_type: str | None
+    size: int
+    created_at: datetime
+    download_url: str
+
+
+class DocumentResourceRead(BaseModel):
+    kind: DocumentKind
+    resource_id: int
+    account_id: int | None
+    label: str
+    context: str
+    reference: str | None
+    can_upload: bool
+
+
+class DocumentKindSummary(BaseModel):
+    kind: DocumentKind
+    label: str
+    total_resources: int
+    covered_resources: int
+    missing_resources: int
+    document_count: int
+
+
+class DocumentCenterStats(BaseModel):
+    total_documents: int
+    total_size: int
+    total_resources: int
+    covered_resources: int
+    missing_resources: int
+
+
+class DocumentCenterRead(BaseModel):
+    stats: DocumentCenterStats
+    kinds: list[DocumentKindSummary]
+    documents: list[DocumentRead]
+    resources_without_documents: list[DocumentResourceRead]
 
 
 class HoldingCreate(BaseModel):

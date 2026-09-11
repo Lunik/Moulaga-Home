@@ -24,6 +24,7 @@ def load_app(tmp_path, monkeypatch):
     import app.routers.budget
     import app.routers.budgets
     import app.routers.categories
+    import app.routers.documents
     import app.routers.household
     import app.routers.preferences
     import app.routers.recurring
@@ -37,6 +38,7 @@ def load_app(tmp_path, monkeypatch):
         app.routers.budget,
         app.routers.accounts,
         app.routers.categories,
+        app.routers.documents,
         app.routers.preferences,
         app.routers.budgets,
         app.routers.recurring,

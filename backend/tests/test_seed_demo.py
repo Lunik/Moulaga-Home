@@ -32,7 +32,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.holdings == 3
     assert result.households == 1
     assert result.snapshot_attachments == 2
-    assert result.recurring_attachments == 1
+    assert result.recurring_attachments == 2
 
     with TestClient(main.create_app()) as client:
         accounts = client.get("/api/accounts").json()
@@ -46,6 +46,21 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert len(recurring) == 14
         assert any(item["amount_type"] == "variable" for item in recurring)
         assert any(item["recurring_type"] == "salary" for item in recurring)
+
+        documents = client.get("/api/documents").json()
+        assert documents["stats"]["total_documents"] == 6
+        assert documents["stats"]["missing_resources"] > 12
+        assert {item["kind"] for item in documents["documents"]} == {
+            "snapshot",
+            "recurring",
+            "debt",
+            "real_estate",
+        }
+        assert any(
+            item["original_name"] == "bulletin-salaire-demo.txt"
+            for item in documents["documents"]
+        )
+        assert len(documents["kinds"]) == 4
 
         overview = client.get("/api/overview").json()
         assert float(overview["income_current_month"]) > 0
@@ -114,7 +129,7 @@ def test_seed_demo_refuses_overwrite_and_reset_reseeds(tmp_path, monkeypatch):
     old_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(old_files) == 6
+    assert len(old_files) == 7
     with pytest.raises(seed.SeedError):
         asyncio.run(seed.seed_demo())
 
@@ -123,7 +138,7 @@ def test_seed_demo_refuses_overwrite_and_reset_reseeds(tmp_path, monkeypatch):
     new_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(new_files) == 6
+    assert len(new_files) == 7
 
 
 def test_seed_demo_refuses_default_data_dir(tmp_path, monkeypatch):
