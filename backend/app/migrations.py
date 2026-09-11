@@ -35,7 +35,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 OBSOLETE_TABLES = frozenset(
     {
         "categorization_rules",
@@ -47,6 +47,9 @@ OBSOLETE_TABLES = frozenset(
         "transactions",
     }
 )
+OBSOLETE_COLUMNS: dict[str, frozenset[str]] = {
+    "recurring_series": frozenset({"confidence", "match_key"}),
+}
 
 # Columns that may be missing on databases created before this schema version.
 # Values are the SQLite column definitions used by ``ALTER TABLE ADD COLUMN``.
@@ -131,6 +134,46 @@ def _missing_tables(conn: Connection) -> set[str]:
 
 def _existing_obsolete_tables(conn: Connection) -> set[str]:
     return {table for table in OBSOLETE_TABLES if _table_exists(conn, table)}
+
+
+def _existing_obsolete_columns(conn: Connection) -> dict[str, set[str]]:
+    obsolete: dict[str, set[str]] = {}
+    for table, columns in OBSOLETE_COLUMNS.items():
+        if not _table_exists(conn, table):
+            continue
+        present = _existing_columns(conn, table)
+        found = present.intersection(columns)
+        if found:
+            obsolete[table] = found
+    return obsolete
+
+
+def _quote_identifier(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _drop_obsolete_columns(
+    conn: Connection, obsolete_columns: dict[str, set[str]]
+) -> None:
+    for table, columns in obsolete_columns.items():
+        indexes = conn.execute(text(f"PRAGMA index_list({_quote_identifier(table)})")).all()
+        for index in indexes:
+            index_name = index[1]
+            indexed_columns = {
+                row[2]
+                for row in conn.execute(
+                    text(f"PRAGMA index_info({_quote_identifier(index_name)})")
+                ).all()
+            }
+            if indexed_columns.intersection(columns):
+                conn.execute(text(f"DROP INDEX {_quote_identifier(index_name)}"))
+        for column in sorted(columns):
+            conn.execute(
+                text(
+                    f"ALTER TABLE {_quote_identifier(table)} "
+                    f"DROP COLUMN {_quote_identifier(column)}"
+                )
+            )
 
 
 def _requires_balance_snapshot_backfill(conn: Connection, version: int) -> bool:
@@ -319,6 +362,7 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         pending = await conn.run_sync(_pending_columns)
         missing_tables = await conn.run_sync(_missing_tables)
         obsolete_tables = await conn.run_sync(_existing_obsolete_tables)
+        obsolete_columns = await conn.run_sync(_existing_obsolete_columns)
         requires_real_estate_rebuild = await conn.run_sync(_real_estate_requires_rebuild)
         requires_balance_backfill = await conn.run_sync(
             _requires_balance_snapshot_backfill,
@@ -330,6 +374,7 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         pending
         or missing_tables
         or obsolete_tables
+        or obsolete_columns
         or requires_real_estate_rebuild
         or requires_balance_backfill
     ) and pre_existing and db_path is not None:
@@ -342,6 +387,7 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
             await conn.run_sync(_rebuild_real_estate_assets)
         if requires_balance_backfill:
             await conn.run_sync(_backfill_current_balance_snapshots)
+        await conn.run_sync(_drop_obsolete_columns, obsolete_columns)
         for table in sorted(obsolete_tables):
             await conn.execute(text(f"DROP TABLE {table}"))
         await conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
@@ -369,6 +415,7 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         pending
         or missing_tables
         or obsolete_tables
+        or obsolete_columns
         or requires_real_estate_rebuild
         or requires_balance_backfill
     ):
