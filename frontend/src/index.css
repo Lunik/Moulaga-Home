@@ -5285,6 +5285,12 @@ html[data-theme="light"] .status-badge {
   text-align: right;
 }
 
+.document-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .document-list-meta > span {
   font-size: 0.78rem;
 }
@@ -5390,7 +5396,7 @@ html[data-theme="light"] .document-file-icon {
     text-align: left;
   }
 
-  .document-list article > a {
+  .document-list-actions {
     grid-column: 3;
     grid-row: 1 / span 2;
   }
@@ -5420,11 +5426,15 @@ html[data-theme="light"] .document-file-icon {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .document-list article > a,
+  .document-list-actions,
   .missing-resource-list article > :last-child {
     width: 100%;
     grid-column: 1 / -1;
     grid-row: auto;
+  }
+
+  .document-list-actions > * {
+    flex: 1;
   }
 
   .document-list-meta {

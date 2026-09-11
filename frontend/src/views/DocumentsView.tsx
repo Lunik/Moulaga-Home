@@ -92,7 +92,9 @@ export function DocumentsView({
       {center.data && tab === 'overview' && (
         <DocumentsOverview center={center.data} navigate={navigate} />
       )}
-      {center.data && tab === 'all' && <DocumentsLibrary center={center.data} />}
+      {center.data && tab === 'all' && (
+        <DocumentsLibrary center={center.data} onRefresh={() => center.refetch()} />
+      )}
       {center.data && tab === 'missing' && (
         <MissingResources center={center.data} onRefresh={() => center.refetch()} />
       )}
@@ -222,9 +224,16 @@ function DocumentsOverview({
   )
 }
 
-function DocumentsLibrary({ center }: { center: DocumentCenter }) {
+function DocumentsLibrary({
+  center,
+  onRefresh,
+}: {
+  center: DocumentCenter
+  onRefresh: () => Promise<unknown>
+}) {
   const [search, setSearch] = useState('')
   const [kind, setKind] = useState<DocumentKind | typeof ALL_KINDS>(ALL_KINDS)
+  const [selectedPayslip, setSelectedPayslip] = useState<DocumentItem | null>(null)
   const documents = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase('fr-FR')
     return center.documents.filter((document) => (
@@ -267,9 +276,20 @@ function DocumentsLibrary({ center }: { center: DocumentCenter }) {
                   <span>{formatReference(document.kind, document.reference)}</span>
                   <small>{formatFileSize(document.size)} · ajouté le {formatDate(document.created_at.slice(0, 10))}</small>
                 </div>
-                <a className="secondary-button small-button" href={document.download_url}>
-                  Télécharger
-                </a>
+                <div className="document-list-actions">
+                  <a className="secondary-button small-button" href={document.download_url}>
+                    Télécharger
+                  </a>
+                  {document.kind === 'payslip' && (
+                    <button
+                      className="secondary-button small-button"
+                      type="button"
+                      onClick={() => setSelectedPayslip(document)}
+                    >
+                      <Icon name="attachment" /> Gérer
+                    </button>
+                  )}
+                </div>
               </article>
             ))}
           </div>
@@ -281,6 +301,20 @@ function DocumentsLibrary({ center }: { center: DocumentCenter }) {
           />
         )}
       </Panel>
+
+      {selectedPayslip?.kind === 'payslip' && (
+        <Modal
+          title={`Gérer les documents de ${selectedPayslip.resource_label}`}
+          description={`Fiche de paie · ${selectedPayslip.resource_context}`}
+          onClose={() => setSelectedPayslip(null)}
+        >
+          <AttachmentManager
+            owner={{ kind: 'payslip', payslipId: selectedPayslip.resource_id }}
+            readOnly={false}
+            onChanged={onRefresh}
+          />
+        </Modal>
+      )}
     </>
   )
 }
