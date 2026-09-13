@@ -33,6 +33,8 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.households == 1
     assert result.snapshot_attachments == 2
     assert result.recurring_attachments == 2
+    assert result.debt_attachments == 1
+    assert result.real_estate_attachments == 1
     assert result.contracts == 2
     assert result.payslips == 6
     assert result.payslip_attachments == 1

@@ -1,8 +1,12 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiDelete, apiGet, apiPatch, apiPost, queryString } from '../api/client'
-import { AttachmentManager } from '../AttachmentManager'
+import {
+  AttachmentManager,
+  AttachmentPicker,
+  uploadOwnerAttachment,
+} from '../AttachmentManager'
 import { RecurringCashflowSankey } from '../RecurringCashflowSankey'
 import type {
   Account,
@@ -329,6 +333,7 @@ function RecurringPanel({
       queryClient.invalidateQueries({ queryKey: ['budget-spending'] }),
       queryClient.invalidateQueries({ queryKey: ['overview'] }),
       queryClient.invalidateQueries({ queryKey: ['monthly-stats'] }),
+      queryClient.invalidateQueries({ queryKey: ['documents'] }),
       onRefresh(),
     ])
   }
@@ -544,8 +549,10 @@ function RecurringSeriesModal({
   )
   const [customType, setCustomType] = useState(item?.custom_type ?? '')
   const [insuranceRate, setInsuranceRate] = useState(item?.credit_insurance_rate ?? '')
+  const [attachment, setAttachment] = useState<File | null>(null)
+  const createdItemId = useRef<number | null>(null)
   const mutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const payload = {
         label,
         account_id: Number(accountId),
@@ -561,9 +568,15 @@ function RecurringSeriesModal({
           ? insuranceRate || null
           : null,
       }
-      return item
-        ? apiPatch<RecurringSeries>(`/recurring/${item.id}`, payload)
-        : apiPost<RecurringSeries>('/recurring', payload)
+      const existingId = item?.id ?? createdItemId.current
+      const savedItem = await (existingId
+        ? apiPatch<RecurringSeries>(`/recurring/${existingId}`, payload)
+        : apiPost<RecurringSeries>('/recurring', payload))
+      createdItemId.current = savedItem.id
+      if (!item && attachment) {
+        await uploadOwnerAttachment({ kind: 'recurring', seriesId: savedItem.id }, attachment)
+      }
+      return savedItem
     },
     onSuccess: onSaved,
   })
@@ -696,6 +709,20 @@ function RecurringSeriesModal({
           />
           <span className="toggle-visual" aria-hidden="true"><Icon name="check" /></span>
         </label>
+        <div className="modal-attachment-field">
+          {item ? (
+            <AttachmentManager
+              owner={{ kind: 'recurring', seriesId: item.id }}
+              readOnly={false}
+            />
+          ) : (
+            <AttachmentPicker
+              file={attachment}
+              onChange={setAttachment}
+              disabled={mutation.isPending}
+            />
+          )}
+        </div>
         {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
     </Modal>

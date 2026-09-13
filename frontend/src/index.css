@@ -1792,6 +1792,87 @@ textarea:focus-visible {
   text-align: left;
 }
 
+.modal-attachment-field {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--surface-soft);
+}
+
+.modal-attachment-field .attachment-manager {
+  padding: 0.9rem;
+}
+
+.attachment-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem;
+}
+
+.attachment-picker-icon {
+  display: inline-grid;
+  width: 2.4rem;
+  height: 2.4rem;
+  place-items: center;
+  border-radius: 0.7rem;
+  background: rgb(49 74 200 / 16%);
+  color: #91a0ff;
+}
+
+.attachment-picker > span:nth-child(2) strong,
+.attachment-picker > span:nth-child(2) small,
+.attachment-picker-file strong,
+.attachment-picker-file small {
+  display: block;
+}
+
+.attachment-picker > span:nth-child(2) small,
+.attachment-picker-file small {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.attachment-picker > label {
+  cursor: pointer;
+}
+
+.attachment-picker > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.attachment-picker-file {
+  display: grid;
+  min-width: 0;
+  grid-column: 2 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.5rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+}
+
+.attachment-picker-file strong,
+.attachment-picker-file small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-picker-file small {
+  grid-column: 1;
+}
+
+.attachment-picker-file button {
+  grid-row: 1 / 3;
+  grid-column: 2;
+}
+
 .attachment-heading,
 .attachment-upload,
 .attachment-list > div {
@@ -4967,6 +5048,15 @@ html[data-theme="light"] .status-badge {
 
   .transaction-create-attachment {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .attachment-picker {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .attachment-picker > label,
+  .attachment-picker-file {
+    grid-column: 1 / -1;
   }
 
   .transaction-create-attachment > label {

@@ -16,6 +16,11 @@ import {
 } from 'recharts'
 
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiUpload } from '../api/client'
+import {
+  AttachmentManager,
+  AttachmentPicker,
+  uploadOwnerAttachment,
+} from '../AttachmentManager'
 import type {
   PaySlip,
   PensionProfile,
@@ -117,6 +122,7 @@ export function WorkView({
       queryClient.invalidateQueries({ queryKey: ['recurring-series'] }),
       queryClient.invalidateQueries({ queryKey: ['work-payslips'] }),
       queryClient.invalidateQueries({ queryKey: ['work-pension'] }),
+      queryClient.invalidateQueries({ queryKey: ['documents'] }),
     ])
   }
 
@@ -775,10 +781,24 @@ function PaySlipFormModal({
   onSuccess: () => void
 }) {
   const [error, setError] = useState<string | null>(null)
+  const [attachment, setAttachment] = useState<File | null>(null)
+  const createdPayslipId = useRef<number | null>(null)
   const formId = payslip ? `work-payslip-edit-${payslip.id}` : 'work-payslip-create'
   const mutation = useMutation({
-    mutationFn: (data: Partial<PaySlip>) =>
-      payslip ? apiPatch(`/work/payslips/${payslip.id}`, data) : apiPost('/work/payslips', data),
+    mutationFn: async (data: Partial<PaySlip>) => {
+      const existingId = payslip?.id ?? createdPayslipId.current
+      const savedPayslip = await (existingId
+        ? apiPatch<PaySlip>(`/work/payslips/${existingId}`, data)
+        : apiPost<PaySlip>('/work/payslips', data))
+      createdPayslipId.current = savedPayslip.id
+      if (!payslip && attachment) {
+        await uploadOwnerAttachment(
+          { kind: 'payslip', payslipId: savedPayslip.id },
+          attachment,
+        )
+      }
+      return savedPayslip
+    },
     onSuccess,
     onError: (err) => setError(errorMessage(err)),
   })
@@ -886,6 +906,20 @@ function PaySlipFormModal({
           <FormTextarea name="notes" defaultValue={payslip?.notes ?? ''} placeholder="Notes ou faits marquants du mois…" rows={3} />
         </Field>
 
+        <div className="modal-attachment-field work-modal-wide">
+          {payslip ? (
+            <AttachmentManager
+              owner={{ kind: 'payslip', payslipId: payslip.id }}
+              readOnly={false}
+            />
+          ) : (
+            <AttachmentPicker
+              file={attachment}
+              onChange={setAttachment}
+              disabled={mutation.isPending}
+            />
+          )}
+        </div>
       </form>
     </Modal>
   )

@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react'
+import { useId, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiDelete, apiGet, apiUpload } from './api/client'
@@ -24,33 +24,91 @@ function attachmentConfig(owner: AttachmentOwner): AttachmentConfig {
       return {
         resourcePath: `/accounts/${owner.accountId}/snapshots/${owner.snapshotId}`,
         attachmentQueryKey: ['snapshot-attachments', owner.accountId, owner.snapshotId],
-        parentQueryKeys: [['account-snapshots', owner.accountId]],
+        parentQueryKeys: [['account-snapshots', owner.accountId], ['documents']],
       }
     case 'recurring':
       return {
         resourcePath: `/recurring/${owner.seriesId}`,
         attachmentQueryKey: ['recurring-attachments', owner.seriesId],
-        parentQueryKeys: [['recurring-series']],
+        parentQueryKeys: [['recurring-series'], ['documents']],
       }
     case 'debt':
       return {
         resourcePath: `/debts/${owner.debtId}`,
         attachmentQueryKey: ['debt-attachments', owner.debtId],
-        parentQueryKeys: [['debts']],
+        parentQueryKeys: [['debts'], ['documents']],
       }
     case 'real-estate':
       return {
         resourcePath: `/real-estate/${owner.assetId}`,
         attachmentQueryKey: ['real-estate-attachments', owner.assetId],
-        parentQueryKeys: [['real-estate']],
+        parentQueryKeys: [['real-estate'], ['documents']],
       }
     case 'payslip':
       return {
         resourcePath: `/work/payslips/${owner.payslipId}`,
         attachmentQueryKey: ['work-payslip-attachments', owner.payslipId],
-        parentQueryKeys: [['work-payslips']],
+        parentQueryKeys: [['work-payslips'], ['documents']],
       }
   }
+}
+
+export function uploadOwnerAttachment(owner: AttachmentOwner, file: File): Promise<StoredAttachment> {
+  const data = new FormData()
+  data.append('file', file)
+  return apiUpload<StoredAttachment>(`${attachmentConfig(owner).resourcePath}/attachments`, data)
+}
+
+export function AttachmentPicker({
+  file,
+  onChange,
+  disabled = false,
+}: {
+  file: File | null
+  onChange: (file: File | null) => void
+  disabled?: boolean
+}) {
+  const inputId = useId()
+  const [inputKey, setInputKey] = useState(0)
+  const clear = () => {
+    onChange(null)
+    setInputKey((current) => current + 1)
+  }
+
+  return (
+    <div className="attachment-picker">
+      <span className="attachment-picker-icon"><Icon name="attachment" /></span>
+      <span>
+        <strong>Pièce jointe</strong>
+        <small>Stockage local, 25 Mio maximum.</small>
+      </span>
+      <label className="secondary-button small-button" htmlFor={inputId}>
+        <Icon name="attachment" /> {file ? 'Remplacer' : 'Choisir un fichier'}
+      </label>
+      <input
+        key={inputKey}
+        id={inputId}
+        type="file"
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.files?.[0] ?? null)}
+      />
+      {file && (
+        <span className="attachment-picker-file">
+          <strong>{file.name}</strong>
+          <small>{formatFileSize(file.size)}</small>
+          <button
+            className="icon-action destructive-button"
+            type="button"
+            aria-label={`Retirer ${file.name}`}
+            disabled={disabled}
+            onClick={clear}
+          >
+            <Icon name="close" />
+          </button>
+        </span>
+      )}
+    </div>
+  )
 }
 
 export function AttachmentManager({
@@ -80,9 +138,7 @@ export function AttachmentManager({
   const upload = useMutation({
     mutationFn: () => {
       if (!file) throw new Error('Choisissez un fichier à joindre.')
-      const data = new FormData()
-      data.append('file', file)
-      return apiUpload<StoredAttachment>(`${resourcePath}/attachments`, data)
+      return uploadOwnerAttachment(owner, file)
     },
     onSuccess: async () => {
       setFile(null)
@@ -104,12 +160,8 @@ export function AttachmentManager({
           <small>Stockage local, 25 Mio maximum par fichier.</small>
         </span>
         {!readOnly && (
-          <form
+          <div
             className="attachment-upload"
-            onSubmit={(event: FormEvent) => {
-              event.preventDefault()
-              upload.mutate()
-            }}
           >
             <FormInput
               key={inputKey}
@@ -117,10 +169,15 @@ export function AttachmentManager({
               type="file"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             />
-            <button className="secondary-button small-button" type="submit" disabled={!file || upload.isPending}>
+            <button
+              className="secondary-button small-button"
+              type="button"
+              disabled={!file || upload.isPending}
+              onClick={() => upload.mutate()}
+            >
               <Icon name="attachment" />{upload.isPending ? 'Ajout…' : 'Joindre'}
             </button>
-          </form>
+          </div>
         )}
       </div>
       {attachments.isLoading ? (
