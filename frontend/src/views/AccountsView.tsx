@@ -22,7 +22,11 @@ import type {
   Holding,
 } from '../api/types'
 import { supportsHoldings } from '../accountCapabilities'
-import { AttachmentManager } from '../AttachmentManager'
+import {
+  AttachmentManager,
+  AttachmentPicker,
+  uploadOwnerAttachment,
+} from '../AttachmentManager'
 import {
   accountInstitutionLabel,
   institutionOptions,
@@ -505,6 +509,7 @@ export function AccountDetailView({
       queryClient.invalidateQueries({ queryKey: ['account', accountId] }),
       queryClient.invalidateQueries({ queryKey: ['account-snapshots', accountId] }),
       queryClient.invalidateQueries({ queryKey: ['holdings', 'account', accountId] }),
+      queryClient.invalidateQueries({ queryKey: ['documents'] }),
       onRefresh(),
     ])
   }
@@ -704,20 +709,14 @@ export function AccountDetailView({
       )}
 
       {showSnapshot && !readOnly && (
-        <Modal
-          title="Nouveau relevé"
-          description="Enregistrez le solde de clôture d'un mois."
+        <SnapshotForm
+          account={account.data}
           onClose={() => setShowSnapshot(false)}
-        >
-          <SnapshotForm
-            account={account.data}
-            onCancel={() => setShowSnapshot(false)}
-            onSaved={async () => {
-              await refreshDetail()
-              setShowSnapshot(false)
-            }}
-          />
-        </Modal>
+          onSaved={async () => {
+            await refreshDetail()
+            setShowSnapshot(false)
+          }}
+        />
       )}
 
       {showSnapshotImport && !readOnly && (
@@ -893,90 +892,110 @@ function SnapshotRow({
     mutationFn: () => apiDelete(`/accounts/${accountId}/snapshots/${snapshot.id}`),
     onSuccess: onSaved,
   })
-  if (editing) {
-    return (
-      <div className="statement-row editing">
-        <FormInput
-          aria-label="Période du relevé"
-          type="month"
-          value={period}
-          onChange={(event) => setPeriod(event.target.value)}
-          required
-        />
-        <FormInput
-          aria-label="Solde du relevé"
-          type="number"
-          step="0.01"
-          value={balance}
-          onChange={(event) => setBalance(event.target.value)}
-          required
-        />
-        <span className="row-actions">
-          <button
-            className="icon-action positive"
-            type="button"
-            aria-label="Enregistrer le relevé"
-            disabled={update.isPending}
-            onClick={() => update.mutate()}
-          >
-            <Icon name="check" />
-          </button>
-          <button className="icon-action" type="button" aria-label="Annuler" onClick={() => setEditing(false)}>
-            <Icon name="close" />
-          </button>
-        </span>
-        {update.error && <span className="form-error row-error">{errorMessage(update.error)}</span>}
-      </div>
-    )
-  }
   return (
-    <div className="statement-row">
-      <span>{snapshot.period}</span>
-      <strong>{money(snapshot.balance)}</strong>
-      {(!readOnly || snapshot.attachment_count > 0) && (
-        <span className="row-actions">
-          <button
-            className="icon-action attachment-button"
-            type="button"
-            aria-label={`Pièces jointes${snapshot.attachment_count > 0 ? ` (${snapshot.attachment_count})` : ''}`}
-            aria-expanded={showAttachments}
-            onClick={() => setShowAttachments((current) => !current)}
-          >
-            <Icon name="attachment" />
-            {snapshot.attachment_count > 0 && (
-              <span className="attachment-count-badge">{snapshot.attachment_count}</span>
-            )}
-          </button>
-          {!readOnly && (
+    <>
+      {editing && (
+        <Modal
+          title={`Modifier le relevé ${snapshot.period}`}
+          description="Mettez à jour le solde ou gérez les pièces jointes de ce relevé."
+          onClose={() => setEditing(false)}
+          actions={(
             <>
-              <button className="icon-action" type="button" aria-label="Modifier le relevé" onClick={() => setEditing(true)}>
-                <Icon name="edit" />
-              </button>
               <button
-                className="icon-action"
-                type="button"
-                aria-label="Supprimer le relevé"
-                disabled={remove.isPending}
-                onClick={() => {
-                  if (window.confirm(`Supprimer le relevé ${snapshot.period} ?`)) remove.mutate()
-                }}
+                className="primary-button"
+                type="submit"
+                form={`snapshot-edit-${snapshot.id}`}
+                disabled={update.isPending}
               >
-                <Icon name="trash" />
+                {update.isPending ? 'Enregistrement…' : 'Enregistrer'}
               </button>
+              <button className="text-button" type="button" onClick={() => setEditing(false)}>Annuler</button>
             </>
           )}
-        </span>
+        >
+          <form
+            className="modal-form"
+            id={`snapshot-edit-${snapshot.id}`}
+            onSubmit={(event) => {
+              event.preventDefault()
+              update.mutate()
+            }}
+          >
+            <Field label="Période">
+              <FormInput
+                type="month"
+                value={period}
+                onChange={(event) => setPeriod(event.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Solde">
+              <FormInput
+                type="number"
+                step="0.01"
+                value={balance}
+                onChange={(event) => setBalance(event.target.value)}
+                required
+              />
+            </Field>
+            <div className="modal-attachment-field">
+              <AttachmentManager
+                owner={{ kind: 'snapshot', accountId, snapshotId: snapshot.id }}
+                readOnly={false}
+              />
+            </div>
+            {update.error && <p className="form-error">{errorMessage(update.error)}</p>}
+          </form>
+        </Modal>
       )}
-      {showAttachments && (
-        <div className="snapshot-attachment-panel">
-          <AttachmentManager
-            owner={{ kind: 'snapshot', accountId, snapshotId: snapshot.id }}
-            readOnly={readOnly}
-          />
-        </div>
-      )}
-      {remove.error && <span className="form-error row-error">{errorMessage(remove.error)}</span>}
-    </div>
+      <div className="statement-row">
+        <span>{snapshot.period}</span>
+        <strong>{money(snapshot.balance)}</strong>
+        {(!readOnly || snapshot.attachment_count > 0) && (
+          <span className="row-actions">
+            <button
+              className="icon-action attachment-button"
+              type="button"
+              aria-label={`Pièces jointes${snapshot.attachment_count > 0 ? ` (${snapshot.attachment_count})` : ''}`}
+              aria-expanded={showAttachments}
+              onClick={() => setShowAttachments((current) => !current)}
+            >
+              <Icon name="attachment" />
+              {snapshot.attachment_count > 0 && (
+                <span className="attachment-count-badge">{snapshot.attachment_count}</span>
+              )}
+            </button>
+            {!readOnly && (
+              <>
+                <button className="icon-action" type="button" aria-label="Modifier le relevé" onClick={() => setEditing(true)}>
+                  <Icon name="edit" />
+                </button>
+                <button
+                  className="icon-action"
+                  type="button"
+                  aria-label="Supprimer le relevé"
+                  disabled={remove.isPending}
+                  onClick={() => {
+                    if (window.confirm(`Supprimer le relevé ${snapshot.period} ?`)) remove.mutate()
+                  }}
+                >
+                  <Icon name="trash" />
+                </button>
+              </>
+            )}
+          </span>
+        )}
+        {showAttachments && (
+          <div className="snapshot-attachment-panel">
+            <AttachmentManager
+              owner={{ kind: 'snapshot', accountId, snapshotId: snapshot.id }}
+              readOnly={readOnly}
+            />
+          </div>
+        )}
+        {remove.error && <span className="form-error row-error">{errorMessage(remove.error)}</span>}
+      </div>
+    </>
   )
 }
 
@@ -1449,24 +1468,89 @@ function InstitutionField({
   )
 }
 
-function SnapshotForm({ account, onCancel, onSaved }: { account: Account; onCancel: () => void; onSaved: () => Promise<void> }) {
-  const [date, setDate] = useState(localDateInputValue)
+function SnapshotForm({
+  account,
+  onClose,
+  onSaved,
+}: {
+  account: Account
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [period, setPeriod] = useState(localDateInputValue().slice(0, 7))
   const [balance, setBalance] = useState(account.balance)
+  const [attachment, setAttachment] = useState<File | null>(null)
+  const formId = 'snapshot-create'
   const mutation = useMutation({
-    mutationFn: () => apiPut<AccountSnapshot>(`/accounts/${account.id}/snapshots`, { period: date.slice(0, 7), balance }),
+    mutationFn: async () => {
+      const snapshot = await apiPut<AccountSnapshot>(
+        `/accounts/${account.id}/snapshots`,
+        { period, balance },
+      )
+      if (attachment) {
+        await uploadOwnerAttachment(
+          { kind: 'snapshot', accountId: account.id, snapshotId: snapshot.id },
+          attachment,
+        )
+      }
+      return snapshot
+    },
     onSuccess: onSaved,
   })
   return (
-    <form className="compact-feature-form" onSubmit={(event) => {
-      event.preventDefault()
-      mutation.mutate()
-    }}>
-      <FormInput type="date" value={date} onChange={(event) => setDate(event.target.value)} required />
-      <FormInput type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} required />
-      <button className="primary-button small-button" type="submit" disabled={mutation.isPending}>Enregistrer</button>
-      <button className="text-button" type="button" onClick={onCancel}>Annuler</button>
-      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </form>
+    <Modal
+      title="Nouveau relevé"
+      description="Enregistrez le solde de clôture d'un mois."
+      onClose={onClose}
+      actions={(
+        <>
+          <button
+            className="primary-button"
+            type="submit"
+            form={formId}
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <form
+        className="modal-form"
+        id={formId}
+        onSubmit={(event) => {
+          event.preventDefault()
+          mutation.mutate()
+        }}
+      >
+        <Field label="Période">
+          <FormInput
+            type="month"
+            value={period}
+            onChange={(event) => setPeriod(event.target.value)}
+            required
+          />
+        </Field>
+        <Field label="Solde de clôture">
+          <FormInput
+            type="number"
+            step="0.01"
+            value={balance}
+            onChange={(event) => setBalance(event.target.value)}
+            required
+          />
+        </Field>
+        <div className="modal-attachment-field">
+          <AttachmentPicker
+            file={attachment}
+            onChange={setAttachment}
+            disabled={mutation.isPending}
+          />
+        </div>
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
+      </form>
+    </Modal>
   )
 }
 

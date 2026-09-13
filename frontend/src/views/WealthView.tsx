@@ -16,7 +16,11 @@ import {
 } from 'recharts'
 
 import { apiDelete, apiGet, apiPatch, apiPost, apiUpload } from '../api/client'
-import { AttachmentManager } from '../AttachmentManager'
+import {
+  AttachmentManager,
+  AttachmentPicker,
+  uploadOwnerAttachment,
+} from '../AttachmentManager'
 import type {
   Account,
   Debt,
@@ -727,6 +731,7 @@ function RealEstatePanel({
       queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+      queryClient.invalidateQueries({ queryKey: ['documents'] }),
     ])
   }
   const closeModal = () => {
@@ -1009,8 +1014,10 @@ function RealEstateModal({
   const [currentValue, setCurrentValue] = useState(asset?.current_value ?? '')
   const [ownershipShare, setOwnershipShare] = useState(asset?.ownership_share ?? '100')
   const [debtIds, setDebtIds] = useState<number[]>(asset?.debt_ids ?? [])
+  const [attachment, setAttachment] = useState<File | null>(null)
+  const createdAssetId = useRef<number | null>(null)
   const mutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const payload = {
         name,
         property_type: propertyType,
@@ -1021,9 +1028,15 @@ function RealEstateModal({
         ownership_share: ownershipShare,
         debt_ids: debtIds,
       }
-      return asset
-        ? apiPatch<RealEstateAsset>(`/real-estate/${asset.id}`, payload)
-        : apiPost<RealEstateAsset>('/real-estate', payload)
+      const existingId = asset?.id ?? createdAssetId.current
+      const savedAsset = await (existingId
+        ? apiPatch<RealEstateAsset>(`/real-estate/${existingId}`, payload)
+        : apiPost<RealEstateAsset>('/real-estate', payload))
+      createdAssetId.current = savedAsset.id
+      if (!asset && attachment) {
+        await uploadOwnerAttachment({ kind: 'real-estate', assetId: savedAsset.id }, attachment)
+      }
+      return savedAsset
     },
     onSuccess: onSaved,
   })
@@ -1101,6 +1114,20 @@ function RealEstateModal({
             <small className="modal-hint">Aucun emprunt disponible.</small>
           )}
         </div>
+        <div className="modal-attachment-field">
+          {asset ? (
+            <AttachmentManager
+              owner={{ kind: 'real-estate', assetId: asset.id }}
+              readOnly={false}
+            />
+          ) : (
+            <AttachmentPicker
+              file={attachment}
+              onChange={setAttachment}
+              disabled={mutation.isPending}
+            />
+          )}
+        </div>
         {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
     </Modal>
@@ -1141,6 +1168,7 @@ function DebtsPanel({
       queryClient.invalidateQueries({ queryKey: ['budget-spending'] }),
       queryClient.invalidateQueries({ queryKey: ['overview'] }),
       queryClient.invalidateQueries({ queryKey: ['monthly-stats'] }),
+      queryClient.invalidateQueries({ queryKey: ['documents'] }),
     ])
   }
 
@@ -1339,8 +1367,10 @@ function DebtModal({
   const [dueDate, setDueDate] = useState(debt?.due_date ?? '')
   const [color, setColor] = useState(debt?.color ?? '#ff6b70')
   const [archived, setArchived] = useState(debt?.archived ?? false)
+  const [attachment, setAttachment] = useState<File | null>(null)
+  const createdDebtId = useRef<number | null>(null)
   const mutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const payload = {
         name,
         debt_type: debtType,
@@ -1354,9 +1384,15 @@ function DebtModal({
         color,
         ...(debt ? { archived } : {}),
       }
-      return debt
-        ? apiPatch<Debt>(`/debts/${debt.id}`, payload)
-        : apiPost<Debt>('/debts', payload)
+      const existingId = debt?.id ?? createdDebtId.current
+      const savedDebt = await (existingId
+        ? apiPatch<Debt>(`/debts/${existingId}`, payload)
+        : apiPost<Debt>('/debts', payload))
+      createdDebtId.current = savedDebt.id
+      if (!debt && attachment) {
+        await uploadOwnerAttachment({ kind: 'debt', debtId: savedDebt.id }, attachment)
+      }
+      return savedDebt
     },
     onSuccess: onSaved,
   })
@@ -1456,6 +1492,20 @@ function DebtModal({
             <span className="toggle-visual" aria-hidden="true"><Icon name="check" /></span>
           </label>
         )}
+        <div className="modal-attachment-field debt-modal-wide">
+          {debt ? (
+            <AttachmentManager
+              owner={{ kind: 'debt', debtId: debt.id }}
+              readOnly={selectableAccounts.find((account) => account.id === debt.account_id)?.archived ?? false}
+            />
+          ) : (
+            <AttachmentPicker
+              file={attachment}
+              onChange={setAttachment}
+              disabled={mutation.isPending}
+            />
+          )}
+        </div>
         {mutation.error && <p className="form-error debt-modal-wide">{errorMessage(mutation.error)}</p>}
       </form>
     </Modal>
