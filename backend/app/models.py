@@ -73,6 +73,9 @@ class BalanceSnapshot(Base):
     )
     period: Mapped[str] = mapped_column(String(7), index=True)  # YYYY-MM
     balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    document_ignored: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     account: Mapped[Account] = relationship(back_populates="snapshots")
@@ -153,6 +156,9 @@ class RecurringSeries(Base):
     credit_insurance_rate: Mapped[Decimal | None] = mapped_column(
         Numeric(6, 3), nullable=True
     )
+    document_ignored: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     account: Mapped[Account] = relationship()
@@ -200,6 +206,9 @@ class Debt(Base):
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     color: Mapped[str] = mapped_column(String(16), default="#ef4444")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    document_ignored: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     recurring_series_repayment: Mapped[RecurringSeries | None] = relationship(
@@ -243,6 +252,9 @@ class RealEstateAsset(Base):
         Numeric(5, 2), default=Decimal("100.00")
     )
     icon_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    document_ignored: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     debt_links: Mapped[list[RealEstateDebtLink]] = relationship(
@@ -466,6 +478,9 @@ class PaySlip(Base):
     hours_worked: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
     overtime_hours: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    document_ignored: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     contract: Mapped[WorkContract | None] = relationship(back_populates="slips")

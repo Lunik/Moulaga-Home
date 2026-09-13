@@ -92,6 +92,12 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
             for item in documents["documents"]
         )
         assert len(documents["kinds"]) == 5
+        assert len(documents["ignored_resources"]) == 1
+        assert documents["ignored_resources"][0]["label"] == "Budget carburant"
+        assert all(
+            item["label"] != "Budget carburant"
+            for item in documents["resources_without_documents"]
+        )
 
         overview = client.get("/api/overview").json()
         assert float(overview["income_current_month"]) > 0

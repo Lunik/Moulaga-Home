@@ -35,7 +35,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 OBSOLETE_TABLES = frozenset(
     {
         "categorization_rules",
@@ -54,8 +54,12 @@ OBSOLETE_COLUMNS: dict[str, frozenset[str]] = {
 # Columns that may be missing on databases created before this schema version.
 # Values are the SQLite column definitions used by ``ALTER TABLE ADD COLUMN``.
 EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
+    "balance_snapshots": {
+        "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
+    },
     "real_estate_assets": {
         "icon_path": "VARCHAR(512)",
+        "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
     },
     "accounts": {
         "institution": "VARCHAR(120)",
@@ -76,6 +80,7 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "recurring_type": "VARCHAR(32) DEFAULT 'uncategorized' NOT NULL",
         "custom_type": "VARCHAR(120)",
         "credit_insurance_rate": "NUMERIC(6, 3)",
+        "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
     },
     "work_contracts": {
         "payment_period_months": "INTEGER DEFAULT 12 NOT NULL",
@@ -94,6 +99,10 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "due_date": "DATE",
         "color": "VARCHAR(16) DEFAULT '#ef4444' NOT NULL",
         "archived": "BOOLEAN DEFAULT 0 NOT NULL",
+        "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
+    },
+    "pay_slips": {
+        "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
     },
 }
 

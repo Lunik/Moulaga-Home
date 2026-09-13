@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import type { ReactNode } from 'react'
 
 import { AttachmentManager, type AttachmentOwner } from '../AttachmentManager'
-import { apiGet } from '../api/client'
+import { apiGet, apiPost, queryString } from '../api/client'
 import type {
   DocumentCenter,
   DocumentItem,
@@ -330,9 +331,23 @@ function MissingResources({
   const [kind, setKind] = useState<DocumentKind | typeof ALL_KINDS>(ALL_KINDS)
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<DocumentResource | null>(null)
+  const [showIgnored, setShowIgnored] = useState(false)
+  const updateIgnored = useMutation({
+    mutationFn: ({
+      resource,
+      ignored,
+    }: {
+      resource: DocumentResource
+      ignored: boolean
+    }) => apiPost<void>(
+      `/documents/resources/${resource.kind}/${resource.resource_id}/ignored${queryString({ ignored })}`,
+    ),
+    onSuccess: onRefresh,
+  })
   const resources = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase('fr-FR')
-    return center.resources_without_documents.filter((resource) => (
+    const source = showIgnored ? center.ignored_resources : center.resources_without_documents
+    return source.filter((resource) => (
       (kind === ALL_KINDS || resource.kind === kind)
       && (
         !normalized
@@ -340,11 +355,11 @@ function MissingResources({
         || resource.context.toLocaleLowerCase('fr-FR').includes(normalized)
       )
     ))
-  }, [center.resources_without_documents, kind, search])
+  }, [center.ignored_resources, center.resources_without_documents, kind, search, showIgnored])
   const pageCount = Math.max(1, Math.ceil(resources.length / PAGE_SIZE))
   const visibleResources = resources.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
-  useEffect(() => setPage(1), [kind, search])
+  useEffect(() => setPage(1), [kind, search, showIgnored])
   useEffect(() => {
     if (page > pageCount) setPage(pageCount)
   }, [page, pageCount])
@@ -359,7 +374,7 @@ function MissingResources({
           <strong>Une boîte de réception documentaire</strong>
           <p>
             Cette liste rassemble automatiquement chaque ressource sans pièce jointe.
-            Ajoutez un fichier ici : il apparaîtra aussi dans son écran d’origine.
+            Ajoutez un fichier ici, ou ignorez les ressources qui ne nécessitent pas de document.
           </p>
         </div>
       </section>
@@ -369,10 +384,24 @@ function MissingResources({
         placeholder="Rechercher une ressource à compléter"
         onSearch={setSearch}
         onKind={setKind}
+        action={(
+          <button
+            className="secondary-button documents-ignored-button"
+            type="button"
+            aria-pressed={showIgnored}
+            onClick={() => setShowIgnored((current) => !current)}
+          >
+            <Icon name="archive" />
+            Ignorés
+            {center.ignored_resources.length > 0 && (
+              <span>{center.ignored_resources.length}</span>
+            )}
+          </button>
+        )}
       />
       <Panel
-        title="Ressources sans document"
-        subtitle={`${resources.length} élément${resources.length === 1 ? '' : 's'} à compléter`}
+        title={showIgnored ? 'Ressources ignorées' : 'Ressources sans document'}
+        subtitle={`${resources.length} élément${resources.length === 1 ? '' : 's'} ${showIgnored ? 'ignoré' : 'à compléter'}${showIgnored && resources.length !== 1 ? 's' : ''}`}
       >
         {visibleResources.length > 0 ? (
           <>
@@ -387,17 +416,40 @@ function MissingResources({
                     </span>
                     <small>{resource.context} · {formatReference(resource.kind, resource.reference)}</small>
                   </div>
-                  {resource.can_upload ? (
-                    <button
-                      className="primary-button small-button"
-                      type="button"
-                      onClick={() => setSelected(resource)}
-                    >
-                      <Icon name="attachment" /> Associer
-                    </button>
-                  ) : (
-                    <StatusBadge tone="warning">Compte archivé</StatusBadge>
-                  )}
+                  <div className="missing-resource-actions">
+                    {showIgnored ? (
+                      <button
+                        className="secondary-button small-button"
+                        type="button"
+                        disabled={updateIgnored.isPending}
+                        onClick={() => updateIgnored.mutate({ resource, ignored: false })}
+                      >
+                        <Icon name="refresh" /> Restaurer
+                      </button>
+                    ) : (
+                      <>
+                        {resource.can_upload ? (
+                          <button
+                            className="primary-button small-button"
+                            type="button"
+                            onClick={() => setSelected(resource)}
+                          >
+                            <Icon name="attachment" /> Associer
+                          </button>
+                        ) : (
+                          <StatusBadge tone="warning">Compte archivé</StatusBadge>
+                        )}
+                        <button
+                          className="secondary-button small-button"
+                          type="button"
+                          disabled={updateIgnored.isPending}
+                          onClick={() => updateIgnored.mutate({ resource, ignored: true })}
+                        >
+                          <Icon name="archive" /> Ignorer
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </article>
               ))}
             </div>
@@ -425,12 +477,19 @@ function MissingResources({
           </>
         ) : (
           <EmptyState
-            icon={center.stats.missing_resources === 0 ? 'check' : 'search'}
-            title={center.stats.missing_resources === 0 ? 'Tout est classé' : 'Aucun résultat'}
-            text={center.stats.missing_resources === 0
-              ? 'Chaque ressource possède au moins un document.'
-              : 'Modifiez la recherche ou le type de ressource.'}
+            icon={showIgnored ? 'archive' : center.stats.missing_resources === 0 ? 'check' : 'search'}
+            title={showIgnored
+              ? 'Aucune ressource ignorée'
+              : center.stats.missing_resources === 0 ? 'Tout est classé' : 'Aucun résultat'}
+            text={showIgnored
+              ? 'Les ressources ignorées apparaîtront dans cette vue.'
+              : center.stats.missing_resources === 0
+                ? 'Chaque ressource possède un document ou a été ignorée.'
+                : 'Modifiez la recherche ou le type de ressource.'}
           />
+        )}
+        {updateIgnored.error && (
+          <p className="form-error">{errorMessage(updateIgnored.error)}</p>
         )}
       </Panel>
 
@@ -460,15 +519,17 @@ function DocumentFilters({
   placeholder,
   onSearch,
   onKind,
+  action,
 }: {
   search: string
   kind: DocumentKind | typeof ALL_KINDS
   placeholder: string
   onSearch: (value: string) => void
   onKind: (value: DocumentKind | typeof ALL_KINDS) => void
+  action?: ReactNode
 }) {
   return (
-    <section className="documents-toolbar">
+    <section className={`documents-toolbar${action ? ' has-action' : ''}`}>
       <label className="search-field">
         <Icon name="search" />
         <FormInput
@@ -488,6 +549,7 @@ function DocumentFilters({
           <option key={value} value={value}>{meta.label}</option>
         ))}
       </FormSelect>
+      {action}
     </section>
   )
 }

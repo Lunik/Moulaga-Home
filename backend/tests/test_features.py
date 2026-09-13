@@ -87,6 +87,27 @@ def test_document_center_indexes_missing_resources_and_uploaded_files(client):
         "reference": "2026-08",
         "can_upload": True,
     }
+    assert initial.json()["ignored_resources"] == []
+
+    ignored = client.post(
+        f"/api/documents/resources/snapshot/{statement['id']}/ignored"
+    )
+    assert ignored.status_code == 204
+    ignored_center = client.get("/api/documents").json()
+    assert ignored_center["stats"]["missing_resources"] == 0
+    assert ignored_center["resources_without_documents"] == []
+    assert ignored_center["ignored_resources"] == [
+        initial.json()["resources_without_documents"][0]
+    ]
+
+    restored = client.post(
+        f"/api/documents/resources/snapshot/{statement['id']}/ignored",
+        params={"ignored": False},
+    )
+    assert restored.status_code == 204
+    restored_center = client.get("/api/documents").json()
+    assert restored_center["stats"]["missing_resources"] == 1
+    assert restored_center["ignored_resources"] == []
 
     upload = client.post(
         f"/api/accounts/{account_id}/snapshots/{statement['id']}/attachments",
@@ -109,6 +130,10 @@ def test_document_center_indexes_missing_resources_and_uploaded_files(client):
         f"/attachments/{upload.json()['id']}/download"
     )
     assert client.get(indexed["documents"][0]["download_url"]).status_code == 200
+    cannot_ignore = client.post(
+        f"/api/documents/resources/snapshot/{statement['id']}/ignored"
+    )
+    assert cannot_ignore.status_code == 409
 
 
 def test_statement_import_is_atomic_and_upserts(client):

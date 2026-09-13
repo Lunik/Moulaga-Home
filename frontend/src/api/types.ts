@@ -126,6 +126,7 @@ export interface DocumentCenter {
   kinds: DocumentKindSummary[]
   documents: DocumentItem[]
   resources_without_documents: DocumentResource[]
+  ignored_resources: DocumentResource[]
 }
 
 export interface AccountSnapshotAttachment extends StoredAttachment {

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,6 +42,47 @@ KIND_LABELS: dict[DocumentKind, str] = {
     "payslip": "Fiches de paie",
 }
 
+DOCUMENT_RESOURCE_MODELS = {
+    "snapshot": (BalanceSnapshot, BalanceSnapshotAttachment.snapshot_id),
+    "recurring": (RecurringSeries, RecurringSeriesAttachment.series_id),
+    "debt": (Debt, DebtAttachment.debt_id),
+    "real_estate": (RealEstateAsset, RealEstateAttachment.asset_id),
+    "payslip": (PaySlip, PaySlipAttachment.payslip_id),
+}
+
+
+@router.post(
+    "/documents/resources/{kind}/{resource_id}/ignored",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def set_document_resource_ignored(
+    kind: DocumentKind,
+    resource_id: int,
+    ignored: bool = Query(default=True),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    resource_model, attachment_resource_id = DOCUMENT_RESOURCE_MODELS[kind]
+    resource = await session.get(resource_model, resource_id)
+    if resource is None:
+        raise HTTPException(status_code=404, detail="Ressource documentaire introuvable")
+
+    if ignored:
+        attachment_exists = await session.scalar(
+            select(attachment_resource_id)
+            .where(attachment_resource_id == resource_id)
+            .limit(1)
+        )
+        if attachment_exists is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Une ressource avec document ne peut pas être ignorée",
+            )
+
+    resource.document_ignored = ignored
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 
 @router.get("/documents", response_model=DocumentCenterRead)
 async def document_center(
@@ -50,6 +91,7 @@ async def document_center(
     documents: list[DocumentRead] = []
     resources: list[DocumentResourceRead] = []
     covered_keys: set[tuple[DocumentKind, int]] = set()
+    ignored_keys: set[tuple[DocumentKind, int]] = set()
 
     snapshot_attachments = (
         await session.execute(
@@ -214,6 +256,8 @@ async def document_center(
         )
     ).all()
     for snapshot, account in snapshots:
+        if snapshot.document_ignored:
+            ignored_keys.add(("snapshot", snapshot.id))
         resources.append(
             DocumentResourceRead(
                 kind="snapshot",
@@ -234,6 +278,8 @@ async def document_center(
         )
     ).all()
     for series, account in recurring_series:
+        if series.document_ignored:
+            ignored_keys.add(("recurring", series.id))
         resources.append(
             DocumentResourceRead(
                 kind="recurring",
@@ -254,6 +300,8 @@ async def document_center(
         )
     ).all()
     for debt, account in debts:
+        if debt.document_ignored:
+            ignored_keys.add(("debt", debt.id))
         resources.append(
             DocumentResourceRead(
                 kind="debt",
@@ -275,6 +323,8 @@ async def document_center(
         )
     ).scalars().all()
     for asset in real_estate_assets:
+        if asset.document_ignored:
+            ignored_keys.add(("real_estate", asset.id))
         resources.append(
             DocumentResourceRead(
                 kind="real_estate",
@@ -295,6 +345,8 @@ async def document_center(
         )
     ).all()
     for payslip, contract in payslips:
+        if payslip.document_ignored:
+            ignored_keys.add(("payslip", payslip.id))
         resources.append(
             DocumentResourceRead(
                 kind="payslip",
@@ -314,11 +366,22 @@ async def document_center(
     resource_counts = Counter(resource.kind for resource in resources)
     covered_counts = Counter(kind for kind, _resource_id in covered_keys)
     document_counts = Counter(document.kind for document in documents)
-    resources_without_documents = [
+    missing_resources = [
         resource
         for resource in resources
         if (resource.kind, resource.resource_id) not in covered_keys
     ]
+    resources_without_documents = [
+        resource
+        for resource in missing_resources
+        if (resource.kind, resource.resource_id) not in ignored_keys
+    ]
+    ignored_resources = [
+        resource
+        for resource in missing_resources
+        if (resource.kind, resource.resource_id) in ignored_keys
+    ]
+    missing_counts = Counter(resource.kind for resource in resources_without_documents)
     documents.sort(key=lambda document: (document.created_at, document.id), reverse=True)
 
     return DocumentCenterRead(
@@ -335,11 +398,12 @@ async def document_center(
                 label=label,
                 total_resources=resource_counts[kind],
                 covered_resources=covered_counts[kind],
-                missing_resources=resource_counts[kind] - covered_counts[kind],
+                missing_resources=missing_counts[kind],
                 document_count=document_counts[kind],
             )
             for kind, label in KIND_LABELS.items()
         ],
         documents=documents,
         resources_without_documents=resources_without_documents,
+        ignored_resources=ignored_resources,
     )

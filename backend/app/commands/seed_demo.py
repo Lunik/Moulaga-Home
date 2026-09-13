@@ -757,6 +757,7 @@ async def _seed(
                 size=size,
             )
         )
+    fuel_series.document_ignored = True
 
     debt_attachments = [
         (

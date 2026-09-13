@@ -753,6 +753,7 @@ class DocumentCenterRead(BaseModel):
     kinds: list[DocumentKindSummary]
     documents: list[DocumentRead]
     resources_without_documents: list[DocumentResourceRead]
+    ignored_resources: list[DocumentResourceRead]
 
 
 class HoldingCreate(BaseModel):
