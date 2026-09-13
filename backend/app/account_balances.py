@@ -9,8 +9,56 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .common import money
+from .common import add_month, local_today, money
 from .models import Account, BalanceSnapshot
+
+
+def missing_snapshot_periods(
+    periods: Collection[str],
+    *,
+    through: date | None = None,
+) -> list[str]:
+    """Return missing statement months from the first statement to month N-1."""
+    known_periods = set(periods)
+    if not known_periods:
+        return []
+
+    cursor = date.fromisoformat(f"{min(known_periods)}-01")
+    last_expected_month = add_month((through or local_today()).replace(day=1), -1)
+    missing: list[str] = []
+    while cursor <= last_expected_month:
+        period = cursor.strftime("%Y-%m")
+        if period not in known_periods:
+            missing.append(period)
+        cursor = add_month(cursor, 1)
+    return missing
+
+
+async def account_missing_snapshot_periods(
+    session: AsyncSession,
+    *,
+    through: date | None = None,
+    account_ids: Collection[int] | None = None,
+) -> dict[int, list[str]]:
+    ids = set(account_ids) if account_ids is not None else None
+    if ids is not None and not ids:
+        return {}
+
+    statement = select(BalanceSnapshot.account_id, BalanceSnapshot.period).order_by(
+        BalanceSnapshot.account_id,
+        BalanceSnapshot.period,
+    )
+    if ids is not None:
+        statement = statement.where(BalanceSnapshot.account_id.in_(ids))
+
+    periods_by_account = {account_id: [] for account_id in ids or ()}
+    for account_id, period in (await session.execute(statement)).all():
+        periods_by_account.setdefault(account_id, []).append(period)
+
+    return {
+        account_id: missing_snapshot_periods(periods, through=through)
+        for account_id, periods in periods_by_account.items()
+    }
 
 
 async def account_balances(

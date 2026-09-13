@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..account_access import ensure_account_writable, require_account
-from ..account_balances import account_balance
+from ..account_balances import (
+    account_balance,
+    account_missing_snapshot_periods,
+    missing_snapshot_periods,
+)
 from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import local_today, money
 from ..db import get_session
@@ -79,9 +83,14 @@ async def _set_snapshot_balance(
 
 
 async def _account_read(session: AsyncSession, account: Account) -> AccountRead:
+    missing_periods = await account_missing_snapshot_periods(
+        session,
+        account_ids={account.id} if not account.archived else set(),
+    )
     return AccountRead.model_validate(account).model_copy(
         update={
             "balance": await _balance(session, account),
+            "missing_snapshot_periods": missing_periods.get(account.id, []),
             **institution_fields(
                 account.institution,
                 account.regional_entity,
@@ -195,6 +204,11 @@ async def get_account(
         annual_interest_rate=account.annual_interest_rate,
         legal_cap=account.legal_cap,
         balance=balance,
+        missing_snapshot_periods=(
+            []
+            if account.archived
+            else missing_snapshot_periods([snapshot.period for snapshot in snapshots])
+        ),
         history=[
             AccountHistoryPoint(period=s.period, balance=money(s.balance)) for s in snapshots
         ],

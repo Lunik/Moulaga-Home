@@ -1264,6 +1264,18 @@ textarea:focus-visible {
   font-size: 0.72rem;
 }
 
+.account-missing-statements {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--warning);
+  font-weight: 700;
+}
+
+.account-missing-statements .app-icon {
+  width: 0.85rem;
+}
+
 .budget-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2695,11 +2707,87 @@ textarea:focus-visible {
 }
 
 .statement-list > div {
-  grid-template-columns: 1fr auto auto;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  padding-inline: 0.65rem;
+}
+
+.statement-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  column-gap: 0.75rem;
+  row-gap: 0.45rem;
+}
+
+.statement-row > strong,
+.statement-row > .row-actions,
+.missing-statement-create {
+  justify-self: end;
 }
 
 .statement-list > .statement-row.editing {
   grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 1fr) auto;
+}
+
+.statement-list > .missing-statement-row {
+  border: 1px solid rgba(247, 181, 0, 0.24);
+  border-radius: 0.75rem;
+  background: rgba(247, 181, 0, 0.07);
+  color: var(--warning);
+}
+
+.missing-statement-row strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.missing-statement-row .app-icon {
+  width: 1rem;
+}
+
+.missing-statement-create {
+  border-color: rgba(247, 181, 0, 0.42);
+  color: var(--warning);
+}
+
+.missing-statement-create:hover {
+  background: rgba(247, 181, 0, 0.12);
+}
+
+@media (max-width: 640px) {
+  .statement-list {
+    grid-template-columns: minmax(0, 1fr) max-content max-content;
+    column-gap: 0.35rem;
+  }
+
+  .statement-list > div {
+    padding-inline: 0.35rem;
+  }
+
+  .statement-list > .statement-row.editing {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .missing-statement-row strong {
+    gap: 0.25rem;
+    font-size: 0.72rem;
+  }
+
+  .missing-statement-create {
+    min-height: 2rem;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.72rem;
+  }
+
+  .statement-row .icon-action {
+    width: 2.1rem;
+    height: 2.1rem;
+  }
+
+  .statement-row.editing input {
+    grid-column: 1 / -1;
+  }
 }
 
 .statement-row input {

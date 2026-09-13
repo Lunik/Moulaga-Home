@@ -24,6 +24,12 @@ def _category(client: TestClient, name: str) -> dict:
     return next(item for item in client.get("/api/categories").json() if item["name"] == name)
 
 
+def _month_period(offset: int) -> str:
+    today = date.today()
+    month_index = today.year * 12 + today.month - 1 + offset
+    return f"{month_index // 12:04d}-{month_index % 12 + 1:02d}"
+
+
 def test_preferences_patch_validates_and_persists(client):
     response = client.patch(
         "/api/preferences",
@@ -60,6 +66,42 @@ def test_statements_are_authoritative_for_accounts_and_net_worth(client):
     snapshots = client.get(f"/api/accounts/{account_id}/snapshots").json()
     assert len(snapshots) == 1
     assert snapshots[0]["balance"] == "350.00"
+
+
+def test_active_accounts_report_internal_and_recent_missing_statements(client):
+    account_id = _account_id(client)
+    for offset, balance in ((-4, "100.00"), (-2, "120.00"), (0, "140.00")):
+        response = client.put(
+            f"/api/accounts/{account_id}/snapshots",
+            json={"period": _month_period(offset), "balance": balance},
+        )
+        assert response.status_code == 200
+
+    expected = [_month_period(-3), _month_period(-1)]
+    detail = client.get(f"/api/accounts/{account_id}").json()
+    assert detail["missing_snapshot_periods"] == expected
+    listed = client.get("/api/accounts").json()
+    assert next(item for item in listed if item["id"] == account_id)[
+        "missing_snapshot_periods"
+    ] == expected
+
+    archived = client.post(
+        "/api/accounts",
+        json={"name": "Compte archive avec trous", "initial_balance": "50.00"},
+    ).json()
+    for offset in (-4, 0):
+        assert client.put(
+            f"/api/accounts/{archived['id']}/snapshots",
+            json={"period": _month_period(offset), "balance": "50.00"},
+        ).status_code == 200
+    assert client.post(f"/api/accounts/{archived['id']}/archive").status_code == 200
+    assert client.get(f"/api/accounts/{archived['id']}").json()[
+        "missing_snapshot_periods"
+    ] == []
+    archived_list = client.get("/api/accounts?include_archived=true").json()
+    assert next(item for item in archived_list if item["id"] == archived["id"])[
+        "missing_snapshot_periods"
+    ] == []
 
 
 def test_institution_history_keeps_archived_accounts_in_totals(client):
