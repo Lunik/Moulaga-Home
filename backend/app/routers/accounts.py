@@ -112,7 +112,7 @@ async def _has_dependencies(session: AsyncSession, account_id: int) -> bool:
     response_model=list[InstitutionHistoryPoint],
 )
 async def list_institution_history(
-    archived: bool = False,
+    include_archived: bool = True,
     account_type: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> list[InstitutionHistoryPoint]:
@@ -125,9 +125,10 @@ async def list_institution_history(
             BalanceSnapshot.balance.label("balance"),
         )
         .join(Account, Account.id == BalanceSnapshot.account_id)
-        .where(Account.archived.is_(archived))
         .order_by(BalanceSnapshot.period, Account.id)
     )
+    if not include_archived:
+        statement = statement.where(Account.archived.is_(False))
     if account_type is not None:
         statement = statement.where(Account.type == account_type)
 

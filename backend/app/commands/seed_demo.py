@@ -317,6 +317,7 @@ async def _seed(
         (invest, ("2100.00", "2300.00", "2450.00", "2634.00")),
         (crypto_wallet, ("3600.00", "4100.00", "3850.00", "4200.00")),
     ]
+    archived_snapshot_values = ("900.00", "600.00", "250.00", "0.00")
     quick_import_snapshot_series = [
         (peg, ("6 500,00 €", "6 900,00 €", "7 350,00 €", "7 800,00 €")),
         (percol, ("9 200,00 €", "9 800,00 €", "10 400,00 €", "11 200,00 €")),
@@ -343,6 +344,7 @@ async def _seed(
         snapshot_count += len(historical_months)
 
     latest_savings_snapshot: BalanceSnapshot | None = None
+    latest_archived_snapshot: BalanceSnapshot | None = None
     for index, month in enumerate(months):
         checking_snapshot = BalanceSnapshot(
             account_id=checking.id,
@@ -359,6 +361,11 @@ async def _seed(
             period=month.strftime("%Y-%m"),
             balance=money(boursobank_snapshot_values[index]),
         )
+        archived_snapshot = BalanceSnapshot(
+            account_id=archived.id,
+            period=month.strftime("%Y-%m"),
+            balance=money(archived_snapshot_values[index]),
+        )
         additional_snapshots = [
             BalanceSnapshot(
                 account_id=account.id,
@@ -372,11 +379,13 @@ async def _seed(
                 checking_snapshot,
                 savings_snapshot,
                 boursobank_snapshot,
+                archived_snapshot,
                 *additional_snapshots,
             ]
         )
         latest_savings_snapshot = savings_snapshot
-        snapshot_count += 3 + len(additional_snapshots)
+        latest_archived_snapshot = archived_snapshot
+        snapshot_count += 4 + len(additional_snapshots)
 
     for account, balances in quick_import_snapshot_series:
         content = "Date\tMontant\n" + "\n".join(
@@ -393,14 +402,6 @@ async def _seed(
             for row in imported_rows
         )
         snapshot_count += len(imported_rows)
-
-    archived_snapshot = BalanceSnapshot(
-        account_id=archived.id,
-        period=months[0].strftime("%Y-%m"),
-        balance=money("0.00"),
-    )
-    session.add(archived_snapshot)
-    snapshot_count += 1
 
     # --- Recurring budget series ------------------------------------------ #
     salary_series = RecurringSeries(
@@ -705,7 +706,7 @@ async def _seed(
     )
 
     await session.flush()
-    if latest_savings_snapshot is None:
+    if latest_savings_snapshot is None or latest_archived_snapshot is None:
         raise SeedError("Les donnees de demonstration des comptes sont incompletes.")
 
     snapshot_attachments = [
@@ -715,7 +716,7 @@ async def _seed(
             b"Moulaga QA - releve mensuel d'epargne entierement synthetique.\n",
         ),
         (
-            archived_snapshot,
+            latest_archived_snapshot,
             "releve-compte-archive-demo.txt",
             b"Moulaga QA - releve synthetique d'un compte archive.\n",
         ),

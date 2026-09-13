@@ -62,6 +62,48 @@ def test_statements_are_authoritative_for_accounts_and_net_worth(client):
     assert snapshots[0]["balance"] == "350.00"
 
 
+def test_institution_history_keeps_archived_accounts_in_totals(client):
+    active = client.post(
+        "/api/accounts",
+        json={
+            "name": "Livret actif",
+            "type": "savings",
+            "institution": "Banque Test",
+        },
+    ).json()
+    archived = client.post(
+        "/api/accounts",
+        json={
+            "name": "Livret archive",
+            "type": "savings",
+            "institution": "Banque Test",
+        },
+    ).json()
+    for account_id, snapshots in (
+        (active["id"], (("2026-01", "100.00"), ("2026-03", "120.00"))),
+        (archived["id"], (("2026-01", "50.00"), ("2026-02", "40.00"))),
+    ):
+        for period, balance in snapshots:
+            response = client.put(
+                f"/api/accounts/{account_id}/snapshots",
+                json={"period": period, "balance": balance},
+            )
+            assert response.status_code == 200
+
+    assert client.post(f"/api/accounts/{archived['id']}/archive").status_code == 200
+
+    history = client.get(
+        "/api/accounts/institution-history",
+        params={"account_type": "savings"},
+    )
+    assert history.status_code == 200
+    assert history.json() == [
+        {"period": "2026-01", "institution": "Banque Test", "balance": "150.00"},
+        {"period": "2026-02", "institution": "Banque Test", "balance": "140.00"},
+        {"period": "2026-03", "institution": "Banque Test", "balance": "160.00"},
+    ]
+
+
 def test_document_center_indexes_missing_resources_and_uploaded_files(client):
     account_id = _account_id(client)
     statement = client.put(

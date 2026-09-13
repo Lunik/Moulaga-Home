@@ -127,15 +127,13 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
   ))
   const accountTypes = [...new Set(accounts.map((account) => account.type))]
   const dynamicSummary = await warmPaths([
-    ...[false, true].flatMap((archived) => [
-      `/accounts/institution-history${queryString({ archived })}`,
-      ...accountTypes.map((accountType) => (
-        `/accounts/institution-history${queryString({
-          archived,
-          account_type: accountType,
-        })}`
-      )),
-    ]),
+    `/accounts/institution-history${queryString({ include_archived: true })}`,
+    ...accountTypes.map((accountType) => (
+      `/accounts/institution-history${queryString({
+        include_archived: true,
+        account_type: accountType,
+      })}`
+    )),
     ...accounts.flatMap((account) => [
       `/accounts/${account.id}`,
       `/accounts/${account.id}/snapshots`,
