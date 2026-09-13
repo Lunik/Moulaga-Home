@@ -23,6 +23,7 @@ export interface Account {
   savings_product: string | null
   annual_interest_rate: string | null
   legal_cap: Money | null
+  missing_snapshot_periods: string[]
 }
 
 export interface AccountSnapshot {

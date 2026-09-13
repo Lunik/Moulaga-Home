@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -20,11 +21,17 @@ def _load_seed(tmp_path, monkeypatch):
     return main, seed
 
 
+def _month_period(offset: int) -> str:
+    today = date.today()
+    month_index = today.year * 12 + today.month - 1 + offset
+    return f"{month_index // 12:04d}-{month_index % 12 + 1:02d}"
+
+
 def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     main, seed = _load_seed(tmp_path, monkeypatch)
     result = asyncio.run(seed.seed_demo())
     assert result.accounts == 10
-    assert result.snapshots == 312
+    assert result.snapshots == 309
     assert result.categories == 11
     assert result.recurring == 14
     assert result.debts == 4
@@ -46,6 +53,18 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert next(account for account in accounts if account["name"] == "PEA demo")[
             "balance"
         ] == "2634.00"
+        assert next(
+            account for account in accounts if account["name"] == "Livret epargne demo"
+        )["missing_snapshot_periods"] == [_month_period(-2)]
+        assert next(
+            account for account in accounts if account["name"] == "Wallet crypto demo"
+        )["missing_snapshot_periods"] == [_month_period(-1)]
+        archived_account = next(
+            account
+            for account in client.get("/api/accounts?include_archived=true").json()
+            if account["name"] == "Compte cloture demo"
+        )
+        assert archived_account["missing_snapshot_periods"] == []
         institution_history = client.get("/api/accounts/institution-history").json()
         assert [
             point["balance"]

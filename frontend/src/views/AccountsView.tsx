@@ -99,6 +99,10 @@ type InstitutionChartRow = {
   [key: string]: string | number
 }
 
+type StatementListItem =
+  | { kind: 'snapshot'; snapshot: AccountSnapshot }
+  | { kind: 'missing'; period: string }
+
 const institutionHistoryRanges = [
   { value: '6m', label: '6M', description: '6 derniers mois', months: 6 },
   { value: '1y', label: '1A', description: '1 an', months: 12 },
@@ -437,6 +441,7 @@ function AccountCard({
   account: Account
   navigate: (route: Route) => void
 }) {
+  const missingSnapshotCount = account.missing_snapshot_periods.length
   return (
     <button
       className="account-card interactive-card"
@@ -459,7 +464,14 @@ function AccountCard({
       </div>
       <strong className="account-balance">{money(account.balance)}</strong>
       <div className="account-meta">
-        <span>Solde relevé</span>
+        {missingSnapshotCount > 0 && !account.archived ? (
+          <span className="account-missing-statements">
+            <Icon name="alert" />
+            {missingStatementsLabel(missingSnapshotCount)}
+          </span>
+        ) : (
+          <span>Solde relevé</span>
+        )}
         <span>Voir le détail <Icon name="arrow" /></span>
       </div>
     </button>
@@ -493,6 +505,7 @@ export function AccountDetailView({
     enabled: positionsEnabled,
   })
   const [showSnapshot, setShowSnapshot] = useState(false)
+  const [newSnapshotPeriod, setNewSnapshotPeriod] = useState<string | null>(null)
   const [showSnapshotImport, setShowSnapshotImport] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
   const [showArchiveModal, setShowArchiveModal] = useState(false)
@@ -544,9 +557,24 @@ export function AccountDetailView({
   if (!account.data) return <div className="error-banner">{errors.length > 0 ? errorMessage(errors[0]) : 'Compte introuvable.'}</div>
   const readOnly = account.data.archived
   const balance = Number(account.data.balance)
+  const missingSnapshotPeriods = readOnly ? [] : account.data.missing_snapshot_periods
   const snapshotChartData = [...(snapshots.data ?? [])]
     .sort((left, right) => left.period.localeCompare(right.period))
     .map((snapshot) => ({ ...snapshot, balance: Number(snapshot.balance) }))
+  const statementItems: StatementListItem[] = [
+    ...(snapshots.data ?? []).map((snapshot): StatementListItem => ({
+      kind: 'snapshot',
+      snapshot,
+    })),
+    ...missingSnapshotPeriods.map((period): StatementListItem => ({
+      kind: 'missing',
+      period,
+    })),
+  ].sort((left, right) => {
+    const leftPeriod = left.kind === 'snapshot' ? left.snapshot.period : left.period
+    const rightPeriod = right.kind === 'snapshot' ? right.snapshot.period : right.period
+    return rightPeriod.localeCompare(leftPeriod)
+  })
   const transferTargets = accounts.filter((candidate) => (
     candidate.id !== accountId
     && !candidate.archived
@@ -555,6 +583,14 @@ export function AccountDetailView({
   const openArchiveModal = () => {
     setTransferTargetId(String(transferTargets[0]?.id ?? ''))
     setShowArchiveModal(true)
+  }
+  const openSnapshotModal = (period: string | null = null) => {
+    setNewSnapshotPeriod(period)
+    setShowSnapshot(true)
+  }
+  const closeSnapshotModal = () => {
+    setShowSnapshot(false)
+    setNewSnapshotPeriod(null)
   }
 
   return (
@@ -568,7 +604,7 @@ export function AccountDetailView({
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setShowSnapshot(true)}
+              onClick={() => openSnapshotModal()}
             >
               <Icon name="calendar" /> Ajouter un relevé
             </button>
@@ -711,10 +747,11 @@ export function AccountDetailView({
       {showSnapshot && !readOnly && (
         <SnapshotForm
           account={account.data}
-          onClose={() => setShowSnapshot(false)}
+          initialPeriod={newSnapshotPeriod}
+          onClose={closeSnapshotModal}
           onSaved={async () => {
             await refreshDetail()
-            setShowSnapshot(false)
+            closeSnapshotModal()
           }}
         />
       )}
@@ -806,7 +843,12 @@ export function AccountDetailView({
 
       <Panel
         title="Relevés mensuels"
-        subtitle={`${snapshots.data?.length ?? 0} relevé${snapshots.data?.length === 1 ? '' : 's'}`}
+        subtitle={[
+          `${snapshots.data?.length ?? 0} relevé${snapshots.data?.length === 1 ? '' : 's'}`,
+          missingSnapshotPeriods.length > 0
+            ? missingStatementsLabel(missingSnapshotPeriods.length)
+            : null,
+        ].filter(Boolean).join(' · ')}
         action={!readOnly ? (
           <div className="header-actions">
             <button
@@ -819,23 +861,31 @@ export function AccountDetailView({
             <button
               className="primary-button small-button"
               type="button"
-              onClick={() => setShowSnapshot(true)}
+              onClick={() => openSnapshotModal()}
             >
               <Icon name="calendar" /> Ajouter un relevé
             </button>
           </div>
         ) : undefined}
       >
-        {(snapshots.data ?? []).length > 0 ? (
+        {statementItems.length > 0 ? (
           <div className="statement-list">
-            {[...(snapshots.data ?? [])].sort((left, right) => right.period.localeCompare(left.period)).map((snapshot) => (
-              <SnapshotRow
-                accountId={accountId}
-                key={snapshot.id}
-                snapshot={snapshot}
-                onSaved={refreshDetail}
-                readOnly={readOnly}
-              />
+            {statementItems.map((item) => (
+              item.kind === 'snapshot' ? (
+                <SnapshotRow
+                  accountId={accountId}
+                  key={`snapshot-${item.snapshot.id}`}
+                  snapshot={item.snapshot}
+                  onSaved={refreshDetail}
+                  readOnly={readOnly}
+                />
+              ) : (
+                <MissingSnapshotRow
+                  key={`missing-${item.period}`}
+                  period={item.period}
+                  onCreate={() => openSnapshotModal(item.period)}
+                />
+              )
             ))}
           </div>
         ) : (
@@ -859,6 +909,28 @@ export function AccountDetailView({
           </small>
         </div>
       )}
+    </div>
+  )
+}
+
+function MissingSnapshotRow({
+  period,
+  onCreate,
+}: {
+  period: string
+  onCreate: () => void
+}) {
+  return (
+    <div className="statement-row missing-statement-row">
+      <span>{period}</span>
+      <strong><Icon name="alert" /> Relevé manquant</strong>
+      <button
+        className="secondary-button small-button missing-statement-create"
+        type="button"
+        onClick={onCreate}
+      >
+        <Icon name="plus" /> Créer
+      </button>
     </div>
   )
 }
@@ -1470,14 +1542,18 @@ function InstitutionField({
 
 function SnapshotForm({
   account,
+  initialPeriod,
   onClose,
   onSaved,
 }: {
   account: Account
+  initialPeriod: string | null
   onClose: () => void
   onSaved: () => Promise<void>
 }) {
-  const [period, setPeriod] = useState(localDateInputValue().slice(0, 7))
+  const [period, setPeriod] = useState(
+    initialPeriod ?? localDateInputValue().slice(0, 7),
+  )
   const [balance, setBalance] = useState(account.balance)
   const [attachment, setAttachment] = useState<File | null>(null)
   const formId = 'snapshot-create'
@@ -1610,6 +1686,10 @@ function SnapshotImportForm({
 function accountType(type: string): string {
   if (type === 'investment') return 'Investissement (ancien type)'
   return accountTypeOptions.find((option) => option.value === type)?.label ?? type
+}
+
+function missingStatementsLabel(count: number): string {
+  return `${count} relevé${count === 1 ? '' : 's'} manquant${count === 1 ? '' : 's'}`
 }
 
 function formatQuantity(value: string): string {

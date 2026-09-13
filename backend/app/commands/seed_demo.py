@@ -351,11 +351,6 @@ async def _seed(
             period=month.strftime("%Y-%m"),
             balance=money(checking_snapshot_values[index]),
         )
-        savings_snapshot = BalanceSnapshot(
-            account_id=savings.id,
-            period=month.strftime("%Y-%m"),
-            balance=money(savings_snapshot_values[index]),
-        )
         boursobank_snapshot = BalanceSnapshot(
             account_id=boursobank_checking.id,
             period=month.strftime("%Y-%m"),
@@ -373,19 +368,25 @@ async def _seed(
                 balance=money(balances[index]),
             )
             for account, balances in additional_snapshot_series
+            if account is not crypto_wallet or index < 2
         ]
-        session.add_all(
-            [
-                checking_snapshot,
-                savings_snapshot,
-                boursobank_snapshot,
-                archived_snapshot,
-                *additional_snapshots,
-            ]
-        )
-        latest_savings_snapshot = savings_snapshot
+        month_snapshots = [
+            checking_snapshot,
+            boursobank_snapshot,
+            archived_snapshot,
+            *additional_snapshots,
+        ]
+        if index != 1:
+            savings_snapshot = BalanceSnapshot(
+                account_id=savings.id,
+                period=month.strftime("%Y-%m"),
+                balance=money(savings_snapshot_values[index]),
+            )
+            month_snapshots.append(savings_snapshot)
+            latest_savings_snapshot = savings_snapshot
+        session.add_all(month_snapshots)
         latest_archived_snapshot = archived_snapshot
-        snapshot_count += 4 + len(additional_snapshots)
+        snapshot_count += len(month_snapshots)
 
     for account, balances in quick_import_snapshot_series:
         content = "Date\tMontant\n" + "\n".join(

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_balances import account_balances
+from ..account_balances import account_balances, account_missing_snapshot_periods
 from ..category_budgeting import (
     ParentBudgetTooSmall,
     ensure_ancestor_budgets,
@@ -46,10 +46,16 @@ async def list_accounts(
         statement = statement.where(Account.archived.is_(False))
     rows = (await session.execute(statement)).scalars().all()
     balances = await account_balances(session, through=as_of)
+    missing_periods = await account_missing_snapshot_periods(
+        session,
+        through=as_of,
+        account_ids={account.id for account in rows if not account.archived},
+    )
     return [
         AccountRead.model_validate(account).model_copy(
             update={
                 "balance": balances.get(account.id, account.initial_balance),
+                "missing_snapshot_periods": missing_periods.get(account.id, []),
                 **institution_fields(
                     account.institution,
                     account.regional_entity,

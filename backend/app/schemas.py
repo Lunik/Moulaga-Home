@@ -88,6 +88,7 @@ class AccountRead(AccountCreate):
     id: int
     archived: bool = False
     balance: Decimal = Decimal("0.00")
+    missing_snapshot_periods: list[str] = Field(default_factory=list)
 
 
 class AccountUpdate(BaseModel):
