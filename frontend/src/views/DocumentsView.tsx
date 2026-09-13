@@ -49,6 +49,7 @@ const kindMeta: Record<DocumentKind, {
   recurring: { label: 'Récurrents', singular: 'Récurrent', icon: 'recurring' },
   debt: { label: 'Dettes', singular: 'Dette', icon: 'debt' },
   real_estate: { label: 'Biens immobiliers', singular: 'Bien immobilier', icon: 'home' },
+  work_contract: { label: 'Contrats de travail', singular: 'Contrat de travail', icon: 'briefcase' },
   payslip: { label: 'Fiches de paie', singular: 'Fiche de paie', icon: 'receipt' },
 }
 
@@ -121,8 +122,8 @@ function DocumentsOverview({
             <p className="eyebrow">Centre documentaire local</p>
             <h2>Vos justificatifs, reliés à vos finances</h2>
             <p>
-              Retrouvez les pièces jointes de vos relevés, revenus, fiches de paie,
-              dettes et biens sans dupliquer les fichiers.
+              Retrouvez les pièces jointes de vos relevés, revenus, contrats de travail,
+              fiches de paie, dettes et biens sans dupliquer les fichiers.
             </p>
           </div>
         </div>
@@ -234,7 +235,7 @@ function DocumentsLibrary({
 }) {
   const [search, setSearch] = useState('')
   const [kind, setKind] = useState<DocumentKind | typeof ALL_KINDS>(ALL_KINDS)
-  const [selectedPayslip, setSelectedPayslip] = useState<DocumentItem | null>(null)
+  const [selectedDocument, setSelectedDocument] = useState<DocumentItem | null>(null)
   const documents = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase('fr-FR')
     return center.documents.filter((document) => (
@@ -247,6 +248,9 @@ function DocumentsLibrary({
       )
     ))
   }, [center.documents, kind, search])
+  const selectedDocumentOwner = selectedDocument
+    ? resourceOwner(selectedDocument)
+    : null
 
   return (
     <>
@@ -281,11 +285,11 @@ function DocumentsLibrary({
                   <a className="secondary-button small-button" href={document.download_url}>
                     Télécharger
                   </a>
-                  {document.kind === 'payslip' && (
+                  {(document.kind === 'work_contract' || document.kind === 'payslip') && (
                     <button
                       className="secondary-button small-button"
                       type="button"
-                      onClick={() => setSelectedPayslip(document)}
+                      onClick={() => setSelectedDocument(document)}
                     >
                       <Icon name="attachment" /> Gérer
                     </button>
@@ -303,14 +307,14 @@ function DocumentsLibrary({
         )}
       </Panel>
 
-      {selectedPayslip?.kind === 'payslip' && (
+      {selectedDocument && selectedDocumentOwner && (
         <Modal
-          title={`Gérer les documents de ${selectedPayslip.resource_label}`}
-          description={`Fiche de paie · ${selectedPayslip.resource_context}`}
-          onClose={() => setSelectedPayslip(null)}
+          title={`Gérer les documents de ${selectedDocument.resource_label}`}
+          description={`${kindMeta[selectedDocument.kind].singular} · ${selectedDocument.resource_context}`}
+          onClose={() => setSelectedDocument(null)}
         >
           <AttachmentManager
-            owner={{ kind: 'payslip', payslipId: selectedPayslip.resource_id }}
+            owner={selectedDocumentOwner}
             readOnly={false}
             onChanged={onRefresh}
           />
@@ -554,7 +558,9 @@ function DocumentFilters({
   )
 }
 
-function resourceOwner(resource: DocumentResource): AttachmentOwner | null {
+function resourceOwner(
+  resource: Pick<DocumentResource, 'kind' | 'resource_id' | 'account_id'>,
+): AttachmentOwner | null {
   switch (resource.kind) {
     case 'snapshot':
       return resource.account_id === null
@@ -566,6 +572,8 @@ function resourceOwner(resource: DocumentResource): AttachmentOwner | null {
       return { kind: 'debt', debtId: resource.resource_id }
     case 'real_estate':
       return { kind: 'real-estate', assetId: resource.resource_id }
+    case 'work_contract':
+      return { kind: 'work-contract', contractId: resource.resource_id }
     case 'payslip':
       return { kind: 'payslip', payslipId: resource.resource_id }
   }

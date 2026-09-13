@@ -35,7 +35,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 OBSOLETE_TABLES = frozenset(
     {
         "categorization_rules",
@@ -87,6 +87,7 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "recurring_series_id": (
             "INTEGER REFERENCES recurring_series(id) ON DELETE SET NULL"
         ),
+        "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
     },
     "debts": {
         "debt_type": "VARCHAR(32) DEFAULT 'other' NOT NULL",

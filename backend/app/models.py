@@ -450,12 +450,34 @@ class WorkContract(Base):
     )
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    document_ignored: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     slips: Mapped[list[PaySlip]] = relationship(
+        back_populates="contract", passive_deletes=True
+    )
+    attachments: Mapped[list[WorkContractAttachment]] = relationship(
         back_populates="contract", cascade="all, delete-orphan"
     )
     recurring_series: Mapped[RecurringSeries | None] = relationship()
+
+
+class WorkContractAttachment(Base):
+    __tablename__ = "work_contract_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(
+        ForeignKey("work_contracts.id", ondelete="CASCADE"), index=True
+    )
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(String(512), unique=True)
+    content_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    contract: Mapped[WorkContract] = relationship(back_populates="attachments")
 
 
 class PaySlip(Base):

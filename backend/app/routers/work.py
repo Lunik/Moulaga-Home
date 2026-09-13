@@ -14,7 +14,14 @@ from sqlalchemy.orm import selectinload
 from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import local_today
 from ..db import get_session
-from ..models import PaySlip, PaySlipAttachment, PensionProfile, RecurringSeries, WorkContract
+from ..models import (
+    PaySlip,
+    PaySlipAttachment,
+    PensionProfile,
+    RecurringSeries,
+    WorkContract,
+    WorkContractAttachment,
+)
 from ..schemas import (
     PaySlipAttachmentRead,
     PaySlipCreate,
@@ -22,6 +29,7 @@ from ..schemas import (
     PaySlipUpdate,
     PensionProfileCreateOrUpdate,
     PensionProfileRead,
+    WorkContractAttachmentRead,
     WorkContractCreate,
     WorkContractRead,
     WorkContractUpdate,
@@ -95,21 +103,29 @@ async def get_work_summary(
 # --------------------------------------------------------------------------- #
 # Contracts
 # --------------------------------------------------------------------------- #
+def _contract_read(contract: WorkContract) -> WorkContractRead:
+    return WorkContractRead.model_validate(contract).model_copy(
+        update={"attachment_count": len(contract.attachments)}
+    )
+
+
 @router.get("/contracts", response_model=list[WorkContractRead])
 async def list_contracts(
     session: AsyncSession = Depends(get_session),
-) -> list[WorkContract]:
+) -> list[WorkContractRead]:
     res = await session.execute(
-        select(WorkContract).order_by(WorkContract.status.asc(), WorkContract.start_date.desc())
+        select(WorkContract)
+        .options(selectinload(WorkContract.attachments))
+        .order_by(WorkContract.status.asc(), WorkContract.start_date.desc())
     )
-    return list(res.scalars().all())
+    return [_contract_read(contract) for contract in res.scalars().all()]
 
 
 @router.post("/contracts", response_model=WorkContractRead, status_code=201)
 async def create_contract(
     data: WorkContractCreate,
     session: AsyncSession = Depends(get_session),
-) -> WorkContract:
+) -> WorkContractRead:
     payload = data.model_dump()
     recurring_series_id = payload.get("recurring_series_id")
     if recurring_series_id is not None and not await session.get(RecurringSeries, recurring_series_id):
@@ -117,19 +133,29 @@ async def create_contract(
     contract = WorkContract(**payload)
     session.add(contract)
     await session.commit()
-    await session.refresh(contract)
-    return contract
+    res = await session.execute(
+        select(WorkContract)
+        .options(selectinload(WorkContract.attachments))
+        .where(WorkContract.id == contract.id)
+    )
+    return _contract_read(res.scalar_one())
 
 
 @router.get("/contracts/{contract_id}", response_model=WorkContractRead)
 async def get_contract(
     contract_id: int,
     session: AsyncSession = Depends(get_session),
-) -> WorkContract:
-    contract = await session.get(WorkContract, contract_id)
+) -> WorkContractRead:
+    contract = (
+        await session.execute(
+            select(WorkContract)
+            .options(selectinload(WorkContract.attachments))
+            .where(WorkContract.id == contract_id)
+        )
+    ).scalar_one_or_none()
     if not contract:
         raise HTTPException(status_code=404, detail="Contrat non trouve")
-    return contract
+    return _contract_read(contract)
 
 
 @router.patch("/contracts/{contract_id}", response_model=WorkContractRead)
@@ -137,8 +163,14 @@ async def update_contract(
     contract_id: int,
     data: WorkContractUpdate,
     session: AsyncSession = Depends(get_session),
-) -> WorkContract:
-    contract = await session.get(WorkContract, contract_id)
+) -> WorkContractRead:
+    contract = (
+        await session.execute(
+            select(WorkContract)
+            .options(selectinload(WorkContract.attachments))
+            .where(WorkContract.id == contract_id)
+        )
+    ).scalar_one_or_none()
     if not contract:
         raise HTTPException(status_code=404, detail="Contrat non trouve")
 
@@ -154,7 +186,7 @@ async def update_contract(
 
     await session.commit()
     await session.refresh(contract)
-    return contract
+    return _contract_read(contract)
 
 
 @router.delete("/contracts/{contract_id}", status_code=204)
@@ -162,10 +194,136 @@ async def delete_contract(
     contract_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
+    contract = (
+        await session.execute(
+            select(WorkContract)
+            .options(selectinload(WorkContract.attachments))
+            .where(WorkContract.id == contract_id)
+        )
+    ).scalar_one_or_none()
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contrat non trouve")
+    for attachment in contract.attachments:
+        remove_attachment(attachment.stored_path)
+    await session.delete(contract)
+    await session.commit()
+
+
+@router.post(
+    "/contracts/{contract_id}/attachments",
+    response_model=WorkContractAttachmentRead,
+    status_code=201,
+)
+async def upload_contract_attachment(
+    contract_id: int,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+) -> WorkContractAttachment:
     contract = await session.get(WorkContract, contract_id)
     if not contract:
         raise HTTPException(status_code=404, detail="Contrat non trouve")
-    await session.delete(contract)
+
+    original_name, stored_path, size = await store_attachment(file)
+    attachment = WorkContractAttachment(
+        contract_id=contract.id,
+        original_name=original_name,
+        stored_path=stored_path,
+        content_type=file.content_type,
+        size=size,
+    )
+    session.add(attachment)
+    await session.commit()
+    await session.refresh(attachment)
+    return attachment
+
+
+@router.get(
+    "/contracts/{contract_id}/attachments",
+    response_model=list[WorkContractAttachmentRead],
+)
+async def list_contract_attachments(
+    contract_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[WorkContractAttachment]:
+    if await session.get(WorkContract, contract_id) is None:
+        raise HTTPException(status_code=404, detail="Contrat non trouve")
+    return list(
+        (
+            await session.scalars(
+                select(WorkContractAttachment)
+                .where(WorkContractAttachment.contract_id == contract_id)
+                .order_by(
+                    WorkContractAttachment.created_at.desc(),
+                    WorkContractAttachment.id.desc(),
+                )
+            )
+        ).all()
+    )
+
+
+async def _require_contract_attachment(
+    session: AsyncSession,
+    contract_id: int,
+    attachment_id: int,
+) -> WorkContractAttachment:
+    attachment = (
+        await session.execute(
+            select(WorkContractAttachment).where(
+                WorkContractAttachment.id == attachment_id,
+                WorkContractAttachment.contract_id == contract_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Piece jointe non trouvee")
+    return attachment
+
+
+def _contract_attachment_response(
+    attachment: WorkContractAttachment,
+) -> FileResponse:
+    file_path = attachment_path(attachment.stored_path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Fichier introuvable")
+    return FileResponse(
+        path=file_path,
+        filename=attachment.original_name,
+        media_type=attachment.content_type or "application/octet-stream",
+    )
+
+
+@router.get(
+    "/contracts/{contract_id}/attachments/{attachment_id}/download"
+)
+async def download_contract_attachment(
+    contract_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    attachment = await _require_contract_attachment(
+        session,
+        contract_id,
+        attachment_id,
+    )
+    return _contract_attachment_response(attachment)
+
+
+@router.delete(
+    "/contracts/{contract_id}/attachments/{attachment_id}",
+    status_code=204,
+)
+async def delete_contract_attachment(
+    contract_id: int,
+    attachment_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    attachment = await _require_contract_attachment(
+        session,
+        contract_id,
+        attachment_id,
+    )
+    remove_attachment(attachment.stored_path)
+    await session.delete(attachment)
     await session.commit()
 
 

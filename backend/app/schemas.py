@@ -704,7 +704,14 @@ class RealEstateAttachmentRead(BaseModel):
     size: int
 
 
-DocumentKind = Literal["snapshot", "recurring", "debt", "real_estate", "payslip"]
+DocumentKind = Literal[
+    "snapshot",
+    "recurring",
+    "debt",
+    "real_estate",
+    "work_contract",
+    "payslip",
+]
 
 
 class DocumentRead(BaseModel):
@@ -1032,6 +1039,18 @@ class WorkContractRead(BaseModel):
     recurring_series_id: int | None
     status: str
     notes: str | None
+    attachment_count: int = 0
+
+
+class WorkContractAttachmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    contract_id: int
+    original_name: str
+    stored_path: str
+    content_type: str | None
+    size: int
 
 
 class PaySlipAttachmentRead(BaseModel):
