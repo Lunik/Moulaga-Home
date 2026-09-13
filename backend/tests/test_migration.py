@@ -162,6 +162,53 @@ def test_fresh_database_omits_retired_tables_and_is_idempotent(tmp_path, monkeyp
     assert list(tmp_path.glob("moulaga.backup-*.db")) == []
 
 
+def test_v20_database_adds_contract_attachment_support(tmp_path, monkeypatch):
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        contract = client.post(
+            "/api/work/contracts",
+            json={
+                "employer": "Employeur historique",
+                "position": "Poste historique",
+                "start_date": "2025-01-01",
+            },
+        ).json()
+
+    db_path = tmp_path / "moulaga.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE work_contract_attachments")
+        connection.execute("ALTER TABLE work_contracts DROP COLUMN document_ignored")
+        connection.execute("PRAGMA user_version = 20")
+
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        migrated_contract = client.get(
+            f"/api/work/contracts/{contract['id']}"
+        ).json()
+        assert migrated_contract["employer"] == "Employeur historique"
+        assert migrated_contract["attachment_count"] == 0
+        assert client.get(
+            f"/api/work/contracts/{contract['id']}/attachments"
+        ).json() == []
+
+    with sqlite3.connect(db_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(work_contracts)")
+        }
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    assert "work_contract_attachments" in tables
+    assert "document_ignored" in columns
+    assert version >= 21
+    assert len(list(tmp_path.glob("moulaga.backup-*.db"))) == 1
+
+
 def test_v16_database_drops_obsolete_recurring_columns(tmp_path, monkeypatch):
     main, _ = load_app(tmp_path, monkeypatch)
     with TestClient(main.create_app()) as client:

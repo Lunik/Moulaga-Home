@@ -94,6 +94,7 @@ export function WorkView({
     open: boolean
     contract?: WorkContract
   }>({ open: false })
+  const [expandedContractAttachments, setExpandedContractAttachments] = useState<number | null>(null)
 
   const [payslipModal, setPayslipModal] = useState<{
     open: boolean
@@ -369,6 +370,20 @@ export function WorkView({
                       </span>
                       <span className="row-actions">
                         <button
+                          className="icon-action attachment-button"
+                          type="button"
+                          aria-label={`Pièces jointes${contract.attachment_count > 0 ? ` (${contract.attachment_count})` : ''}`}
+                          aria-expanded={expandedContractAttachments === contract.id}
+                          onClick={() => setExpandedContractAttachments((current) => (
+                            current === contract.id ? null : contract.id
+                          ))}
+                        >
+                          <Icon name="attachment" />
+                          {contract.attachment_count > 0 && (
+                            <span className="attachment-count-badge">{contract.attachment_count}</span>
+                          )}
+                        </button>
+                        <button
                           className="icon-action"
                           type="button"
                           aria-label={`Modifier le contrat ${contract.position}`}
@@ -390,6 +405,14 @@ export function WorkView({
                           <Icon name="trash" />
                         </button>
                       </span>
+                      {expandedContractAttachments === contract.id && (
+                        <div className="entity-attachment-panel">
+                          <AttachmentManager
+                            owner={{ kind: 'work-contract', contractId: contract.id }}
+                            readOnly={false}
+                          />
+                        </div>
+                      )}
                     </article>
                   )
                 })}
@@ -645,6 +668,8 @@ function ContractFormModal({
   onSuccess: () => void
 }) {
   const [error, setError] = useState<string | null>(null)
+  const [attachment, setAttachment] = useState<File | null>(null)
+  const createdContractId = useRef<number | null>(null)
   const formId = contract ? `work-contract-edit-${contract.id}` : 'work-contract-create'
   const salarySeries = recurringSeries.filter(
     (series) =>
@@ -652,8 +677,20 @@ function ContractFormModal({
       || series.id === contract?.recurring_series_id,
   )
   const mutation = useMutation({
-    mutationFn: (data: Partial<WorkContract>) =>
-      contract ? apiPatch(`/work/contracts/${contract.id}`, data) : apiPost('/work/contracts', data),
+    mutationFn: async (data: Partial<WorkContract>) => {
+      const existingId = contract?.id ?? createdContractId.current
+      const savedContract = await (existingId
+        ? apiPatch<WorkContract>(`/work/contracts/${existingId}`, data)
+        : apiPost<WorkContract>('/work/contracts', data))
+      createdContractId.current = savedContract.id
+      if (!contract && attachment) {
+        await uploadOwnerAttachment(
+          { kind: 'work-contract', contractId: savedContract.id },
+          attachment,
+        )
+      }
+      return savedContract
+    },
     onSuccess,
     onError: (err) => setError(errorMessage(err)),
   })
@@ -764,6 +801,20 @@ function ContractFormModal({
           <FormTextarea name="notes" defaultValue={contract?.notes ?? ''} placeholder="Ex : forfait jours, PEE, mutuelle…" rows={3} />
         </Field>
 
+        <div className="modal-attachment-field work-modal-wide">
+          {contract ? (
+            <AttachmentManager
+              owner={{ kind: 'work-contract', contractId: contract.id }}
+              readOnly={false}
+            />
+          ) : (
+            <AttachmentPicker
+              file={attachment}
+              onChange={setAttachment}
+              disabled={mutation.isPending}
+            />
+          )}
+        </div>
       </form>
     </Modal>
   )

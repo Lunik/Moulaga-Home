@@ -43,6 +43,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.debt_attachments == 1
     assert result.real_estate_attachments == 1
     assert result.contracts == 2
+    assert result.contract_attachments == 1
     assert result.payslips == 6
     assert result.payslip_attachments == 1
 
@@ -85,7 +86,9 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         previous_contract = next(item for item in contracts if item["status"] == "ended")
         assert current_contract["recurring_series_id"] == salary["id"]
         assert current_contract["payment_period_months"] == 12
+        assert current_contract["attachment_count"] == 1
         assert previous_contract["recurring_series_id"] is None
+        assert previous_contract["attachment_count"] == 0
         assert previous_contract["end_date"] == "2021-08-31"
 
         payslips = client.get("/api/work/payslips").json()
@@ -99,17 +102,24 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert work_summary["latest_net_after_tax"] == salary["amount"]
 
         documents = client.get("/api/documents").json()
-        assert documents["stats"]["total_documents"] == 7
+        assert documents["stats"]["total_documents"] == 8
         assert documents["stats"]["missing_resources"] > 12
         assert {item["kind"] for item in documents["documents"]} == {
             "snapshot",
             "recurring",
             "debt",
             "real_estate",
+            "work_contract",
             "payslip",
         }
         assert any(
             item["original_name"] == "bulletin-salaire-demo.txt"
+            for item in documents["documents"]
+        )
+        assert any(
+            item["kind"] == "work_contract"
+            and item["original_name"] == "contrat-travail-demo.txt"
+            and item["reference"] == "2021-09-01"
             for item in documents["documents"]
         )
         assert any(
@@ -118,7 +128,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
             and item["reference"] == "2026-09"
             for item in documents["documents"]
         )
-        assert len(documents["kinds"]) == 5
+        assert len(documents["kinds"]) == 6
         assert len(documents["ignored_resources"]) == 1
         assert documents["ignored_resources"][0]["label"] == "Budget carburant"
         assert all(
@@ -195,6 +205,15 @@ def test_seed_demo_attachments_are_downloadable(tmp_path, monkeypatch):
         assert payslip_download.status_code == 200
         assert b"entierement synthetique" in payslip_download.content
 
+        contract_document = next(
+            document
+            for document in client.get("/api/documents").json()["documents"]
+            if document["kind"] == "work_contract"
+        )
+        contract_download = client.get(contract_document["download_url"])
+        assert contract_download.status_code == 200
+        assert b"entierement synthetique" in contract_download.content
+
 
 def test_seed_demo_refuses_overwrite_and_reset_reseeds(tmp_path, monkeypatch):
     _, seed = _load_seed(tmp_path, monkeypatch)
@@ -202,7 +221,7 @@ def test_seed_demo_refuses_overwrite_and_reset_reseeds(tmp_path, monkeypatch):
     old_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(old_files) == 8
+    assert len(old_files) == 9
     with pytest.raises(seed.SeedError):
         asyncio.run(seed.seed_demo())
 
@@ -211,7 +230,7 @@ def test_seed_demo_refuses_overwrite_and_reset_reseeds(tmp_path, monkeypatch):
     new_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }
-    assert len(new_files) == 8
+    assert len(new_files) == 9
 
 
 def test_seed_demo_refuses_default_data_dir(tmp_path, monkeypatch):

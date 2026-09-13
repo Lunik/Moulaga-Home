@@ -22,6 +22,7 @@ from ..models import (
     RecurringSeries,
     RecurringSeriesAttachment,
     WorkContract,
+    WorkContractAttachment,
 )
 from ..schemas import (
     DocumentCenterRead,
@@ -39,6 +40,7 @@ KIND_LABELS: dict[DocumentKind, str] = {
     "recurring": "Récurrents",
     "debt": "Dettes",
     "real_estate": "Biens immobiliers",
+    "work_contract": "Contrats de travail",
     "payslip": "Fiches de paie",
 }
 
@@ -47,6 +49,7 @@ DOCUMENT_RESOURCE_MODELS = {
     "recurring": (RecurringSeries, RecurringSeriesAttachment.series_id),
     "debt": (Debt, DebtAttachment.debt_id),
     "real_estate": (RealEstateAsset, RealEstateAttachment.asset_id),
+    "work_contract": (WorkContract, WorkContractAttachment.contract_id),
     "payslip": (PaySlip, PaySlipAttachment.payslip_id),
 }
 
@@ -215,6 +218,36 @@ async def document_center(
             )
         )
 
+    contract_attachments = (
+        await session.execute(
+            select(WorkContractAttachment, WorkContract).join(
+                WorkContract,
+                WorkContract.id == WorkContractAttachment.contract_id,
+            )
+        )
+    ).all()
+    for attachment, contract in contract_attachments:
+        covered_keys.add(("work_contract", contract.id))
+        documents.append(
+            DocumentRead(
+                id=attachment.id,
+                kind="work_contract",
+                resource_id=contract.id,
+                account_id=None,
+                resource_label=contract.employer,
+                resource_context=f"{contract.position} · {contract.contract_type}",
+                reference=contract.start_date.isoformat(),
+                original_name=attachment.original_name,
+                content_type=attachment.content_type,
+                size=attachment.size,
+                created_at=attachment.created_at,
+                download_url=(
+                    f"/api/work/contracts/{contract.id}/attachments/"
+                    f"{attachment.id}/download"
+                ),
+            )
+        )
+
     payslip_attachments = (
         await session.execute(
             select(PaySlipAttachment, PaySlip, WorkContract)
@@ -333,6 +366,29 @@ async def document_center(
                 label=asset.name,
                 context=asset.address or "Patrimoine immobilier",
                 reference=asset.acquired_on.isoformat() if asset.acquired_on else None,
+                can_upload=True,
+            )
+        )
+
+    contracts = (
+        await session.execute(
+            select(WorkContract).order_by(
+                WorkContract.start_date.desc(),
+                WorkContract.id.desc(),
+            )
+        )
+    ).scalars().all()
+    for contract in contracts:
+        if contract.document_ignored:
+            ignored_keys.add(("work_contract", contract.id))
+        resources.append(
+            DocumentResourceRead(
+                kind="work_contract",
+                resource_id=contract.id,
+                account_id=None,
+                label=contract.employer,
+                context=f"{contract.position} · {contract.contract_type}",
+                reference=contract.start_date.isoformat(),
                 can_upload=True,
             )
         )

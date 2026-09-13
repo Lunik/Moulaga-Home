@@ -80,7 +80,13 @@ export interface StoredAttachment {
   size: number
 }
 
-export type DocumentKind = 'snapshot' | 'recurring' | 'debt' | 'real_estate' | 'payslip'
+export type DocumentKind =
+  | 'snapshot'
+  | 'recurring'
+  | 'debt'
+  | 'real_estate'
+  | 'work_contract'
+  | 'payslip'
 
 export interface DocumentItem {
   id: number
@@ -418,6 +424,7 @@ export interface WorkContract {
   recurring_series_id: number | null
   status: 'active' | 'ended'
   notes: string | null
+  attachment_count: number
 }
 
 export interface PaySlipAttachment {

@@ -10,6 +10,7 @@ export type AttachmentOwner =
   | { kind: 'recurring'; seriesId: number }
   | { kind: 'debt'; debtId: number }
   | { kind: 'real-estate'; assetId: number }
+  | { kind: 'work-contract'; contractId: number }
   | { kind: 'payslip'; payslipId: number }
 
 interface AttachmentConfig {
@@ -43,6 +44,12 @@ function attachmentConfig(owner: AttachmentOwner): AttachmentConfig {
         resourcePath: `/real-estate/${owner.assetId}`,
         attachmentQueryKey: ['real-estate-attachments', owner.assetId],
         parentQueryKeys: [['real-estate'], ['documents']],
+      }
+    case 'work-contract':
+      return {
+        resourcePath: `/work/contracts/${owner.contractId}`,
+        attachmentQueryKey: ['work-contract-attachments', owner.contractId],
+        parentQueryKeys: [['work-contracts'], ['documents']],
       }
     case 'payslip':
       return {

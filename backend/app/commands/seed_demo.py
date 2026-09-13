@@ -65,6 +65,7 @@ from ..models import (
     RecurringSeriesAttachment,
     SharedAccountLink,
     WorkContract,
+    WorkContractAttachment,
 )
 from ..snapshot_import import parse_snapshot_tsv
 
@@ -93,6 +94,7 @@ class SeedResult:
     debt_attachments: int
     real_estate_attachments: int
     contracts: int
+    contract_attachments: int
     payslips: int
     payslip_attachments: int
 
@@ -138,6 +140,7 @@ async def _remove_attachment_files(session: AsyncSession) -> None:
         RecurringSeriesAttachment,
         DebtAttachment,
         RealEstateAttachment,
+        WorkContractAttachment,
         PaySlipAttachment,
     ):
         stored_paths = (await session.scalars(select(model.stored_path))).all()
@@ -845,6 +848,25 @@ async def _seed(
     session.add_all([current_contract, previous_contract])
     await session.flush()
 
+    contract_attachment_payload = (
+        b"Moulaga QA - contrat de travail entierement synthetique.\n"
+        b"Aucune donnee bancaire ou personnelle reelle.\n"
+    )
+    original_name, stored_path, size = await _store_demo_file(
+        "contrat-travail-demo.txt",
+        contract_attachment_payload,
+    )
+    created_attachment_paths.append(stored_path)
+    session.add(
+        WorkContractAttachment(
+            contract_id=current_contract.id,
+            original_name=original_name,
+            stored_path=stored_path,
+            content_type="text/plain",
+            size=size,
+        )
+    )
+
     payslip_periods = [
         (
             "2026-09", money("4333.33"), money("3550.00"), money("3380.00"),
@@ -950,6 +972,7 @@ async def _seed(
         debt_attachments=len(debt_attachments),
         real_estate_attachments=len(real_estate_attachments),
         contracts=2,
+        contract_attachments=1,
         payslips=len(payslips),
         payslip_attachments=1,
     )
@@ -995,7 +1018,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{result.recurring_attachments} piece(s) jointe(s) recurrente(s), "
         f"{result.debt_attachments} piece(s) jointe(s) de dette, "
         f"{result.real_estate_attachments} piece(s) jointe(s) immobiliere(s)."
-        f" {result.contracts} contrat(s), {result.payslips} fiche(s) de paie, "
+        f" {result.contracts} contrat(s), "
+        f"{result.contract_attachments} contrat(s) joint(s), "
+        f"{result.payslips} fiche(s) de paie, "
         f"{result.payslip_attachments} bulletin(s) joint(s)."
     )
     return 0

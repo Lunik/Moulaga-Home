@@ -32,6 +32,39 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
         contract = res.json()
         contract_id = contract["id"]
         assert contract["employer"] == "Acme Inc"
+        assert contract["attachment_count"] == 0
+
+        contract_payload = b"Fake employment contract"
+        contract_attachment_response = client.post(
+            f"/api/work/contracts/{contract_id}/attachments",
+            files={
+                "file": (
+                    "contrat-acme.pdf",
+                    io.BytesIO(contract_payload),
+                    "application/pdf",
+                )
+            },
+        )
+        assert contract_attachment_response.status_code == 201
+        contract_attachment = contract_attachment_response.json()
+        contract_attachment_id = contract_attachment["id"]
+        contract_file = tmp_path / contract_attachment["stored_path"]
+        assert contract_file.read_bytes() == contract_payload
+        assert client.get(f"/api/work/contracts/{contract_id}").json()[
+            "attachment_count"
+        ] == 1
+        assert [
+            item["id"]
+            for item in client.get(
+                f"/api/work/contracts/{contract_id}/attachments"
+            ).json()
+        ] == [contract_attachment_id]
+        contract_download = client.get(
+            f"/api/work/contracts/{contract_id}/attachments/"
+            f"{contract_attachment_id}/download"
+        )
+        assert contract_download.status_code == 200
+        assert contract_download.content == contract_payload
 
         update_contract = client.patch(
             f"/api/work/contracts/{contract_id}",
@@ -98,17 +131,30 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
 
         documents = client.get("/api/documents").json()
         assert documents["stats"] == {
-            "total_documents": 1,
-            "total_size": len(file_payload),
-            "total_resources": 1,
-            "covered_resources": 1,
+            "total_documents": 2,
+            "total_size": len(contract_payload) + len(file_payload),
+            "total_resources": 2,
+            "covered_resources": 2,
             "missing_resources": 0,
         }
-        assert documents["documents"][0]["kind"] == "payslip"
-        assert documents["documents"][0]["resource_id"] == payslip_id
-        assert documents["documents"][0]["reference"] == "2026-09"
-        assert documents["documents"][0]["download_url"].endswith(
+        payslip_document = next(
+            item for item in documents["documents"] if item["kind"] == "payslip"
+        )
+        assert payslip_document["resource_id"] == payslip_id
+        assert payslip_document["reference"] == "2026-09"
+        assert payslip_document["download_url"].endswith(
             f"/work/payslips/{payslip_id}/attachments/{att_id}/download"
+        )
+        contract_document = next(
+            item
+            for item in documents["documents"]
+            if item["kind"] == "work_contract"
+        )
+        assert contract_document["resource_id"] == contract_id
+        assert contract_document["reference"] == "2024-01-15"
+        assert contract_document["download_url"].endswith(
+            f"/work/contracts/{contract_id}/attachments/"
+            f"{contract_attachment_id}/download"
         )
 
         # Get pension profile (default created)
@@ -129,20 +175,62 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
         assert res_p_up.status_code == 200
         assert res_p_up.json()["estimated_monthly_pension"] == "2600.00"
 
-        # Delete attachment
+        # Delete attachments
+        del_contract_att = client.delete(
+            f"/api/work/contracts/{contract_id}/attachments/"
+            f"{contract_attachment_id}"
+        )
+        assert del_contract_att.status_code == 204
+        assert not contract_file.exists()
+        assert client.get("/api/documents").json()["stats"]["missing_resources"] == 1
+
         del_att = client.delete(
             f"/api/work/payslips/{payslip_id}/attachments/{att_id}"
         )
         assert del_att.status_code == 204
-        assert client.get("/api/documents").json()["stats"]["missing_resources"] == 1
+        assert client.get("/api/documents").json()["stats"]["missing_resources"] == 2
 
-        # Delete payslip
-        del_slip = client.delete(f"/api/work/payslips/{payslip_id}")
-        assert del_slip.status_code == 204
+        # Delete contract and its stored files without deleting the linked payslip files
+        replacement_attachment = client.post(
+            f"/api/work/contracts/{contract_id}/attachments",
+            files={
+                "file": (
+                    "avenant-acme.pdf",
+                    io.BytesIO(b"Fake amendment"),
+                    "application/pdf",
+                )
+            },
+        ).json()
+        replacement_file = tmp_path / replacement_attachment["stored_path"]
+        assert replacement_file.exists()
+        retained_payslip_attachment = client.post(
+            f"/api/work/payslips/{payslip_id}/attachments",
+            files={
+                "file": (
+                    "bulletin-conserve.pdf",
+                    io.BytesIO(file_payload),
+                    "application/pdf",
+                )
+            },
+        ).json()
+        retained_payslip_file = tmp_path / retained_payslip_attachment["stored_path"]
+        assert retained_payslip_file.exists()
 
-        # Delete contract
         del_contract = client.delete(f"/api/work/contracts/{contract_id}")
         assert del_contract.status_code == 204
+        assert not replacement_file.exists()
+        assert retained_payslip_file.exists()
+        retained_payslip = client.get(f"/api/work/payslips/{payslip_id}").json()
+        assert retained_payslip["contract_id"] is None
+        assert client.get(
+            f"/api/work/payslips/{payslip_id}/attachments/"
+            f"{retained_payslip_attachment['id']}/download"
+        ).content == file_payload
+
+        # Deleting the payslip still removes its own stored files
+        del_slip = client.delete(f"/api/work/payslips/{payslip_id}")
+        assert del_slip.status_code == 204
+        assert not retained_payslip_file.exists()
 
 
 def test_payslip_period_rejects_invalid_month(tmp_path, monkeypatch):
