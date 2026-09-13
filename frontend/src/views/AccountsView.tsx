@@ -167,10 +167,10 @@ export function AccountsView({
     useState<InstitutionHistoryRange>('max')
   const [collapsedInstitutions, setCollapsedInstitutions] = useState<Set<string>>(new Set())
   const institutionHistory = useQuery({
-    queryKey: ['account-institution-history', showArchived, typeFilter],
+    queryKey: ['account-institution-history', typeFilter],
     queryFn: () => apiGet<AccountInstitutionHistoryPoint[]>(
       `/accounts/institution-history${queryString({
-        archived: showArchived,
+        include_archived: true,
         account_type: typeFilter === 'all' ? undefined : typeFilter,
       })}`,
     ),
@@ -302,7 +302,7 @@ export function AccountsView({
         )}
         className="account-history-panel"
         title="Évolution des soldes par établissement"
-        subtitle="Une série distincte par établissement et entité régionale"
+        subtitle="Comptes actifs et archivés, regroupés par établissement et entité régionale"
       >
         {visibleInstitutionChartSeries.length > 0 && (
           <div

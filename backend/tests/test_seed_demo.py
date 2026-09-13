@@ -24,7 +24,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     main, seed = _load_seed(tmp_path, monkeypatch)
     result = asyncio.run(seed.seed_demo())
     assert result.accounts == 10
-    assert result.snapshots == 309
+    assert result.snapshots == 312
     assert result.categories == 11
     assert result.recurring == 14
     assert result.debts == 4
@@ -44,6 +44,12 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert next(account for account in accounts if account["name"] == "PEA demo")[
             "balance"
         ] == "2634.00"
+        institution_history = client.get("/api/accounts/institution-history").json()
+        assert [
+            point["balance"]
+            for point in institution_history
+            if point["institution"] == "Crédit Agricole"
+        ] == ["900.00", "600.00", "250.00", "0.00"]
 
         recurring = client.get("/api/recurring").json()
         assert len(recurring) == 14
