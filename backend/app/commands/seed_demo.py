@@ -648,7 +648,16 @@ async def _seed(
         average_price=Decimal("175"),
         current_price=Decimal("185"),
     )
-    session.add_all([etf, bond, life_fund])
+    life_etf = Holding(
+        account_id=life_insurance.id,
+        name="ETF Monde",
+        symbol="EWLD",
+        asset_class="equity",
+        quantity=Decimal("2"),
+        average_price=Decimal("90"),
+        current_price=Decimal("102"),
+    )
+    session.add_all([etf, bond, life_fund, life_etf])
     await session.flush()
     session.add_all(
         [
@@ -681,6 +690,12 @@ async def _seed(
                 operation_type="buy",
                 quantity=Decimal("100"),
                 unit_price=money("175.00"),
+            ),
+            HoldingOperation(
+                holding_id=life_etf.id,
+                operation_type="buy",
+                quantity=Decimal("2"),
+                unit_price=money("90.00"),
             ),
         ]
     )
@@ -998,8 +1013,8 @@ async def _seed(
         recurring=int(total_recurring or 0),
         debts=4,
         real_estate_assets=2,
-        holdings=3,
-        holding_operations=5,
+        holdings=4,
+        holding_operations=6,
         contributions=contribution_count,
         households=1,
         goals=1,

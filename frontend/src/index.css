@@ -3092,7 +3092,7 @@ textarea:focus-visible {
 
 .holding-operation-list article {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 0.85rem;
   padding: 0.85rem;

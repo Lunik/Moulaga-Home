@@ -983,6 +983,39 @@ async def _holding_operations_chronological(
     )
 
 
+async def _holding_for_account(
+    session: AsyncSession,
+    source: Holding,
+    account_id: int,
+) -> tuple[Holding, bool]:
+    if source.account_id == account_id:
+        return source, False
+    existing = await session.scalar(
+        select(Holding)
+        .where(
+            Holding.account_id == account_id,
+            Holding.name == source.name,
+            Holding.symbol == source.symbol,
+            Holding.asset_class == source.asset_class,
+        )
+        .order_by(Holding.id)
+    )
+    if existing is not None:
+        return existing, False
+    return (
+        Holding(
+            account_id=account_id,
+            name=source.name,
+            symbol=source.symbol,
+            asset_class=source.asset_class,
+            quantity=Decimal("0"),
+            average_price=Decimal("0"),
+            current_price=Decimal(source.current_price),
+        ),
+        True,
+    )
+
+
 @router.get("/holdings", response_model=list[HoldingRead])
 async def list_holdings(
     account_id: int | None = None,
@@ -1037,6 +1070,48 @@ async def update_holding(
         raise HTTPException(status_code=404, detail="Actif introuvable")
     await require_account(session, holding.account_id, writable=True)
     data = payload.model_dump(exclude_unset=True)
+    target_account_id = data.pop("account_id", holding.account_id)
+    if target_account_id != holding.account_id:
+        await require_holding_account(session, target_account_id, writable=True)
+        destination, is_new_destination = await _holding_for_account(
+            session,
+            holding,
+            target_account_id,
+        )
+        if is_new_destination:
+            holding.account_id = target_account_id
+        else:
+            source_operations = await _holding_operations_chronological(
+                session,
+                holding.id,
+            )
+            destination_operations = await _holding_operations_chronological(
+                session,
+                destination.id,
+            )
+            for operation in source_operations:
+                operation.holding_id = destination.id
+            quantity, average_price = _replayed_holding_position(
+                sorted(
+                    [*source_operations, *destination_operations],
+                    key=lambda row: (row.created_at, row.id),
+                )
+            )
+            contributions = (
+                await session.execute(
+                    select(Contribution).where(Contribution.holding_id == holding.id)
+                )
+            ).scalars().all()
+            for contribution in contributions:
+                contribution.holding_id = destination.id
+            destination.quantity = quantity
+            destination.average_price = average_price
+            for field, value in data.items():
+                setattr(destination, field, value)
+            await session.delete(holding)
+            await session.commit()
+            await session.refresh(destination)
+            return await _holding_response(session, destination)
     for field, value in data.items():
         setattr(holding, field, value)
     await session.commit()
@@ -1084,10 +1159,21 @@ async def create_holding_operation(
     session: AsyncSession = Depends(get_session),
 ) -> HoldingOperationResult:
     if payload.holding_id is not None:
-        holding = await session.get(Holding, payload.holding_id)
-        if holding is None:
+        source_holding = await session.get(Holding, payload.holding_id)
+        if source_holding is None:
             raise HTTPException(status_code=404, detail="Actif introuvable")
-        await require_account(session, holding.account_id, writable=True)
+        await require_account(session, source_holding.account_id, writable=True)
+        target_account_id = (
+            payload.target_account_id
+            if payload.target_account_id is not None
+            else source_holding.account_id
+        )
+        await require_holding_account(session, target_account_id, writable=True)
+        holding, is_new_holding = await _holding_for_account(
+            session,
+            source_holding,
+            target_account_id,
+        )
     else:
         new_holding = payload.new_holding
         if new_holding is None:
@@ -1099,8 +1185,7 @@ async def create_holding_operation(
             average_price=Decimal("0"),
             current_price=money(payload.unit_price),
         )
-        session.add(holding)
-        await session.flush()
+        is_new_holding = True
 
     current_quantity = Decimal(holding.quantity)
     operation_quantity = Decimal(payload.quantity)
@@ -1109,6 +1194,10 @@ async def create_holding_operation(
             status_code=422,
             detail="La quantite vendue depasse la position disponible",
         )
+
+    if is_new_holding:
+        session.add(holding)
+        await session.flush()
 
     if payload.operation_type == "buy":
         new_quantity = current_quantity + operation_quantity
@@ -1157,25 +1246,96 @@ async def update_holding_operation(
     if operation is None or operation.holding_id != holding_id:
         raise HTTPException(status_code=404, detail="Operation introuvable")
 
-    quantity, average_price = _replayed_holding_position(
-        await _holding_operations_chronological(session, holding_id),
-        updated_operation_id=operation_id,
-        updated_operation_type=payload.operation_type,
-        updated_quantity=Decimal(payload.quantity),
-        updated_unit_price=money(payload.unit_price),
+    target_account_id = (
+        payload.target_account_id
+        if payload.target_account_id is not None
+        else holding.account_id
     )
+    await require_holding_account(session, target_account_id, writable=True)
+    destination, is_new_destination = await _holding_for_account(
+        session,
+        holding,
+        target_account_id,
+    )
+    source_operations = await _holding_operations_chronological(session, holding_id)
+    if destination is holding:
+        source_quantity, source_average_price = _replayed_holding_position(
+            source_operations,
+            updated_operation_id=operation_id,
+            updated_operation_type=payload.operation_type,
+            updated_quantity=Decimal(payload.quantity),
+            updated_unit_price=money(payload.unit_price),
+        )
+        destination_quantity = source_quantity
+        destination_average_price = source_average_price
+    else:
+        source_quantity, source_average_price = _replayed_holding_position(
+            [row for row in source_operations if row.id != operation_id]
+        )
+        destination_operations = await _holding_operations_chronological(
+            session,
+            destination.id,
+        ) if not is_new_destination else []
+        destination_operations.append(operation)
+        destination_operations.sort(key=lambda row: (row.created_at, row.id))
+        destination_quantity, destination_average_price = _replayed_holding_position(
+            destination_operations,
+            updated_operation_id=operation_id,
+            updated_operation_type=payload.operation_type,
+            updated_quantity=Decimal(payload.quantity),
+            updated_unit_price=money(payload.unit_price),
+        )
+
+    if is_new_destination:
+        session.add(destination)
+        await session.flush()
     operation.operation_type = payload.operation_type
     operation.quantity = Decimal(payload.quantity)
     operation.unit_price = money(payload.unit_price)
-    holding.quantity = quantity
-    holding.average_price = average_price
+    operation.holding_id = destination.id
+    holding.quantity = source_quantity
+    holding.average_price = source_average_price
+    destination.quantity = destination_quantity
+    destination.average_price = destination_average_price
     await session.commit()
-    await session.refresh(holding)
+    await session.refresh(destination)
     await session.refresh(operation)
     return HoldingOperationResult(
-        holding=await _holding_response(session, holding),
+        holding=await _holding_response(session, destination),
         operation=_holding_operation_read(operation),
     )
+
+
+@router.delete(
+    "/holdings/{holding_id}/operations/{operation_id}",
+    response_model=HoldingRead,
+)
+async def delete_holding_operation(
+    holding_id: int,
+    operation_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> HoldingRead:
+    holding = await session.get(Holding, holding_id)
+    if holding is None:
+        raise HTTPException(status_code=404, detail="Actif introuvable")
+    await require_account(session, holding.account_id, writable=True)
+    operation = await session.get(HoldingOperation, operation_id)
+    if operation is None or operation.holding_id != holding_id:
+        raise HTTPException(status_code=404, detail="Operation introuvable")
+
+    quantity, average_price = _replayed_holding_position(
+        [
+            row
+            for row in await _holding_operations_chronological(session, holding_id)
+            if row.id != operation_id
+        ]
+    )
+    holding.quantity = quantity
+    holding.average_price = average_price
+    await session.delete(operation)
+    await session.commit()
+    await session.refresh(holding)
+    return await _holding_response(session, holding)
 
 
 # --------------------------------------------------------------------------- #
