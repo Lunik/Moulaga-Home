@@ -16,8 +16,8 @@ export function apiPut<T>(path: string, body: unknown): Promise<T> {
   return apiRequest<T>(path, { method: 'PUT', body: jsonBody(body) })
 }
 
-export function apiDelete(path: string): Promise<void> {
-  return apiRequest<void>(path, { method: 'DELETE' })
+export function apiDelete<T = void>(path: string): Promise<T> {
+  return apiRequest<T>(path, { method: 'DELETE' })
 }
 
 export function apiUpload<T>(path: string, body: FormData): Promise<T> {

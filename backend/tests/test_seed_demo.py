@@ -36,8 +36,8 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.recurring == 14
     assert result.debts == 4
     assert result.real_estate_assets == 2
-    assert result.holdings == 3
-    assert result.holding_operations == 5
+    assert result.holdings == 4
+    assert result.holding_operations == 6
     assert result.households == 1
     assert result.snapshot_attachments == 2
     assert result.recurring_attachments == 2
@@ -158,7 +158,10 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert net_worth["net_worth"] != "0.00"
         assert client.get("/api/networth/history").json()
         holdings = client.get("/api/holdings").json()
-        etf = next(item for item in holdings if item["name"] == "ETF Monde")
+        etfs = [item for item in holdings if item["name"] == "ETF Monde"]
+        assert len(etfs) == 2
+        assert len({item["account_id"] for item in etfs}) == 2
+        etf = next(item for item in etfs if item["quantity"] == "12.000000")
         assert etf["quantity"] == "12.000000"
         assert etf["average_price"] == "85.000000"
         assert etf["operation_count"] == 3

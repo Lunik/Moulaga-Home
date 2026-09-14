@@ -780,11 +780,19 @@ class HoldingCreate(BaseModel):
 
 
 class HoldingUpdate(BaseModel):
+    account_id: int | None = None
     name: str | None = Field(default=None, min_length=1, max_length=120)
     symbol: str | None = Field(default=None, max_length=32)
     current_price: Decimal | None = Field(
         default=None, ge=0, max_digits=12, decimal_places=2
     )
+
+    @field_validator("account_id")
+    @classmethod
+    def reject_null_account_id(cls, value: int | None) -> int:
+        if value is None:
+            raise ValueError("Ce champ ne peut pas etre nul")
+        return value
 
     @field_validator("name")
     @classmethod
@@ -824,6 +832,7 @@ class NewHoldingForOperation(BaseModel):
 class HoldingOperationCreate(BaseModel):
     holding_id: int | None = None
     new_holding: NewHoldingForOperation | None = None
+    target_account_id: int | None = None
     operation_type: Literal["buy", "sell"]
     quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
     unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
@@ -838,6 +847,7 @@ class HoldingOperationCreate(BaseModel):
 
 
 class HoldingOperationUpdate(BaseModel):
+    target_account_id: int | None = None
     operation_type: Literal["buy", "sell"]
     quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
     unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)

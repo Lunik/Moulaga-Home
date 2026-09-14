@@ -585,6 +585,18 @@ def test_holding_operations_create_and_update_positions(client):
     assert unchanged["quantity"] == "3.000000"
     assert unchanged["average_price"] == "80.000000"
 
+    deleted = client.delete(
+        f"/api/holdings/{holding['id']}/operations/{sale.json()['operation']['id']}"
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["quantity"] == "7.000000"
+    assert deleted.json()["average_price"] == "80.000000"
+    assert deleted.json()["operation_count"] == 2
+    invalid_delete = client.delete(
+        f"/api/holdings/{holding['id']}/operations/{initial_purchase_operation['id']}"
+    )
+    assert invalid_delete.status_code == 422
+
 
 def test_holding_edit_only_updates_metadata_and_current_price(client):
     investment = client.post(
@@ -619,6 +631,130 @@ def test_holding_edit_only_updates_metadata_and_current_price(client):
     )
     assert forbidden_position_edit.status_code == 200
     assert forbidden_position_edit.json()["quantity"] == "2.000000"
+
+
+def test_holding_and_operations_can_move_between_accounts(client):
+    first_account = client.post(
+        "/api/accounts",
+        json={"name": "PEA source", "type": "pea", "initial_balance": "0.00"},
+    ).json()
+    second_account = client.post(
+        "/api/accounts",
+        json={"name": "CTO cible", "type": "securities", "initial_balance": "0.00"},
+    ).json()
+    moved_holding = client.post(
+        "/api/holding-operations",
+        json={
+            "new_holding": {
+                "account_id": first_account["id"],
+                "name": "Action mobile",
+                "symbol": "MOVE",
+            },
+            "operation_type": "buy",
+            "quantity": "2",
+            "unit_price": "25.00",
+        },
+    ).json()["holding"]
+    moved = client.patch(
+        f"/api/holdings/{moved_holding['id']}",
+        json={"account_id": second_account["id"]},
+    )
+    assert moved.status_code == 200
+    assert moved.json()["account_id"] == second_account["id"]
+
+    initial = client.post(
+        "/api/holding-operations",
+        json={
+            "new_holding": {
+                "account_id": first_account["id"],
+                "name": "ETF partagé",
+                "symbol": "SHARED",
+            },
+            "operation_type": "buy",
+            "quantity": "10",
+            "unit_price": "80.00",
+        },
+    ).json()
+    second_purchase = client.post(
+        "/api/holding-operations",
+        json={
+            "holding_id": initial["holding"]["id"],
+            "target_account_id": second_account["id"],
+            "operation_type": "buy",
+            "quantity": "5",
+            "unit_price": "100.00",
+        },
+    )
+    assert second_purchase.status_code == 201
+    second_holding = second_purchase.json()["holding"]
+    assert second_holding["account_id"] == second_account["id"]
+    assert second_holding["quantity"] == "5.000000"
+    shared_holdings = [
+        item for item in client.get("/api/holdings").json()
+        if item["symbol"] == "SHARED"
+    ]
+    assert len(shared_holdings) == 2
+    assert {item["account_id"] for item in shared_holdings} == {
+        first_account["id"],
+        second_account["id"],
+    }
+
+    operation = client.get(
+        f"/api/holdings/{initial['holding']['id']}/operations"
+    ).json()[0]
+    moved_operation = client.patch(
+        f"/api/holdings/{initial['holding']['id']}/operations/{operation['id']}",
+        json={
+            "target_account_id": second_account["id"],
+            "operation_type": "buy",
+            "quantity": "10",
+            "unit_price": "80.00",
+        },
+    )
+    assert moved_operation.status_code == 200
+    assert moved_operation.json()["holding"]["id"] == second_holding["id"]
+    assert moved_operation.json()["holding"]["quantity"] == "15.000000"
+    assert moved_operation.json()["holding"]["average_price"] == "86.666667"
+    source_holding = next(
+        item for item in client.get("/api/holdings").json()
+        if item["id"] == initial["holding"]["id"]
+    )
+    assert source_holding["quantity"] == "0.000000"
+    assert source_holding["operation_count"] == 0
+
+    third_account = client.post(
+        "/api/accounts",
+        json={"name": "PEA secondaire", "type": "pea", "initial_balance": "0.00"},
+    ).json()
+    third_holding = client.post(
+        "/api/holding-operations",
+        json={
+            "new_holding": {
+                "account_id": third_account["id"],
+                "name": "ETF partagé",
+                "symbol": "SHARED",
+            },
+            "operation_type": "buy",
+            "quantity": "3",
+            "unit_price": "90.00",
+        },
+    ).json()["holding"]
+    merged = client.patch(
+        f"/api/holdings/{third_holding['id']}",
+        json={"account_id": second_account["id"]},
+    )
+    assert merged.status_code == 200
+    assert merged.json()["id"] == second_holding["id"]
+    assert merged.json()["quantity"] == "18.000000"
+    assert merged.json()["average_price"] == "87.222222"
+    shared_holdings = [
+        item for item in client.get("/api/holdings").json()
+        if item["symbol"] == "SHARED"
+    ]
+    assert {item["account_id"] for item in shared_holdings} == {
+        first_account["id"],
+        second_account["id"],
+    }
 
 
 def test_household_roles_shared_balance_and_goals(client):
