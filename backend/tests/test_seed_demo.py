@@ -36,8 +36,8 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.recurring == 14
     assert result.debts == 4
     assert result.real_estate_assets == 2
-    assert result.holdings == 4
-    assert result.holding_operations == 6
+    assert result.holdings == 5
+    assert result.holding_operations == 7
     assert result.households == 1
     assert result.snapshot_attachments == 2
     assert result.recurring_attachments == 2
@@ -161,15 +161,19 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         etfs = [item for item in holdings if item["name"] == "ETF Monde"]
         assert len(etfs) == 2
         assert len({item["account_id"] for item in etfs}) == 2
-        etf = next(item for item in etfs if item["quantity"] == "12.000000")
-        assert etf["quantity"] == "12.000000"
+        etf = next(item for item in etfs if item["quantity"] == "12.0000000000")
+        assert etf["quantity"] == "12.0000000000"
         assert etf["average_price"] == "85.000000"
         assert etf["operation_count"] == 3
+        bitcoin = next(item for item in holdings if item["symbol"] == "BTC")
+        assert bitcoin["asset_class"] == "crypto"
+        assert bitcoin["quantity"] == "0.1250000001"
+        assert bitcoin["operation_count"] == 1
         operations = client.get(f"/api/holdings/{etf['id']}/operations").json()
         assert len(operations) == 3
         assert {item["operation_type"] for item in operations} == {"buy", "sell"}
         all_operations = client.get("/api/holding-operations").json()
-        assert len(all_operations) == 6
+        assert len(all_operations) == 7
         assert [item["occurred_on"] for item in all_operations] == sorted(
             [item["occurred_on"] for item in all_operations],
             reverse=True,

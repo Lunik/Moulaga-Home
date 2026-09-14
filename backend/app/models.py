@@ -309,7 +309,7 @@ class Holding(Base):
     name: Mapped[str] = mapped_column(String(120))
     symbol: Mapped[str | None] = mapped_column(String(32), nullable=True)
     asset_class: Mapped[str] = mapped_column(String(32), default="equity")
-    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0"))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(22, 10), default=Decimal("0"))
     average_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0"))
     current_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -331,7 +331,7 @@ class HoldingOperation(Base):
         ForeignKey("holdings.id", ondelete="CASCADE"), index=True
     )
     operation_type: Mapped[str] = mapped_column(String(8))
-    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(22, 10))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     occurred_on: Mapped[date] = mapped_column(Date, index=True, default=date.today)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
