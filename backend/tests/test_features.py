@@ -474,6 +474,153 @@ def test_portfolio_and_net_worth_do_not_double_count_investment_accounts(client)
     assert net_worth["net_worth"] == "1500.00"
 
 
+def test_holding_operations_create_and_update_positions(client):
+    investment = client.post(
+        "/api/accounts",
+        json={"name": "PEA operations", "type": "pea", "initial_balance": "0.00"},
+    ).json()
+    first_purchase = client.post(
+        "/api/holding-operations",
+        json={
+            "new_holding": {
+                "account_id": investment["id"],
+                "name": "ETF Synthétique",
+                "symbol": "TEST",
+                "asset_class": "equity",
+            },
+            "operation_type": "buy",
+            "quantity": "10",
+            "unit_price": "80.00",
+        },
+    )
+    assert first_purchase.status_code == 201
+    holding = first_purchase.json()["holding"]
+    assert holding["quantity"] == "10.000000"
+    assert holding["average_price"] == "80.000000"
+    assert holding["current_price"] == "80.000000"
+    assert holding["operation_count"] == 1
+    assert first_purchase.json()["operation"]["quantity_delta"] == "10.000000"
+    assert first_purchase.json()["operation"]["cash_flow"] == "-800.00"
+
+    second_purchase = client.post(
+        "/api/holding-operations",
+        json={
+            "holding_id": holding["id"],
+            "operation_type": "buy",
+            "quantity": "5",
+            "unit_price": "110.00",
+        },
+    )
+    assert second_purchase.status_code == 201
+    holding = second_purchase.json()["holding"]
+    assert holding["quantity"] == "15.000000"
+    assert holding["average_price"] == "90.000000"
+    assert holding["operation_count"] == 2
+
+    sale = client.post(
+        "/api/holding-operations",
+        json={
+            "holding_id": holding["id"],
+            "operation_type": "sell",
+            "quantity": "4",
+            "unit_price": "120.00",
+        },
+    )
+    assert sale.status_code == 201
+    assert sale.json()["holding"]["quantity"] == "11.000000"
+    assert sale.json()["holding"]["average_price"] == "90.000000"
+    assert sale.json()["operation"]["quantity_delta"] == "-4.000000"
+    assert sale.json()["operation"]["cash_flow"] == "480.00"
+
+    excessive_sale = client.post(
+        "/api/holding-operations",
+        json={
+            "holding_id": holding["id"],
+            "operation_type": "sell",
+            "quantity": "12",
+            "unit_price": "120.00",
+        },
+    )
+    assert excessive_sale.status_code == 422
+    refreshed = next(
+        item for item in client.get("/api/holdings").json()
+        if item["id"] == holding["id"]
+    )
+    assert refreshed["quantity"] == "11.000000"
+    assert refreshed["operation_count"] == 3
+
+    operations = client.get(f"/api/holdings/{holding['id']}/operations").json()
+    assert len(operations) == 3
+    assert [item["operation_type"] for item in operations] == ["sell", "buy", "buy"]
+
+    second_purchase_operation = operations[1]
+    edited = client.patch(
+        f"/api/holdings/{holding['id']}/operations/{second_purchase_operation['id']}",
+        json={
+            "operation_type": "sell",
+            "quantity": "3",
+            "unit_price": "115.00",
+        },
+    )
+    assert edited.status_code == 200
+    assert edited.json()["operation"]["operation_type"] == "sell"
+    assert edited.json()["operation"]["cash_flow"] == "345.00"
+    assert edited.json()["holding"]["quantity"] == "3.000000"
+    assert edited.json()["holding"]["average_price"] == "80.000000"
+
+    initial_purchase_operation = operations[2]
+    invalid_edit = client.patch(
+        f"/api/holdings/{holding['id']}/operations/{initial_purchase_operation['id']}",
+        json={
+            "operation_type": "sell",
+            "quantity": "1",
+            "unit_price": "80.00",
+        },
+    )
+    assert invalid_edit.status_code == 422
+    unchanged = next(
+        item for item in client.get("/api/holdings").json()
+        if item["id"] == holding["id"]
+    )
+    assert unchanged["quantity"] == "3.000000"
+    assert unchanged["average_price"] == "80.000000"
+
+
+def test_holding_edit_only_updates_metadata_and_current_price(client):
+    investment = client.post(
+        "/api/accounts",
+        json={"name": "CTO operations", "type": "securities", "initial_balance": "0.00"},
+    ).json()
+    created = client.post(
+        "/api/holding-operations",
+        json={
+            "new_holding": {
+                "account_id": investment["id"],
+                "name": "Ancien nom",
+                "symbol": "OLD",
+            },
+            "operation_type": "buy",
+            "quantity": "2",
+            "unit_price": "50.00",
+        },
+    ).json()["holding"]
+    updated = client.patch(
+        f"/api/holdings/{created['id']}",
+        json={"name": "Nouveau nom", "symbol": "NEW", "current_price": "75.00"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Nouveau nom"
+    assert updated.json()["symbol"] == "NEW"
+    assert updated.json()["current_price"] == "75.000000"
+    assert updated.json()["quantity"] == "2.000000"
+    forbidden_position_edit = client.patch(
+        f"/api/holdings/{created['id']}",
+        json={"quantity": "99"},
+    )
+    assert forbidden_position_edit.status_code == 200
+    assert forbidden_position_edit.json()["quantity"] == "2.000000"
+
+
 def test_household_roles_shared_balance_and_goals(client):
     account_id = _account_id(client)
     client.put(

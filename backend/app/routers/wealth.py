@@ -29,6 +29,7 @@ from ..models import (
     Debt,
     DebtAttachment,
     Holding,
+    HoldingOperation,
     PortfolioSnapshot,
     RealEstateAsset,
     RealEstateAttachment,
@@ -45,6 +46,10 @@ from ..schemas import (
     DebtRead,
     DebtUpdate,
     HoldingCreate,
+    HoldingOperationCreate,
+    HoldingOperationRead,
+    HoldingOperationResult,
+    HoldingOperationUpdate,
     HoldingRead,
     HoldingUpdate,
     NetWorthOverview,
@@ -878,7 +883,7 @@ async def delete_real_estate_attachment(
 # --------------------------------------------------------------------------- #
 # Holdings
 # --------------------------------------------------------------------------- #
-def _holding_read(holding: Holding) -> HoldingRead:
+def _holding_read(holding: Holding, operation_count: int = 0) -> HoldingRead:
     quantity = Decimal(holding.quantity)
     cost_basis = money(quantity * Decimal(holding.average_price))
     market_value = money(quantity * Decimal(holding.current_price))
@@ -894,6 +899,87 @@ def _holding_read(holding: Holding) -> HoldingRead:
         cost_basis=cost_basis,
         market_value=market_value,
         gain=money(market_value - cost_basis),
+        operation_count=operation_count,
+    )
+
+
+async def _holding_response(session: AsyncSession, holding: Holding) -> HoldingRead:
+    operation_count = await session.scalar(
+        select(func.count())
+        .select_from(HoldingOperation)
+        .where(HoldingOperation.holding_id == holding.id)
+    )
+    return _holding_read(holding, int(operation_count or 0))
+
+
+def _holding_operation_read(operation: HoldingOperation) -> HoldingOperationRead:
+    quantity = Decimal(operation.quantity)
+    total_value = money(quantity * Decimal(operation.unit_price))
+    is_buy = operation.operation_type == "buy"
+    return HoldingOperationRead(
+        id=operation.id,
+        holding_id=operation.holding_id,
+        operation_type=operation.operation_type,
+        quantity=quantity,
+        unit_price=money(operation.unit_price),
+        total_value=total_value,
+        quantity_delta=quantity if is_buy else -quantity,
+        cash_flow=-total_value if is_buy else total_value,
+        created_at=operation.created_at,
+    )
+
+
+def _replayed_holding_position(
+    operations: list[HoldingOperation],
+    *,
+    updated_operation_id: int | None = None,
+    updated_operation_type: str | None = None,
+    updated_quantity: Decimal | None = None,
+    updated_unit_price: Decimal | None = None,
+) -> tuple[Decimal, Decimal]:
+    quantity = Decimal("0")
+    average_price = Decimal("0")
+    for operation in operations:
+        is_updated = operation.id == updated_operation_id
+        operation_type = (
+            updated_operation_type if is_updated and updated_operation_type else operation.operation_type
+        )
+        operation_quantity = (
+            updated_quantity if is_updated and updated_quantity is not None else Decimal(operation.quantity)
+        )
+        unit_price = (
+            updated_unit_price if is_updated and updated_unit_price is not None
+            else Decimal(operation.unit_price)
+        )
+        if operation_type == "buy":
+            new_quantity = quantity + operation_quantity
+            total_cost = quantity * average_price + operation_quantity * unit_price
+            quantity = new_quantity
+            average_price = (total_cost / new_quantity).quantize(Decimal("0.000001"))
+        else:
+            if operation_quantity > quantity:
+                raise HTTPException(
+                    status_code=422,
+                    detail="La quantite vendue depasse la position disponible a cette date",
+                )
+            quantity -= operation_quantity
+            if quantity == 0:
+                average_price = Decimal("0")
+    return quantity, average_price
+
+
+async def _holding_operations_chronological(
+    session: AsyncSession,
+    holding_id: int,
+) -> list[HoldingOperation]:
+    return list(
+        (
+            await session.execute(
+                select(HoldingOperation)
+                .where(HoldingOperation.holding_id == holding_id)
+                .order_by(HoldingOperation.created_at, HoldingOperation.id)
+            )
+        ).scalars().all()
     )
 
 
@@ -908,7 +994,16 @@ async def list_holdings(
             raise HTTPException(status_code=404, detail="Compte introuvable")
         statement = statement.where(Holding.account_id == account_id)
     rows = (await session.execute(statement)).scalars().all()
-    return [_holding_read(row) for row in rows]
+    operation_counts = {
+        holding_id: count
+        for holding_id, count in (
+            await session.execute(
+                select(HoldingOperation.holding_id, func.count(HoldingOperation.id))
+                .group_by(HoldingOperation.holding_id)
+            )
+        ).all()
+    }
+    return [_holding_read(row, int(operation_counts.get(row.id, 0))) for row in rows]
 
 
 @router.post("/holdings", response_model=HoldingRead, status_code=201)
@@ -918,9 +1013,19 @@ async def create_holding(
     await require_holding_account(session, payload.account_id, writable=True)
     holding = Holding(**payload.model_dump())
     session.add(holding)
+    await session.flush()
+    if Decimal(holding.quantity) > 0:
+        session.add(
+            HoldingOperation(
+                holding_id=holding.id,
+                operation_type="buy",
+                quantity=Decimal(holding.quantity),
+                unit_price=money(holding.average_price),
+            )
+        )
     await session.commit()
     await session.refresh(holding)
-    return _holding_read(holding)
+    return await _holding_response(session, holding)
 
 
 @router.patch("/holdings/{holding_id}", response_model=HoldingRead)
@@ -932,13 +1037,11 @@ async def update_holding(
         raise HTTPException(status_code=404, detail="Actif introuvable")
     await require_account(session, holding.account_id, writable=True)
     data = payload.model_dump(exclude_unset=True)
-    if "account_id" in data:
-        await require_holding_account(session, data["account_id"], writable=True)
     for field, value in data.items():
         setattr(holding, field, value)
     await session.commit()
     await session.refresh(holding)
-    return _holding_read(holding)
+    return await _holding_response(session, holding)
 
 
 @router.delete("/holdings/{holding_id}", status_code=204)
@@ -949,6 +1052,130 @@ async def delete_holding(holding_id: int, session: AsyncSession = Depends(get_se
     await require_account(session, holding.account_id, writable=True)
     await session.delete(holding)
     await session.commit()
+
+
+@router.get(
+    "/holdings/{holding_id}/operations",
+    response_model=list[HoldingOperationRead],
+)
+async def list_holding_operations(
+    holding_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[HoldingOperationRead]:
+    if await session.get(Holding, holding_id) is None:
+        raise HTTPException(status_code=404, detail="Actif introuvable")
+    rows = (
+        await session.execute(
+            select(HoldingOperation)
+            .where(HoldingOperation.holding_id == holding_id)
+            .order_by(HoldingOperation.created_at.desc(), HoldingOperation.id.desc())
+        )
+    ).scalars().all()
+    return [_holding_operation_read(row) for row in rows]
+
+
+@router.post(
+    "/holding-operations",
+    response_model=HoldingOperationResult,
+    status_code=201,
+)
+async def create_holding_operation(
+    payload: HoldingOperationCreate,
+    session: AsyncSession = Depends(get_session),
+) -> HoldingOperationResult:
+    if payload.holding_id is not None:
+        holding = await session.get(Holding, payload.holding_id)
+        if holding is None:
+            raise HTTPException(status_code=404, detail="Actif introuvable")
+        await require_account(session, holding.account_id, writable=True)
+    else:
+        new_holding = payload.new_holding
+        if new_holding is None:
+            raise HTTPException(status_code=422, detail="Nouvel actif manquant")
+        await require_holding_account(session, new_holding.account_id, writable=True)
+        holding = Holding(
+            **new_holding.model_dump(),
+            quantity=Decimal("0"),
+            average_price=Decimal("0"),
+            current_price=money(payload.unit_price),
+        )
+        session.add(holding)
+        await session.flush()
+
+    current_quantity = Decimal(holding.quantity)
+    operation_quantity = Decimal(payload.quantity)
+    if payload.operation_type == "sell" and operation_quantity > current_quantity:
+        raise HTTPException(
+            status_code=422,
+            detail="La quantite vendue depasse la position disponible",
+        )
+
+    if payload.operation_type == "buy":
+        new_quantity = current_quantity + operation_quantity
+        total_cost = (
+            current_quantity * Decimal(holding.average_price)
+            + operation_quantity * Decimal(payload.unit_price)
+        )
+        holding.quantity = new_quantity
+        holding.average_price = (total_cost / new_quantity).quantize(Decimal("0.000001"))
+    else:
+        holding.quantity = current_quantity - operation_quantity
+        if Decimal(holding.quantity) == 0:
+            holding.average_price = Decimal("0")
+
+    operation = HoldingOperation(
+        holding_id=holding.id,
+        operation_type=payload.operation_type,
+        quantity=operation_quantity,
+        unit_price=money(payload.unit_price),
+    )
+    session.add(operation)
+    await session.commit()
+    await session.refresh(holding)
+    await session.refresh(operation)
+    return HoldingOperationResult(
+        holding=await _holding_response(session, holding),
+        operation=_holding_operation_read(operation),
+    )
+
+
+@router.patch(
+    "/holdings/{holding_id}/operations/{operation_id}",
+    response_model=HoldingOperationResult,
+)
+async def update_holding_operation(
+    holding_id: int,
+    operation_id: int,
+    payload: HoldingOperationUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> HoldingOperationResult:
+    holding = await session.get(Holding, holding_id)
+    if holding is None:
+        raise HTTPException(status_code=404, detail="Actif introuvable")
+    await require_account(session, holding.account_id, writable=True)
+    operation = await session.get(HoldingOperation, operation_id)
+    if operation is None or operation.holding_id != holding_id:
+        raise HTTPException(status_code=404, detail="Operation introuvable")
+
+    quantity, average_price = _replayed_holding_position(
+        await _holding_operations_chronological(session, holding_id),
+        updated_operation_id=operation_id,
+        updated_operation_type=payload.operation_type,
+        updated_quantity=Decimal(payload.quantity),
+        updated_unit_price=money(payload.unit_price),
+    )
+    operation.operation_type = payload.operation_type
+    operation.quantity = Decimal(payload.quantity)
+    operation.unit_price = money(payload.unit_price)
+    holding.quantity = quantity
+    holding.average_price = average_price
+    await session.commit()
+    await session.refresh(holding)
+    await session.refresh(operation)
+    return HoldingOperationResult(
+        holding=await _holding_response(session, holding),
+        operation=_holding_operation_read(operation),
+    )
 
 
 # --------------------------------------------------------------------------- #

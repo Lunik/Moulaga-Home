@@ -318,6 +318,24 @@ class Holding(Base):
     contributions: Mapped[list[Contribution]] = relationship(
         back_populates="holding", cascade="all, delete-orphan"
     )
+    operations: Mapped[list[HoldingOperation]] = relationship(
+        back_populates="holding", cascade="all, delete-orphan"
+    )
+
+
+class HoldingOperation(Base):
+    __tablename__ = "holding_operations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    holding_id: Mapped[int] = mapped_column(
+        ForeignKey("holdings.id", ondelete="CASCADE"), index=True
+    )
+    operation_type: Mapped[str] = mapped_column(String(8))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    holding: Mapped[Holding] = relationship(back_populates="operations")
 
 
 class Contribution(Base):

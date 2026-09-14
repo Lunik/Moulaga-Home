@@ -319,6 +319,24 @@ export interface Holding {
   market_value: Money
   cost_basis: Money
   gain: Money
+  operation_count: number
+}
+
+export interface HoldingOperation {
+  id: number
+  holding_id: number
+  operation_type: 'buy' | 'sell'
+  quantity: string
+  unit_price: Money
+  total_value: Money
+  quantity_delta: string
+  cash_flow: Money
+  created_at: string
+}
+
+export interface HoldingOperationResult {
+  holding: Holding
+  operation: HoldingOperation
 }
 
 export interface InvestmentContribution {
