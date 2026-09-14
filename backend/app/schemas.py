@@ -10,10 +10,19 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 HEX_COLOR = r"^#[0-9a-fA-F]{6}$"
 _MONEY = {"max_digits": 12, "decimal_places": 2}
+_QUANTITY = {"max_digits": 22, "decimal_places": 10}
+_MIN_QUANTITY = Decimal("0.0000000001")
 DEPRECATED_ACCOUNT_TYPES = frozenset({"investment"})
 
 
@@ -30,6 +39,10 @@ def _validate_period(value: str) -> str:
     except ValueError as exc:
         raise ValueError("Periode invalide") from exc
     return value
+
+
+def _serialize_quantity(value: Decimal) -> str:
+    return format(value, ".10f")
 
 
 # --------------------------------------------------------------------------- #
@@ -769,7 +782,7 @@ class HoldingCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     symbol: str | None = Field(default=None, max_length=32)
     asset_class: str = Field(default="equity", max_length=32)
-    quantity: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
+    quantity: Decimal = Field(ge=0, **_QUANTITY)
     average_price: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
     current_price: Decimal = Field(ge=0, max_digits=18, decimal_places=6)
 
@@ -816,6 +829,10 @@ class HoldingRead(BaseModel):
     gain: Decimal
     operation_count: int
 
+    @field_serializer("quantity")
+    def serialize_quantity(self, value: Decimal) -> str:
+        return _serialize_quantity(value)
+
 
 class NewHoldingForOperation(BaseModel):
     account_id: int
@@ -834,7 +851,7 @@ class HoldingOperationCreate(BaseModel):
     new_holding: NewHoldingForOperation | None = None
     target_account_id: int | None = None
     operation_type: Literal["buy", "sell"]
-    quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    quantity: Decimal = Field(ge=_MIN_QUANTITY, **_QUANTITY)
     unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     occurred_on: date = Field(default_factory=date.today)
 
@@ -850,7 +867,7 @@ class HoldingOperationCreate(BaseModel):
 class HoldingOperationUpdate(BaseModel):
     target_account_id: int | None = None
     operation_type: Literal["buy", "sell"]
-    quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    quantity: Decimal = Field(ge=_MIN_QUANTITY, **_QUANTITY)
     unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     occurred_on: date | None = None
 
@@ -866,6 +883,10 @@ class HoldingOperationRead(BaseModel):
     cash_flow: Decimal
     occurred_on: date
     created_at: datetime
+
+    @field_serializer("quantity", "quantity_delta")
+    def serialize_quantities(self, value: Decimal) -> str:
+        return _serialize_quantity(value)
 
 
 class HoldingOperationResult(BaseModel):

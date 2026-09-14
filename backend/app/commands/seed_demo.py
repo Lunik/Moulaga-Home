@@ -657,7 +657,16 @@ async def _seed(
         average_price=Decimal("90"),
         current_price=Decimal("102"),
     )
-    session.add_all([etf, bond, life_fund, life_etf])
+    bitcoin = Holding(
+        account_id=crypto_wallet.id,
+        name="Bitcoin demo",
+        symbol="BTC",
+        asset_class="crypto",
+        quantity=Decimal("0.1250000001"),
+        average_price=Decimal("42000"),
+        current_price=Decimal("45000"),
+    )
+    session.add_all([etf, bond, life_fund, life_etf, bitcoin])
     await session.flush()
     session.add_all(
         [
@@ -702,6 +711,13 @@ async def _seed(
                 quantity=Decimal("2"),
                 unit_price=money("90.00"),
                 occurred_on=months[1].replace(day=18),
+            ),
+            HoldingOperation(
+                holding_id=bitcoin.id,
+                operation_type="buy",
+                quantity=Decimal("0.1250000001"),
+                unit_price=money("42000.00"),
+                occurred_on=months[1].replace(day=21),
             ),
         ]
     )
@@ -1019,8 +1035,8 @@ async def _seed(
         recurring=int(total_recurring or 0),
         debts=4,
         real_estate_assets=2,
-        holdings=4,
-        holding_operations=6,
+        holdings=5,
+        holding_operations=7,
         contributions=contribution_count,
         households=1,
         goals=1,

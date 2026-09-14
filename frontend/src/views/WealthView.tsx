@@ -637,7 +637,7 @@ function HoldingRow({
       <span className="holding-copy">
         <strong>{holding.name}</strong>
         <small>
-          {formatQuantity(holding.quantity)} unité{Number(holding.quantity) === 1 ? '' : 's'} ·{' '}
+          {formatQuantity(holding.quantity, holding.asset_class)} unité{Number(holding.quantity) === 1 ? '' : 's'} ·{' '}
           {accounts.find((account) => account.id === holding.account_id)?.name ?? `Compte ${holding.account_id}`}
         </small>
         <button className="holding-operation-count" type="button" onClick={onShowOperations}>
@@ -790,7 +790,7 @@ function HoldingOperationsPanel({
                   <small>
                     {account?.name ?? `Compte ${holding.account_id}`} · {formatDate(operation.occurred_on)}
                     {' · '}{operation.operation_type === 'buy' ? '+' : '−'}
-                    {formatQuantity(String(quantity))} unité{quantity === 1 ? '' : 's'}
+                    {formatQuantity(String(quantity), holding.asset_class)} unité{quantity === 1 ? '' : 's'}
                     {' à '}{money(operation.unit_price)}
                   </small>
                 </span>
@@ -940,6 +940,7 @@ function HoldingOperationModal({
       ))
     : undefined
   const canSell = !isNew && Number(targetHolding?.quantity ?? 0) > 0
+  const quantityStep = holdingQuantityStep(isNew ? assetClass : selectedHolding?.asset_class)
   const mutation = useMutation({
     mutationFn: () => apiPost<HoldingOperationResult>('/holding-operations', {
       ...(isNew
@@ -1073,9 +1074,9 @@ function HoldingOperationModal({
           <Field label="Quantité">
             <FormInput
               type="number"
-              min="0.000001"
+              min={quantityStep}
               max={operationType === 'sell' ? targetHolding?.quantity : undefined}
-              step="0.000001"
+              step={quantityStep}
               value={quantity}
               onChange={(event) => setQuantity(event.target.value)}
               required
@@ -1086,7 +1087,7 @@ function HoldingOperationModal({
           </Field>
         </div>
         {operationType === 'sell' && targetHolding && (
-          <p className="modal-hint">Position disponible : {formatQuantity(targetHolding.quantity)} unités sur ce compte.</p>
+          <p className="modal-hint">Position disponible : {formatQuantity(targetHolding.quantity, targetHolding.asset_class)} unités sur ce compte.</p>
         )}
         {isNew && accounts.length === 0 && (
           <p className="form-error" role="alert">
@@ -1159,7 +1160,7 @@ function HoldingOperationsModal({
   return (
     <Modal
       title={`Opérations · ${currentHolding.name}`}
-      description={`${formatQuantity(currentHolding.quantity)} unités détenues · prix de revient ${money(currentHolding.average_price)}`}
+      description={`${formatQuantity(currentHolding.quantity, currentHolding.asset_class)} unités détenues · prix de revient ${money(currentHolding.average_price)}`}
       onClose={onClose}
       actions={<button className="text-button" type="button" onClick={onClose}>Fermer</button>}
     >
@@ -1176,7 +1177,7 @@ function HoldingOperationsModal({
               <span>
                 <strong className={Number(operation.quantity_delta) >= 0 ? 'positive' : 'negative'}>
                   {Number(operation.quantity_delta) >= 0 ? '+' : '−'}
-                  {formatQuantity(String(Math.abs(Number(operation.quantity_delta))))} unité
+                  {formatQuantity(String(Math.abs(Number(operation.quantity_delta))), currentHolding.asset_class)} unité
                   {Math.abs(Number(operation.quantity_delta)) === 1 ? '' : 's'}
                 </strong>
                 <small>{formatDate(operation.occurred_on)} · {money(operation.unit_price)} / unité</small>
@@ -1293,7 +1294,14 @@ function HoldingOperationEditModal({
             <FormInput type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} required />
           </Field>
           <Field label="Quantité">
-            <FormInput type="number" min="0.000001" step="0.000001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
+            <FormInput
+              type="number"
+              min={holdingQuantityStep(holding.asset_class)}
+              step={holdingQuantityStep(holding.asset_class)}
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+              required
+            />
           </Field>
           <Field label={operationType === 'buy' ? "Prix d'achat unitaire" : 'Prix de vente unitaire'}>
             <FormInput type="number" min="0.01" step="0.01" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} required />
@@ -2166,6 +2174,12 @@ function holdingGainPercent(holding: Holding): number {
     : 0
 }
 
-function formatQuantity(value: string): string {
-  return Number(value).toLocaleString('fr-FR', { maximumFractionDigits: 6 })
+function holdingQuantityStep(assetClass?: Holding['asset_class']): string {
+  return assetClass === 'crypto' ? '0.0000000001' : '0.000001'
+}
+
+function formatQuantity(value: string, assetClass?: Holding['asset_class']): string {
+  return Number(value).toLocaleString('fr-FR', {
+    maximumFractionDigits: assetClass === 'crypto' ? 10 : 6,
+  })
 }

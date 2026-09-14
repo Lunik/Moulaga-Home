@@ -242,12 +242,12 @@ def test_v21_database_backfills_existing_holding_as_initial_purchase(tmp_path, m
         )
         operations = client.get(f"/api/holdings/{holding['id']}/operations").json()
 
-    assert migrated["quantity"] == "7.500000"
+    assert migrated["quantity"] == "7.5000000000"
     assert migrated["average_price"] == "42.250000"
     assert migrated["operation_count"] == 1
     assert len(operations) == 1
     assert operations[0]["operation_type"] == "buy"
-    assert operations[0]["quantity"] == "7.500000"
+    assert operations[0]["quantity"] == "7.5000000000"
     assert operations[0]["unit_price"] == "42.25"
     assert operations[0]["occurred_on"] == operations[0]["created_at"][:10]
     assert len(list(tmp_path.glob("moulaga.backup-*.db"))) == 1

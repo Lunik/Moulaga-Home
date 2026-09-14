@@ -496,11 +496,11 @@ def test_holding_operations_create_and_update_positions(client):
     )
     assert first_purchase.status_code == 201
     holding = first_purchase.json()["holding"]
-    assert holding["quantity"] == "10.000000"
+    assert holding["quantity"] == "10.0000000000"
     assert holding["average_price"] == "80.000000"
     assert holding["current_price"] == "80.000000"
     assert holding["operation_count"] == 1
-    assert first_purchase.json()["operation"]["quantity_delta"] == "10.000000"
+    assert first_purchase.json()["operation"]["quantity_delta"] == "10.0000000000"
     assert first_purchase.json()["operation"]["cash_flow"] == "-800.00"
     assert first_purchase.json()["operation"]["occurred_on"] == "2026-01-10"
 
@@ -516,7 +516,7 @@ def test_holding_operations_create_and_update_positions(client):
     )
     assert second_purchase.status_code == 201
     holding = second_purchase.json()["holding"]
-    assert holding["quantity"] == "15.000000"
+    assert holding["quantity"] == "15.0000000000"
     assert holding["average_price"] == "90.000000"
     assert holding["operation_count"] == 2
 
@@ -531,9 +531,9 @@ def test_holding_operations_create_and_update_positions(client):
         },
     )
     assert sale.status_code == 201
-    assert sale.json()["holding"]["quantity"] == "11.000000"
+    assert sale.json()["holding"]["quantity"] == "11.0000000000"
     assert sale.json()["holding"]["average_price"] == "90.000000"
-    assert sale.json()["operation"]["quantity_delta"] == "-4.000000"
+    assert sale.json()["operation"]["quantity_delta"] == "-4.0000000000"
     assert sale.json()["operation"]["cash_flow"] == "480.00"
 
     excessive_sale = client.post(
@@ -550,7 +550,7 @@ def test_holding_operations_create_and_update_positions(client):
         item for item in client.get("/api/holdings").json()
         if item["id"] == holding["id"]
     )
-    assert refreshed["quantity"] == "11.000000"
+    assert refreshed["quantity"] == "11.0000000000"
     assert refreshed["operation_count"] == 3
 
     operations = client.get(f"/api/holdings/{holding['id']}/operations").json()
@@ -576,7 +576,7 @@ def test_holding_operations_create_and_update_positions(client):
     assert edited.json()["operation"]["operation_type"] == "sell"
     assert edited.json()["operation"]["cash_flow"] == "345.00"
     assert edited.json()["operation"]["occurred_on"] == "2026-02-10"
-    assert edited.json()["holding"]["quantity"] == "3.000000"
+    assert edited.json()["holding"]["quantity"] == "3.0000000000"
     assert edited.json()["holding"]["average_price"] == "80.000000"
 
     initial_purchase_operation = operations[2]
@@ -593,14 +593,14 @@ def test_holding_operations_create_and_update_positions(client):
         item for item in client.get("/api/holdings").json()
         if item["id"] == holding["id"]
     )
-    assert unchanged["quantity"] == "3.000000"
+    assert unchanged["quantity"] == "3.0000000000"
     assert unchanged["average_price"] == "80.000000"
 
     deleted = client.delete(
         f"/api/holdings/{holding['id']}/operations/{sale.json()['operation']['id']}"
     )
     assert deleted.status_code == 200
-    assert deleted.json()["quantity"] == "7.000000"
+    assert deleted.json()["quantity"] == "7.0000000000"
     assert deleted.json()["average_price"] == "80.000000"
     assert deleted.json()["operation_count"] == 2
     invalid_delete = client.delete(
@@ -619,6 +619,43 @@ def test_holding_operations_create_and_update_positions(client):
         },
     )
     assert invalid_backdated_sale.status_code == 422
+
+
+def test_crypto_operations_support_ten_decimal_quantity(client):
+    wallet = client.post(
+        "/api/accounts",
+        json={"name": "Wallet crypto", "type": "wallet", "initial_balance": "0.00"},
+    ).json()
+    purchase = client.post(
+        "/api/holding-operations",
+        json={
+            "new_holding": {
+                "account_id": wallet["id"],
+                "name": "Bitcoin",
+                "symbol": "BTC",
+                "asset_class": "crypto",
+            },
+            "operation_type": "buy",
+            "quantity": "0.0000000001",
+            "unit_price": "50000.00",
+        },
+    )
+
+    assert purchase.status_code == 201
+    assert purchase.json()["holding"]["quantity"] == "0.0000000001"
+    assert purchase.json()["operation"]["quantity"] == "0.0000000001"
+    assert purchase.json()["operation"]["quantity_delta"] == "0.0000000001"
+
+    below_minimum = client.post(
+        "/api/holding-operations",
+        json={
+            "holding_id": purchase.json()["holding"]["id"],
+            "operation_type": "buy",
+            "quantity": "0.00000000001",
+            "unit_price": "50000.00",
+        },
+    )
+    assert below_minimum.status_code == 422
 
 
 def test_holding_edit_only_updates_metadata_and_current_price(client):
@@ -647,13 +684,13 @@ def test_holding_edit_only_updates_metadata_and_current_price(client):
     assert updated.json()["name"] == "Nouveau nom"
     assert updated.json()["symbol"] == "NEW"
     assert updated.json()["current_price"] == "75.000000"
-    assert updated.json()["quantity"] == "2.000000"
+    assert updated.json()["quantity"] == "2.0000000000"
     forbidden_position_edit = client.patch(
         f"/api/holdings/{created['id']}",
         json={"quantity": "99"},
     )
     assert forbidden_position_edit.status_code == 200
-    assert forbidden_position_edit.json()["quantity"] == "2.000000"
+    assert forbidden_position_edit.json()["quantity"] == "2.0000000000"
 
 
 def test_holding_and_operations_can_move_between_accounts(client):
@@ -711,7 +748,7 @@ def test_holding_and_operations_can_move_between_accounts(client):
     assert second_purchase.status_code == 201
     second_holding = second_purchase.json()["holding"]
     assert second_holding["account_id"] == second_account["id"]
-    assert second_holding["quantity"] == "5.000000"
+    assert second_holding["quantity"] == "5.0000000000"
     shared_holdings = [
         item for item in client.get("/api/holdings").json()
         if item["symbol"] == "SHARED"
@@ -736,13 +773,13 @@ def test_holding_and_operations_can_move_between_accounts(client):
     )
     assert moved_operation.status_code == 200
     assert moved_operation.json()["holding"]["id"] == second_holding["id"]
-    assert moved_operation.json()["holding"]["quantity"] == "15.000000"
+    assert moved_operation.json()["holding"]["quantity"] == "15.0000000000"
     assert moved_operation.json()["holding"]["average_price"] == "86.666667"
     source_holding = next(
         item for item in client.get("/api/holdings").json()
         if item["id"] == initial["holding"]["id"]
     )
-    assert source_holding["quantity"] == "0.000000"
+    assert source_holding["quantity"] == "0.0000000000"
     assert source_holding["operation_count"] == 0
 
     third_account = client.post(
@@ -768,7 +805,7 @@ def test_holding_and_operations_can_move_between_accounts(client):
     )
     assert merged.status_code == 200
     assert merged.json()["id"] == second_holding["id"]
-    assert merged.json()["quantity"] == "18.000000"
+    assert merged.json()["quantity"] == "18.0000000000"
     assert merged.json()["average_price"] == "87.222222"
     shared_holdings = [
         item for item in client.get("/api/holdings").json()
