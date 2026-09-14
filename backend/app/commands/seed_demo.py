@@ -666,36 +666,42 @@ async def _seed(
                 operation_type="buy",
                 quantity=Decimal("10"),
                 unit_price=money("80.00"),
+                occurred_on=months[0].replace(day=8),
             ),
             HoldingOperation(
                 holding_id=etf.id,
                 operation_type="buy",
                 quantity=Decimal("4"),
                 unit_price=money("97.50"),
+                occurred_on=months[2].replace(day=12),
             ),
             HoldingOperation(
                 holding_id=etf.id,
                 operation_type="sell",
                 quantity=Decimal("2"),
                 unit_price=money("110.00"),
+                occurred_on=months[3].replace(day=6),
             ),
             HoldingOperation(
                 holding_id=bond.id,
                 operation_type="buy",
                 quantity=Decimal("30"),
                 unit_price=money("48.00"),
+                occurred_on=months[0].replace(day=15),
             ),
             HoldingOperation(
                 holding_id=life_fund.id,
                 operation_type="buy",
                 quantity=Decimal("100"),
                 unit_price=money("175.00"),
+                occurred_on=months[0].replace(day=10),
             ),
             HoldingOperation(
                 holding_id=life_etf.id,
                 operation_type="buy",
                 quantity=Decimal("2"),
                 unit_price=money("90.00"),
+                occurred_on=months[1].replace(day=18),
             ),
         ]
     )

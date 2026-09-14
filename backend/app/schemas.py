@@ -836,6 +836,7 @@ class HoldingOperationCreate(BaseModel):
     operation_type: Literal["buy", "sell"]
     quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
     unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    occurred_on: date = Field(default_factory=date.today)
 
     @model_validator(mode="after")
     def validate_target(self) -> HoldingOperationCreate:
@@ -851,6 +852,7 @@ class HoldingOperationUpdate(BaseModel):
     operation_type: Literal["buy", "sell"]
     quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
     unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    occurred_on: date | None = None
 
 
 class HoldingOperationRead(BaseModel):
@@ -862,6 +864,7 @@ class HoldingOperationRead(BaseModel):
     total_value: Decimal
     quantity_delta: Decimal
     cash_flow: Decimal
+    occurred_on: date
     created_at: datetime
 
 

@@ -7,6 +7,7 @@ export type BudgetTab =
   | 'envelopes'
 
 export type WealthTab = 'overview' | 'holdings' | 'real-estate' | 'debts'
+export type HoldingsTab = 'positions' | 'operations'
 export type DocumentsTab = 'overview' | 'all' | 'missing'
 
 export type WorkTab = 'overview' | 'salary' | 'pension'
@@ -16,7 +17,7 @@ export type Route =
   | { name: 'accounts' }
   | { name: 'account'; accountId: number }
   | { name: 'budget'; tab: BudgetTab; focusId?: number }
-  | { name: 'wealth'; tab: WealthTab; focusId?: number }
+  | { name: 'wealth'; tab: WealthTab; holdingsTab?: HoldingsTab; focusId?: number }
   | { name: 'documents'; tab: DocumentsTab }
   | { name: 'work'; tab: WorkTab; focusId?: number }
   | { name: 'family' }
@@ -33,6 +34,7 @@ const legacyBudgetTabs: Record<string, BudgetTab> = {
   manage: 'envelopes',
 }
 const wealthTabs = new Set<WealthTab>(['overview', 'holdings', 'real-estate', 'debts'])
+const holdingsTabs = new Set<HoldingsTab>(['positions', 'operations'])
 const documentsTabs = new Set<DocumentsTab>(['overview', 'all', 'missing'])
 const workTabs = new Set<WorkTab>(['overview', 'salary', 'pension'])
 
@@ -71,7 +73,13 @@ export function routeHash(route: Route): string {
     case 'budget':
       return `#/budget/${route.tab}${route.focusId ? `/${route.focusId}` : ''}`
     case 'wealth':
-      return `#/wealth/${route.tab}${route.focusId ? `/${route.focusId}` : ''}`
+      return `#/wealth/${route.tab}${
+        route.tab === 'holdings' && route.holdingsTab && route.holdingsTab !== 'positions'
+          ? `/${route.holdingsTab}`
+          : route.focusId
+            ? `/${route.focusId}`
+            : ''
+      }`
     case 'documents':
       return `#/documents/${route.tab}`
     case 'work':
@@ -97,6 +105,9 @@ function parseHash(hash: string): Route {
   if (parts[0] === 'wealth') {
     const tab = parts[1] as WealthTab
     if (wealthTabs.has(tab)) {
+      if (tab === 'holdings' && holdingsTabs.has(parts[2] as HoldingsTab)) {
+        return { name: 'wealth', tab, holdingsTab: parts[2] as HoldingsTab }
+      }
       const focusId = positiveInteger(parts[2])
       return focusId ? { name: 'wealth', tab, focusId } : { name: 'wealth', tab }
     }

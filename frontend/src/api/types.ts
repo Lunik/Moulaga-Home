@@ -331,6 +331,7 @@ export interface HoldingOperation {
   total_value: Money
   quantity_delta: string
   cash_flow: Money
+  occurred_on: string
   created_at: string
 }
 

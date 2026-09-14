@@ -491,6 +491,7 @@ def test_holding_operations_create_and_update_positions(client):
             "operation_type": "buy",
             "quantity": "10",
             "unit_price": "80.00",
+            "occurred_on": "2026-01-10",
         },
     )
     assert first_purchase.status_code == 201
@@ -501,6 +502,7 @@ def test_holding_operations_create_and_update_positions(client):
     assert holding["operation_count"] == 1
     assert first_purchase.json()["operation"]["quantity_delta"] == "10.000000"
     assert first_purchase.json()["operation"]["cash_flow"] == "-800.00"
+    assert first_purchase.json()["operation"]["occurred_on"] == "2026-01-10"
 
     second_purchase = client.post(
         "/api/holding-operations",
@@ -509,6 +511,7 @@ def test_holding_operations_create_and_update_positions(client):
             "operation_type": "buy",
             "quantity": "5",
             "unit_price": "110.00",
+            "occurred_on": "2026-03-10",
         },
     )
     assert second_purchase.status_code == 201
@@ -524,6 +527,7 @@ def test_holding_operations_create_and_update_positions(client):
             "operation_type": "sell",
             "quantity": "4",
             "unit_price": "120.00",
+            "occurred_on": "2026-04-10",
         },
     )
     assert sale.status_code == 201
@@ -552,6 +556,11 @@ def test_holding_operations_create_and_update_positions(client):
     operations = client.get(f"/api/holdings/{holding['id']}/operations").json()
     assert len(operations) == 3
     assert [item["operation_type"] for item in operations] == ["sell", "buy", "buy"]
+    all_operations = client.get("/api/holding-operations")
+    assert all_operations.status_code == 200
+    assert [item["id"] for item in all_operations.json()] == [
+        item["id"] for item in operations
+    ]
 
     second_purchase_operation = operations[1]
     edited = client.patch(
@@ -560,11 +569,13 @@ def test_holding_operations_create_and_update_positions(client):
             "operation_type": "sell",
             "quantity": "3",
             "unit_price": "115.00",
+            "occurred_on": "2026-02-10",
         },
     )
     assert edited.status_code == 200
     assert edited.json()["operation"]["operation_type"] == "sell"
     assert edited.json()["operation"]["cash_flow"] == "345.00"
+    assert edited.json()["operation"]["occurred_on"] == "2026-02-10"
     assert edited.json()["holding"]["quantity"] == "3.000000"
     assert edited.json()["holding"]["average_price"] == "80.000000"
 
@@ -596,6 +607,18 @@ def test_holding_operations_create_and_update_positions(client):
         f"/api/holdings/{holding['id']}/operations/{initial_purchase_operation['id']}"
     )
     assert invalid_delete.status_code == 422
+
+    invalid_backdated_sale = client.post(
+        "/api/holding-operations",
+        json={
+            "holding_id": holding["id"],
+            "operation_type": "sell",
+            "quantity": "1",
+            "unit_price": "90.00",
+            "occurred_on": "2026-01-01",
+        },
+    )
+    assert invalid_backdated_sale.status_code == 422
 
 
 def test_holding_edit_only_updates_metadata_and_current_price(client):

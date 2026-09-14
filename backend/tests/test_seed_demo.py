@@ -168,6 +168,15 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         operations = client.get(f"/api/holdings/{etf['id']}/operations").json()
         assert len(operations) == 3
         assert {item["operation_type"] for item in operations} == {"buy", "sell"}
+        all_operations = client.get("/api/holding-operations").json()
+        assert len(all_operations) == 6
+        assert [item["occurred_on"] for item in all_operations] == sorted(
+            [item["occurred_on"] for item in all_operations],
+            reverse=True,
+        )
+        assert {item["holding_id"] for item in all_operations}.issuperset(
+            {item["id"] for item in etfs}
+        )
 
         paths = client.get("/api/openapi.json").json()["paths"]
         assert not any("transaction" in path for path in paths)

@@ -104,6 +104,7 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
     `/networth/overview${queryString({ as_of: anchorDate })}`,
     `/networth/history${queryString({ as_of: anchorDate })}`,
     '/holdings',
+    '/holding-operations',
     '/debts',
     '/real-estate',
     '/contributions',

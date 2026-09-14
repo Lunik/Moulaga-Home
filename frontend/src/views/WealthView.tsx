@@ -37,7 +37,7 @@ import type {
   RecurringSeries,
 } from '../api/types'
 import { supportsHoldings } from '../accountCapabilities'
-import { routeHash, type Route, type WealthTab } from '../routing'
+import { routeHash, type HoldingsTab, type Route, type WealthTab } from '../routing'
 import {
   EmptyState,
   Field,
@@ -65,11 +65,13 @@ const allocationColors = ['#615fff', '#16c79a', '#1da9e8', '#f97316', '#8758f6',
 
 export function WealthView({
   tab,
+  holdingsTab = 'positions',
   focusId,
   accounts,
   navigate,
 }: {
   tab: WealthTab
+  holdingsTab?: HoldingsTab
   focusId?: number
   accounts: Account[]
   navigate: (route: Route) => void
@@ -172,7 +174,12 @@ export function WealthView({
         />
       )}
       {tab === 'holdings' && (
-        <HoldingsPanel accounts={accounts} holdings={holdings.data ?? []} />
+        <AssetsPanel
+          accounts={accounts}
+          holdings={holdings.data ?? []}
+          navigate={navigate}
+          view={holdingsTab}
+        />
       )}
       {tab === 'real-estate' && (
         <RealEstatePanel
@@ -432,13 +439,19 @@ function ContributionForm({ accounts, holdings }: { accounts: Account[]; holding
   )
 }
 
-function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: Holding[] }) {
+function AssetsPanel({
+  accounts,
+  holdings,
+  navigate,
+  view,
+}: {
+  accounts: Account[]
+  holdings: Holding[]
+  navigate: (route: Route) => void
+  view: HoldingsTab
+}) {
   const queryClient = useQueryClient()
   const [showOperationModal, setShowOperationModal] = useState(false)
-  const [editingHolding, setEditingHolding] = useState<Holding | null>(null)
-  const [operationsHolding, setOperationsHolding] = useState<Holding | null>(null)
-  const [search, setSearch] = useState('')
-  const [assetClass, setAssetClass] = useState('all')
   const selectableAccounts = useMemo(
     () => accounts.filter((account) => !account.archived && supportsHoldings(account.type)),
     [accounts],
@@ -451,19 +464,10 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
     () => holdings.filter((holding) => selectableAccountIds.has(holding.account_id)),
     [holdings, selectableAccountIds],
   )
-  const filtered = useMemo(() => {
-    const normalized = search.trim().toLocaleLowerCase('fr-FR')
-    return holdings.filter((holding) => {
-      const matchesSearch =
-        !normalized
-        || holding.name.toLocaleLowerCase('fr-FR').includes(normalized)
-        || (holding.symbol ?? '').toLocaleLowerCase('fr-FR').includes(normalized)
-      return matchesSearch && (assetClass === 'all' || holding.asset_class === assetClass)
-    })
-  }, [assetClass, holdings, search])
   const refresh = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['holdings'] }),
+      queryClient.invalidateQueries({ queryKey: ['holding-operations'] }),
       queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
       queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
@@ -490,13 +494,76 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
           }}
         />
       )}
+      <nav className="module-tabs asset-subtabs" aria-label="Vues des actifs">
+        <button
+          className={view === 'positions' ? 'active' : ''}
+          type="button"
+          onClick={() => navigate({ name: 'wealth', tab: 'holdings', holdingsTab: 'positions' })}
+        >
+          <Icon name="holdings" /> Positions
+        </button>
+        <button
+          className={view === 'operations' ? 'active' : ''}
+          type="button"
+          onClick={() => navigate({ name: 'wealth', tab: 'holdings', holdingsTab: 'operations' })}
+        >
+          <Icon name="calendar" /> Opérations
+        </button>
+      </nav>
+      {view === 'positions' ? (
+        <HoldingsPanel
+          accounts={accounts}
+          holdings={holdings}
+          onChanged={refresh}
+          selectableAccounts={selectableAccounts}
+        />
+      ) : (
+        <HoldingOperationsPanel
+          accounts={accounts}
+          holdings={holdings}
+          onChanged={refresh}
+          selectableAccounts={selectableAccounts}
+        />
+      )}
+    </>
+  )
+}
+
+function HoldingsPanel({
+  accounts,
+  holdings,
+  onChanged,
+  selectableAccounts,
+}: {
+  accounts: Account[]
+  holdings: Holding[]
+  onChanged: () => Promise<void>
+  selectableAccounts: Account[]
+}) {
+  const [editingHolding, setEditingHolding] = useState<Holding | null>(null)
+  const [operationsHolding, setOperationsHolding] = useState<Holding | null>(null)
+  const [search, setSearch] = useState('')
+  const [assetClass, setAssetClass] = useState('all')
+  const filtered = useMemo(() => {
+    const normalized = search.trim().toLocaleLowerCase('fr-FR')
+    return holdings.filter((holding) => {
+      const matchesSearch =
+        !normalized
+        || holding.name.toLocaleLowerCase('fr-FR').includes(normalized)
+        || (holding.symbol ?? '').toLocaleLowerCase('fr-FR').includes(normalized)
+      return matchesSearch && (assetClass === 'all' || holding.asset_class === assetClass)
+    })
+  }, [assetClass, holdings, search])
+
+  return (
+    <>
       {editingHolding && (
         <HoldingModal
           accounts={selectableAccounts}
           holding={editingHolding}
           onClose={() => setEditingHolding(null)}
           onSaved={async () => {
-            await refresh()
+            await onChanged()
             setEditingHolding(null)
           }}
         />
@@ -533,7 +600,7 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
                 accounts={accounts}
                 holding={holding}
                 key={holding.id}
-                onChanged={refresh}
+                onChanged={onChanged}
                 onEdit={() => setEditingHolding(holding)}
                 onShowOperations={() => setOperationsHolding(holding)}
               />
@@ -601,6 +668,172 @@ function HoldingRow({
       </span>
       {remove.error && <span className="form-error row-error">{errorMessage(remove.error)}</span>}
     </article>
+  )
+}
+
+type HoldingOperationContext = {
+  holding: Holding
+  operation: HoldingOperation
+}
+
+function HoldingOperationsPanel({
+  accounts,
+  holdings,
+  onChanged,
+  selectableAccounts,
+}: {
+  accounts: Account[]
+  holdings: Holding[]
+  onChanged: () => Promise<void>
+  selectableAccounts: Account[]
+}) {
+  const [editing, setEditing] = useState<HoldingOperationContext | null>(null)
+  const [search, setSearch] = useState('')
+  const [operationType, setOperationType] = useState('all')
+  const [accountId, setAccountId] = useState('all')
+  const operations = useQuery({
+    queryKey: ['holding-operations'],
+    queryFn: () => apiGet<HoldingOperation[]>('/holding-operations'),
+  })
+  const holdingById = useMemo(
+    () => new Map(holdings.map((holding) => [holding.id, holding])),
+    [holdings],
+  )
+  const accountById = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account])),
+    [accounts],
+  )
+  const operationAccounts = useMemo(() => {
+    const accountIds = new Set(holdings.map((holding) => holding.account_id))
+    return accounts.filter((account) => accountIds.has(account.id))
+  }, [accounts, holdings])
+  const filtered = useMemo(() => {
+    const normalized = search.trim().toLocaleLowerCase('fr-FR')
+    return (operations.data ?? []).filter((operation) => {
+      const holding = holdingById.get(operation.holding_id)
+      if (!holding) return false
+      const account = accountById.get(holding.account_id)
+      const matchesSearch =
+        !normalized
+        || holding.name.toLocaleLowerCase('fr-FR').includes(normalized)
+        || (holding.symbol ?? '').toLocaleLowerCase('fr-FR').includes(normalized)
+        || (account?.name ?? '').toLocaleLowerCase('fr-FR').includes(normalized)
+      return matchesSearch
+        && (operationType === 'all' || operation.operation_type === operationType)
+        && (accountId === 'all' || holding.account_id === Number(accountId))
+    })
+  }, [accountById, accountId, holdingById, operationType, operations.data, search])
+  const removeOperation = useMutation({
+    mutationFn: ({ holding, operation }: HoldingOperationContext) => apiDelete<Holding>(
+      `/holdings/${holding.id}/operations/${operation.id}`,
+    ),
+    onSuccess: onChanged,
+  })
+
+  if (editing) {
+    return (
+      <HoldingOperationEditModal
+        accounts={selectableAccounts}
+        holding={editing.holding}
+        operation={editing.operation}
+        onClose={() => setEditing(null)}
+        onSaved={async () => {
+          await onChanged()
+          setEditing(null)
+        }}
+      />
+    )
+  }
+
+  return (
+    <Panel title="Opérations" subtitle="Tous les achats et ventes de vos actifs">
+      <div className="filter-row asset-operation-filters">
+        <label className="search-field">
+          <Icon name="search" />
+          <FormInput
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Rechercher un actif ou un compte"
+          />
+        </label>
+        <FormSelect value={operationType} onChange={(event) => setOperationType(event.target.value)}>
+          <option value="all">Achats et ventes</option>
+          <option value="buy">Achats</option>
+          <option value="sell">Ventes</option>
+        </FormSelect>
+        <FormSelect value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+          <option value="all">Tous les comptes</option>
+          {operationAccounts.map((account) => (
+            <option key={account.id} value={account.id}>{account.name}</option>
+          ))}
+        </FormSelect>
+      </div>
+      {operations.error && <p className="form-error">{errorMessage(operations.error)}</p>}
+      {operations.isPending ? (
+        <p className="modal-hint">Chargement des opérations…</p>
+      ) : filtered.length > 0 ? (
+        <div className="holding-operation-list asset-operation-list">
+          {filtered.map((operation) => {
+            const holding = holdingById.get(operation.holding_id)
+            if (!holding) return null
+            const account = accountById.get(holding.account_id)
+            const quantity = Math.abs(Number(operation.quantity_delta))
+            return (
+              <article key={operation.id}>
+                <StatusBadge tone={operation.operation_type === 'buy' ? 'positive' : 'warning'}>
+                  {operation.operation_type === 'buy' ? 'Achat' : 'Vente'}
+                </StatusBadge>
+                <span>
+                  <strong>
+                    {holding.name}{holding.symbol ? ` · ${holding.symbol}` : ''}
+                  </strong>
+                  <small>
+                    {account?.name ?? `Compte ${holding.account_id}`} · {formatDate(operation.occurred_on)}
+                    {' · '}{operation.operation_type === 'buy' ? '+' : '−'}
+                    {formatQuantity(String(quantity))} unité{quantity === 1 ? '' : 's'}
+                    {' à '}{money(operation.unit_price)}
+                  </small>
+                </span>
+                <strong className={`operation-cash-flow ${Number(operation.cash_flow) >= 0 ? 'positive' : 'negative'}`}>
+                  {signedMoney(operation.cash_flow)}
+                </strong>
+                <span className="row-actions">
+                  <button
+                    className="icon-action"
+                    type="button"
+                    aria-label={`Modifier l’opération ${holding.name} du ${formatDate(operation.occurred_on)}`}
+                    onClick={() => setEditing({ holding, operation })}
+                  >
+                    <Icon name="edit" />
+                  </button>
+                  <button
+                    className="icon-action"
+                    type="button"
+                    aria-label={`Supprimer l’opération ${holding.name} du ${formatDate(operation.occurred_on)}`}
+                    disabled={removeOperation.isPending}
+                    onClick={() => {
+                      if (window.confirm('Supprimer cette opération ?')) {
+                        removeOperation.mutate({ holding, operation })
+                      }
+                    }}
+                  >
+                    <Icon name="trash" />
+                  </button>
+                </span>
+              </article>
+            )
+          })}
+        </div>
+      ) : (
+        <EmptyState
+          icon="holdings"
+          text={operations.data?.length
+            ? 'Aucune opération ne correspond aux filtres.'
+            : 'Ajoutez une première opération pour alimenter cet historique.'}
+        />
+      )}
+      {removeOperation.error && <p className="form-error">{errorMessage(removeOperation.error)}</p>}
+    </Panel>
   )
 }
 
@@ -695,6 +928,7 @@ function HoldingOperationModal({
   const [assetClass, setAssetClass] = useState('equity')
   const [quantity, setQuantity] = useState('')
   const [unitPrice, setUnitPrice] = useState('')
+  const [occurredOn, setOccurredOn] = useState(localDateInputValue())
   const selectedHolding = holdings.find((holding) => holding.id === Number(target))
   const isNew = target === 'new'
   const targetHolding = selectedHolding && !isNew
@@ -722,6 +956,7 @@ function HoldingOperationModal({
       operation_type: operationType,
       quantity,
       unit_price: unitPrice,
+      occurred_on: occurredOn,
     }),
     onSuccess: onSaved,
   })
@@ -832,6 +1067,9 @@ function HoldingOperationModal({
           </div>
         )}
         <div className="holding-modal-grid">
+          <Field label="Date">
+            <FormInput type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} required />
+          </Field>
           <Field label="Quantité">
             <FormInput
               type="number"
@@ -941,7 +1179,7 @@ function HoldingOperationsModal({
                   {formatQuantity(String(Math.abs(Number(operation.quantity_delta))))} unité
                   {Math.abs(Number(operation.quantity_delta)) === 1 ? '' : 's'}
                 </strong>
-                <small>{formatDate(operation.created_at.slice(0, 10))} · {money(operation.unit_price)} / unité</small>
+                <small>{formatDate(operation.occurred_on)} · {money(operation.unit_price)} / unité</small>
               </span>
               <strong className={Number(operation.cash_flow) >= 0 ? 'positive' : 'negative'}>
                 {signedMoney(operation.cash_flow)}
@@ -949,7 +1187,7 @@ function HoldingOperationsModal({
               <button
                 className="icon-action"
                 type="button"
-                aria-label={`Modifier l’opération du ${formatDate(operation.created_at.slice(0, 10))}`}
+                aria-label={`Modifier l’opération du ${formatDate(operation.occurred_on)}`}
                 onClick={() => setEditingOperation(operation)}
               >
                 <Icon name="edit" />
@@ -957,7 +1195,7 @@ function HoldingOperationsModal({
               <button
                 className="icon-action"
                 type="button"
-                aria-label={`Supprimer l’opération du ${formatDate(operation.created_at.slice(0, 10))}`}
+                aria-label={`Supprimer l’opération du ${formatDate(operation.occurred_on)}`}
                 disabled={removeOperation.isPending}
                 onClick={() => {
                   if (window.confirm('Supprimer cette opération ?')) {
@@ -995,6 +1233,7 @@ function HoldingOperationEditModal({
   const [operationType, setOperationType] = useState(operation.operation_type)
   const [quantity, setQuantity] = useState(operation.quantity)
   const [unitPrice, setUnitPrice] = useState(operation.unit_price)
+  const [occurredOn, setOccurredOn] = useState(operation.occurred_on)
   const mutation = useMutation({
     mutationFn: () => apiPatch<HoldingOperationResult>(
       `/holdings/${holding.id}/operations/${operation.id}`,
@@ -1003,6 +1242,7 @@ function HoldingOperationEditModal({
         operation_type: operationType,
         quantity,
         unit_price: unitPrice,
+        occurred_on: occurredOn,
       },
     ),
     onSuccess: onSaved,
@@ -1049,6 +1289,9 @@ function HoldingOperationEditModal({
           </FormSelect>
         </Field>
         <div className="holding-modal-grid">
+          <Field label="Date">
+            <FormInput type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} required />
+          </Field>
           <Field label="Quantité">
             <FormInput type="number" min="0.000001" step="0.000001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
           </Field>

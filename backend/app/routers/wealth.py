@@ -925,6 +925,7 @@ def _holding_operation_read(operation: HoldingOperation) -> HoldingOperationRead
         total_value=total_value,
         quantity_delta=quantity if is_buy else -quantity,
         cash_flow=-total_value if is_buy else total_value,
+        occurred_on=operation.occurred_on,
         created_at=operation.created_at,
     )
 
@@ -936,10 +937,21 @@ def _replayed_holding_position(
     updated_operation_type: str | None = None,
     updated_quantity: Decimal | None = None,
     updated_unit_price: Decimal | None = None,
+    updated_occurred_on: date | None = None,
 ) -> tuple[Decimal, Decimal]:
     quantity = Decimal("0")
     average_price = Decimal("0")
-    for operation in operations:
+    ordered_operations = sorted(
+        operations,
+        key=lambda operation: (
+            updated_occurred_on
+            if operation.id == updated_operation_id and updated_occurred_on is not None
+            else operation.occurred_on,
+            operation.created_at.isoformat() if operation.created_at else "9999",
+            operation.id or 0,
+        ),
+    )
+    for operation in ordered_operations:
         is_updated = operation.id == updated_operation_id
         operation_type = (
             updated_operation_type if is_updated and updated_operation_type else operation.operation_type
@@ -977,7 +989,11 @@ async def _holding_operations_chronological(
             await session.execute(
                 select(HoldingOperation)
                 .where(HoldingOperation.holding_id == holding_id)
-                .order_by(HoldingOperation.created_at, HoldingOperation.id)
+                .order_by(
+                    HoldingOperation.occurred_on,
+                    HoldingOperation.created_at,
+                    HoldingOperation.id,
+                )
             )
         ).scalars().all()
     )
@@ -1054,6 +1070,7 @@ async def create_holding(
                 operation_type="buy",
                 quantity=Decimal(holding.quantity),
                 unit_price=money(holding.average_price),
+                occurred_on=local_today(),
             )
         )
     await session.commit()
@@ -1143,7 +1160,30 @@ async def list_holding_operations(
         await session.execute(
             select(HoldingOperation)
             .where(HoldingOperation.holding_id == holding_id)
-            .order_by(HoldingOperation.created_at.desc(), HoldingOperation.id.desc())
+            .order_by(
+                HoldingOperation.occurred_on.desc(),
+                HoldingOperation.created_at.desc(),
+                HoldingOperation.id.desc(),
+            )
+        )
+    ).scalars().all()
+    return [_holding_operation_read(row) for row in rows]
+
+
+@router.get(
+    "/holding-operations",
+    response_model=list[HoldingOperationRead],
+)
+async def list_all_holding_operations(
+    session: AsyncSession = Depends(get_session),
+) -> list[HoldingOperationRead]:
+    rows = (
+        await session.execute(
+            select(HoldingOperation).order_by(
+                HoldingOperation.occurred_on.desc(),
+                HoldingOperation.created_at.desc(),
+                HoldingOperation.id.desc(),
+            )
         )
     ).scalars().all()
     return [_holding_operation_read(row) for row in rows]
@@ -1217,7 +1257,11 @@ async def create_holding_operation(
         operation_type=payload.operation_type,
         quantity=operation_quantity,
         unit_price=money(payload.unit_price),
+        occurred_on=payload.occurred_on,
     )
+    operations = await _holding_operations_chronological(session, holding.id)
+    operations.append(operation)
+    holding.quantity, holding.average_price = _replayed_holding_position(operations)
     session.add(operation)
     await session.commit()
     await session.refresh(holding)
@@ -1258,6 +1302,7 @@ async def update_holding_operation(
         target_account_id,
     )
     source_operations = await _holding_operations_chronological(session, holding_id)
+    occurred_on = payload.occurred_on or operation.occurred_on
     if destination is holding:
         source_quantity, source_average_price = _replayed_holding_position(
             source_operations,
@@ -1265,6 +1310,7 @@ async def update_holding_operation(
             updated_operation_type=payload.operation_type,
             updated_quantity=Decimal(payload.quantity),
             updated_unit_price=money(payload.unit_price),
+            updated_occurred_on=occurred_on,
         )
         destination_quantity = source_quantity
         destination_average_price = source_average_price
@@ -1284,6 +1330,7 @@ async def update_holding_operation(
             updated_operation_type=payload.operation_type,
             updated_quantity=Decimal(payload.quantity),
             updated_unit_price=money(payload.unit_price),
+            updated_occurred_on=occurred_on,
         )
 
     if is_new_destination:
@@ -1292,6 +1339,7 @@ async def update_holding_operation(
     operation.operation_type = payload.operation_type
     operation.quantity = Decimal(payload.quantity)
     operation.unit_price = money(payload.unit_price)
+    operation.occurred_on = occurred_on
     operation.holding_id = destination.id
     holding.quantity = source_quantity
     holding.average_price = source_average_price
