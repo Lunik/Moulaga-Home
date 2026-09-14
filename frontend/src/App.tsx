@@ -148,6 +148,7 @@ export default function App() {
             {route.name === 'wealth' && (
               <WealthView
                 tab={route.tab}
+                holdingsTab={route.holdingsTab}
                 focusId={route.focusId}
                 accounts={accounts.data ?? []}
                 navigate={navigate}

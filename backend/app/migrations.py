@@ -35,7 +35,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 OBSOLETE_TABLES = frozenset(
     {
         "categorization_rules",
@@ -104,6 +104,9 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     },
     "pay_slips": {
         "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
+    },
+    "holding_operations": {
+        "occurred_on": "DATE",
     },
 }
 
@@ -375,14 +378,30 @@ def _backfill_holding_operations(conn: Connection) -> None:
     conn.execute(
         text(
             "INSERT INTO holding_operations "
-            "(holding_id, operation_type, quantity, unit_price, created_at) "
-            "SELECT id, 'buy', quantity, average_price, created_at "
+            "(holding_id, operation_type, quantity, unit_price, occurred_on, created_at) "
+            "SELECT id, 'buy', quantity, average_price, DATE(created_at), created_at "
             "FROM holdings "
             "WHERE quantity > 0 "
             "AND NOT EXISTS ("
             "SELECT 1 FROM holding_operations "
             "WHERE holding_operations.holding_id = holdings.id"
             ")"
+        )
+    )
+
+
+def _backfill_holding_operation_dates(conn: Connection) -> None:
+    conn.execute(
+        text(
+            "UPDATE holding_operations "
+            "SET occurred_on = DATE(created_at) "
+            "WHERE occurred_on IS NULL"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_holding_operations_occurred_on "
+            "ON holding_operations (occurred_on)"
         )
     )
 
@@ -398,6 +417,9 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         obsolete_tables = await conn.run_sync(_existing_obsolete_tables)
         obsolete_columns = await conn.run_sync(_existing_obsolete_columns)
         requires_holding_operation_backfill = "holding_operations" in missing_tables
+        requires_holding_operation_date_backfill = (
+            "occurred_on" in pending.get("holding_operations", {})
+        )
         requires_real_estate_rebuild = await conn.run_sync(_real_estate_requires_rebuild)
         requires_balance_backfill = await conn.run_sync(
             _requires_balance_snapshot_backfill,
@@ -420,6 +442,8 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         await conn.run_sync(_apply_columns, pending)
         if requires_holding_operation_backfill:
             await conn.run_sync(_backfill_holding_operations)
+        if requires_holding_operation_date_backfill:
+            await conn.run_sync(_backfill_holding_operation_dates)
         if requires_real_estate_rebuild:
             await conn.run_sync(_rebuild_real_estate_assets)
         if requires_balance_backfill:

@@ -2993,6 +2993,18 @@ textarea:focus-visible {
   margin-bottom: 1rem;
 }
 
+.asset-subtabs {
+  padding: 0.2rem;
+}
+
+.asset-subtabs button {
+  min-height: 2.25rem;
+}
+
+.filter-row.asset-operation-filters {
+  grid-template-columns: minmax(14rem, 1fr) repeat(2, minmax(10rem, 14rem));
+}
+
 .holding-list {
   display: flex;
   flex-direction: column;
@@ -3110,6 +3122,18 @@ textarea:focus-visible {
   margin-top: 0.2rem;
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.asset-operation-list article {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.asset-operation-list .operation-cash-flow {
+  white-space: nowrap;
+}
+
+.asset-operation-list .row-actions {
+  display: flex;
 }
 
 .real-estate-summary {
@@ -4916,6 +4940,10 @@ html[data-theme="light"] .status-badge {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .filter-row.asset-operation-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .period-toolbar,
   .period-actions,
   .wealth-hero,
@@ -4990,6 +5018,23 @@ html[data-theme="light"] .status-badge {
 
   .holding-list article > .row-actions {
     grid-column: 2 / -1;
+    justify-content: flex-end;
+  }
+
+  .asset-operation-list article {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .asset-operation-list article > span:not(.row-actions) {
+    grid-column: 2 / -1;
+  }
+
+  .asset-operation-list .operation-cash-flow {
+    grid-column: 2;
+  }
+
+  .asset-operation-list .row-actions {
+    grid-column: 3;
     justify-content: flex-end;
   }
 

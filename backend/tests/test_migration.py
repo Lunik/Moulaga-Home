@@ -249,6 +249,46 @@ def test_v21_database_backfills_existing_holding_as_initial_purchase(tmp_path, m
     assert operations[0]["operation_type"] == "buy"
     assert operations[0]["quantity"] == "7.500000"
     assert operations[0]["unit_price"] == "42.25"
+    assert operations[0]["occurred_on"] == operations[0]["created_at"][:10]
+    assert len(list(tmp_path.glob("moulaga.backup-*.db"))) == 1
+
+
+def test_v22_database_backfills_holding_operation_dates(tmp_path, monkeypatch):
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        account = client.post(
+            "/api/accounts",
+            json={"name": "PEA date", "type": "pea", "initial_balance": "0.00"},
+        ).json()
+        holding = client.post(
+            "/api/holding-operations",
+            json={
+                "new_holding": {
+                    "account_id": account["id"],
+                    "name": "ETF date",
+                },
+                "operation_type": "buy",
+                "quantity": "2",
+                "unit_price": "25.00",
+                "occurred_on": "2026-03-14",
+            },
+        ).json()["holding"]
+
+    db_path = tmp_path / "moulaga.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP INDEX ix_holding_operations_occurred_on")
+        connection.execute("ALTER TABLE holding_operations DROP COLUMN occurred_on")
+        connection.execute("PRAGMA user_version = 22")
+
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        operations = client.get(f"/api/holdings/{holding['id']}/operations").json()
+
+    assert len(operations) == 1
+    assert operations[0]["occurred_on"] == operations[0]["created_at"][:10]
+    with sqlite3.connect(db_path) as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    assert version >= 23
     assert len(list(tmp_path.glob("moulaga.backup-*.db"))) == 1
 
 
