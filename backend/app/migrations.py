@@ -35,7 +35,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 OBSOLETE_TABLES = frozenset(
     {
         "categorization_rules",
@@ -369,6 +369,24 @@ def _backup(db_path: Path, from_version: int) -> None:
     logger.info("Sauvegarde de securite creee avant migration du schema")
 
 
+def _backfill_holding_operations(conn: Connection) -> None:
+    if not _table_exists(conn, "holdings"):
+        return
+    conn.execute(
+        text(
+            "INSERT INTO holding_operations "
+            "(holding_id, operation_type, quantity, unit_price, created_at) "
+            "SELECT id, 'buy', quantity, average_price, created_at "
+            "FROM holdings "
+            "WHERE quantity > 0 "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM holding_operations "
+            "WHERE holding_operations.holding_id = holdings.id"
+            ")"
+        )
+    )
+
+
 async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
     """Reconcile the persistent schema, backing up existing data first."""
     pre_existing = db_path is not None and db_path.exists() and db_path.stat().st_size > 0
@@ -379,6 +397,7 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
         missing_tables = await conn.run_sync(_missing_tables)
         obsolete_tables = await conn.run_sync(_existing_obsolete_tables)
         obsolete_columns = await conn.run_sync(_existing_obsolete_columns)
+        requires_holding_operation_backfill = "holding_operations" in missing_tables
         requires_real_estate_rebuild = await conn.run_sync(_real_estate_requires_rebuild)
         requires_balance_backfill = await conn.run_sync(
             _requires_balance_snapshot_backfill,
@@ -399,6 +418,8 @@ async def run_migrations(engine: AsyncEngine, db_path: Path | None) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_apply_columns, pending)
+        if requires_holding_operation_backfill:
+            await conn.run_sync(_backfill_holding_operations)
         if requires_real_estate_rebuild:
             await conn.run_sync(_rebuild_real_estate_assets)
         if requires_balance_backfill:

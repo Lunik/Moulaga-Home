@@ -25,6 +25,8 @@ import type {
   Account,
   Debt,
   Holding,
+  HoldingOperation,
+  HoldingOperationResult,
   InvestmentContribution,
   NetWorthPoint,
   NetWorthSummary,
@@ -432,13 +434,22 @@ function ContributionForm({ accounts, holdings }: { accounts: Account[]; holding
 
 function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: Holding[] }) {
   const queryClient = useQueryClient()
-  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showOperationModal, setShowOperationModal] = useState(false)
   const [editingHolding, setEditingHolding] = useState<Holding | null>(null)
+  const [operationsHolding, setOperationsHolding] = useState<Holding | null>(null)
   const [search, setSearch] = useState('')
   const [assetClass, setAssetClass] = useState('all')
   const selectableAccounts = useMemo(
     () => accounts.filter((account) => !account.archived && supportsHoldings(account.type)),
     [accounts],
+  )
+  const selectableAccountIds = useMemo(
+    () => new Set(selectableAccounts.map((account) => account.id)),
+    [selectableAccounts],
+  )
+  const operationalHoldings = useMemo(
+    () => holdings.filter((holding) => selectableAccountIds.has(holding.account_id)),
+    [holdings, selectableAccountIds],
   )
   const filtered = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase('fr-FR')
@@ -464,29 +475,35 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
     <>
       <section className="section-intro">
         <p>Valorisez vos positions sans synchronisation bancaire externe.</p>
-        <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
-          <Icon name="plus" /> Ajouter un actif
+        <button className="primary-button" type="button" onClick={() => setShowOperationModal(true)}>
+          <Icon name="plus" /> Ajouter une opération
         </button>
       </section>
-      {showCreateModal && (
-        <HoldingModal
+      {showOperationModal && (
+        <HoldingOperationModal
           accounts={selectableAccounts}
-          onClose={() => setShowCreateModal(false)}
+          holdings={operationalHoldings}
+          onClose={() => setShowOperationModal(false)}
           onSaved={async () => {
             await refresh()
-            setShowCreateModal(false)
+            setShowOperationModal(false)
           }}
         />
       )}
       {editingHolding && (
         <HoldingModal
-          accounts={selectableAccounts}
           holding={editingHolding}
           onClose={() => setEditingHolding(null)}
           onSaved={async () => {
             await refresh()
             setEditingHolding(null)
           }}
+        />
+      )}
+      {operationsHolding && (
+        <HoldingOperationsModal
+          holding={operationsHolding}
+          onClose={() => setOperationsHolding(null)}
         />
       )}
       <Panel title="Patrimoine" subtitle="Votre portefeuille en un coup d'œil">
@@ -516,11 +533,12 @@ function HoldingsPanel({ accounts, holdings }: { accounts: Account[]; holdings: 
                 key={holding.id}
                 onChanged={refresh}
                 onEdit={() => setEditingHolding(holding)}
+                onShowOperations={() => setOperationsHolding(holding)}
               />
             ))}
           </div>
         ) : (
-          <EmptyState icon="holdings" text={holdings.length === 0 ? 'Ajoutez votre première position.' : 'Aucun actif ne correspond aux filtres.'} />
+          <EmptyState icon="holdings" text={holdings.length === 0 ? 'Ajoutez une première opération pour créer votre position.' : 'Aucun actif ne correspond aux filtres.'} />
         )}
       </Panel>
     </>
@@ -532,11 +550,13 @@ function HoldingRow({
   holding,
   onChanged,
   onEdit,
+  onShowOperations,
 }: {
   accounts: Account[]
   holding: Holding
   onChanged: () => Promise<void>
   onEdit: () => void
+  onShowOperations: () => void
 }) {
   const remove = useMutation({
     mutationFn: () => apiDelete(`/holdings/${holding.id}`),
@@ -551,15 +571,20 @@ function HoldingRow({
           {formatQuantity(holding.quantity)} unité{Number(holding.quantity) === 1 ? '' : 's'} ·{' '}
           {accounts.find((account) => account.id === holding.account_id)?.name ?? `Compte ${holding.account_id}`}
         </small>
+        <button className="holding-operation-count" type="button" onClick={onShowOperations}>
+          {holding.operation_count} opération{holding.operation_count === 1 ? '' : 's'}
+        </button>
       </span>
       <StatusBadge>{assetLabel(holding.asset_class)}</StatusBadge>
       <span className="holding-value">
         <strong>{money(holding.market_value)}</strong>
+        <small>Prix actuel : {money(holding.current_price)} / unité</small>
         <small className={Number(holding.gain) >= 0 ? 'positive' : 'negative'}>
           {signedMoney(holding.gain)} · {holdingGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
         </small>
       </span>
       <span className="row-actions">
+        <button className="icon-action" type="button" aria-label={`Voir les opérations de ${holding.name}`} onClick={onShowOperations}><Icon name="calendar" /></button>
         <button className="icon-action" type="button" aria-label="Modifier l'actif" onClick={onEdit}><Icon name="edit" /></button>
         <button
           className="icon-action"
@@ -578,50 +603,31 @@ function HoldingRow({
 }
 
 function HoldingModal({
-  accounts,
   holding,
   onClose,
   onSaved,
 }: {
-  accounts: Account[]
-  holding?: Holding
+  holding: Holding
   onClose: () => void
   onSaved: () => Promise<void>
 }) {
-  const initialAccountId = accounts.some((account) => account.id === holding?.account_id)
-    ? String(holding?.account_id)
-    : String(accounts[0]?.id ?? '')
-  const [accountId, setAccountId] = useState(initialAccountId)
-  const [symbol, setSymbol] = useState(holding?.symbol ?? '')
-  const [name, setName] = useState(holding?.name ?? '')
-  const [assetClass, setAssetClass] = useState(holding?.asset_class ?? 'equity')
-  const [quantity, setQuantity] = useState(holding?.quantity ?? '')
-  const [averageCost, setAverageCost] = useState(holding?.average_price ?? '')
-  const [currentPrice, setCurrentPrice] = useState(holding?.current_price ?? '')
-  const selectedAccountId = accountId || initialAccountId
+  const [symbol, setSymbol] = useState(holding.symbol ?? '')
+  const [name, setName] = useState(holding.name)
+  const [currentPrice, setCurrentPrice] = useState(holding.current_price)
   const mutation = useMutation({
-    mutationFn: () => {
-      const payload = {
-        account_id: Number(selectedAccountId),
-        symbol: symbol.trim() || null,
-        name,
-        asset_class: assetClass,
-        quantity,
-        average_price: averageCost,
-        current_price: currentPrice,
-      }
-      return holding
-        ? apiPatch<Holding>(`/holdings/${holding.id}`, payload)
-        : apiPost<Holding>('/holdings', payload)
-    },
+    mutationFn: () => apiPatch<Holding>(`/holdings/${holding.id}`, {
+      symbol: symbol.trim() || null,
+      name,
+      current_price: currentPrice,
+    }),
     onSuccess: onSaved,
   })
-  const formId = holding ? `holding-edit-${holding.id}` : 'holding-create'
+  const formId = `holding-edit-${holding.id}`
 
   return (
     <Modal
-      title={holding ? "Modifier l'actif" : 'Nouvel actif'}
-      description="Les valorisations restent enregistrées dans votre base locale."
+      title="Modifier l'actif"
+      description="La position et le prix de revient sont calculés à partir des opérations."
       onClose={onClose}
       actions={(
         <>
@@ -629,9 +635,9 @@ function HoldingModal({
             className="primary-button"
             type="submit"
             form={formId}
-            disabled={mutation.isPending || !selectedAccountId}
+            disabled={mutation.isPending}
           >
-            {mutation.isPending ? 'Enregistrement…' : holding ? 'Enregistrer' : 'Ajouter'}
+            {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
           </button>
           <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
@@ -642,49 +648,326 @@ function HoldingModal({
         mutation.mutate()
       }}>
         <div className="holding-modal-grid">
-          <Field label="Compte">
-            <FormSelect value={selectedAccountId} onChange={(event) => setAccountId(event.target.value)} required>
-              {!selectedAccountId && <option value="">Aucun compte compatible</option>}
-              {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-            </FormSelect>
-          </Field>
           <Field label="Symbole">
             <FormInput value={symbol} onChange={(event) => setSymbol(event.target.value)} maxLength={32} />
           </Field>
           <Field label="Nom">
             <FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
           </Field>
-          <Field label="Classe">
-            <FormSelect value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
-              <option value="equity">Action</option>
-              <option value="fund">Fonds</option>
-              <option value="bond">Obligations</option>
-              <option value="crypto">Crypto</option>
-              <option value="savings">Épargne</option>
-              <option value="cash">Liquidités</option>
-              <option value="real_estate">Immobilier</option>
-              <option value="other">Autre</option>
-            </FormSelect>
-          </Field>
-          <Field label="Quantité">
-            <FormInput type="number" min="0" step="0.000001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
-          </Field>
-          <Field label="Prix de revient">
-            <FormInput type="number" min="0" step="0.01" value={averageCost} onChange={(event) => setAverageCost(event.target.value)} required />
-          </Field>
           <Field label="Prix actuel">
             <FormInput type="number" min="0" step="0.01" value={currentPrice} onChange={(event) => setCurrentPrice(event.target.value)} required />
           </Field>
         </div>
-        <p className="modal-hint">
-          Seuls les comptes d'investissement actifs (PEA, PEG, PER/PERCOL, compte-titres,
-          assurance-vie et wallet crypto) sont proposés.
-        </p>
-        {accounts.length === 0 && (
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
+      </form>
+    </Modal>
+  )
+}
+
+function HoldingOperationModal({
+  accounts,
+  holdings,
+  onClose,
+  onSaved,
+}: {
+  accounts: Account[]
+  holdings: Holding[]
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [target, setTarget] = useState(holdings.length > 0 ? String(holdings[0].id) : 'new')
+  const [operationType, setOperationType] = useState<'buy' | 'sell'>('buy')
+  const [accountId, setAccountId] = useState(String(accounts[0]?.id ?? ''))
+  const [name, setName] = useState('')
+  const [symbol, setSymbol] = useState('')
+  const [assetClass, setAssetClass] = useState('equity')
+  const [quantity, setQuantity] = useState('')
+  const [unitPrice, setUnitPrice] = useState('')
+  const selectedHolding = holdings.find((holding) => holding.id === Number(target))
+  const isNew = target === 'new'
+  const mutation = useMutation({
+    mutationFn: () => apiPost<HoldingOperationResult>('/holding-operations', {
+      ...(isNew
+        ? {
+            new_holding: {
+              account_id: Number(accountId),
+              name,
+              symbol: symbol.trim() || null,
+              asset_class: assetClass,
+            },
+          }
+        : { holding_id: Number(target) }),
+      operation_type: operationType,
+      quantity,
+      unit_price: unitPrice,
+    }),
+    onSuccess: onSaved,
+  })
+  const formId = 'holding-operation-create'
+
+  return (
+    <Modal
+      title="Ajouter une opération"
+      description="La quantité et le prix de revient de l'actif seront recalculés automatiquement."
+      onClose={onClose}
+      actions={(
+        <>
+          <button
+            className="primary-button"
+            type="submit"
+            form={formId}
+            disabled={mutation.isPending || (isNew && !accountId)}
+          >
+            {mutation.isPending ? 'Enregistrement…' : 'Ajouter l’opération'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <form className="modal-form holding-operation-form" id={formId} onSubmit={(event: FormEvent) => {
+        event.preventDefault()
+        mutation.mutate()
+      }}>
+        <div className="holding-operation-type" role="group" aria-label="Type d’opération">
+          <button
+            className={operationType === 'buy' ? 'active' : ''}
+            type="button"
+            onClick={() => setOperationType('buy')}
+          >
+            Achat
+          </button>
+          <button
+            className={operationType === 'sell' ? 'active' : ''}
+            type="button"
+            disabled={isNew}
+            onClick={() => setOperationType('sell')}
+          >
+            Vente
+          </button>
+        </div>
+        <Field label="Actif">
+          <FormSelect value={target} onChange={(event) => {
+            const nextTarget = event.target.value
+            setTarget(nextTarget)
+            if (nextTarget === 'new') setOperationType('buy')
+          }}>
+            {holdings.map((holding) => (
+              <option key={holding.id} value={holding.id}>{holding.name}{holding.symbol ? ` (${holding.symbol})` : ''}</option>
+            ))}
+            <option value="new">Nouvel actif…</option>
+          </FormSelect>
+        </Field>
+        {isNew && (
+          <div className="holding-modal-grid">
+            <Field label="Compte">
+              <FormSelect value={accountId} onChange={(event) => setAccountId(event.target.value)} required>
+                {!accountId && <option value="">Aucun compte compatible</option>}
+                {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+              </FormSelect>
+            </Field>
+            <Field label="Classe">
+              <FormSelect value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
+                <option value="equity">Action</option>
+                <option value="fund">Fonds</option>
+                <option value="bond">Obligations</option>
+                <option value="crypto">Crypto</option>
+                <option value="savings">Épargne</option>
+                <option value="cash">Liquidités</option>
+                <option value="real_estate">Immobilier</option>
+                <option value="other">Autre</option>
+              </FormSelect>
+            </Field>
+            <Field label="Nom">
+              <FormInput value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
+            </Field>
+            <Field label="Symbole">
+              <FormInput value={symbol} onChange={(event) => setSymbol(event.target.value)} maxLength={32} />
+            </Field>
+          </div>
+        )}
+        <div className="holding-modal-grid">
+          <Field label="Quantité">
+            <FormInput
+              type="number"
+              min="0.000001"
+              max={operationType === 'sell' ? selectedHolding?.quantity : undefined}
+              step="0.000001"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+              required
+            />
+          </Field>
+          <Field label={operationType === 'buy' ? "Prix d'achat unitaire" : 'Prix de vente unitaire'}>
+            <FormInput type="number" min="0.01" step="0.01" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} required />
+          </Field>
+        </div>
+        {operationType === 'sell' && selectedHolding && (
+          <p className="modal-hint">Position disponible : {formatQuantity(selectedHolding.quantity)} unités.</p>
+        )}
+        {isNew && accounts.length === 0 && (
           <p className="form-error" role="alert">
             Aucun compte compatible n'est disponible. Créez ou restaurez d'abord un compte d'investissement.
           </p>
         )}
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
+      </form>
+    </Modal>
+  )
+}
+
+function HoldingOperationsModal({
+  holding,
+  onClose,
+}: {
+  holding: Holding
+  onClose: () => void
+}) {
+  const queryClient = useQueryClient()
+  const [editingOperation, setEditingOperation] = useState<HoldingOperation | null>(null)
+  const [currentHolding, setCurrentHolding] = useState(holding)
+  const operations = useQuery({
+    queryKey: ['holding-operations', holding.id],
+    queryFn: () => apiGet<HoldingOperation[]>(`/holdings/${holding.id}/operations`),
+  })
+  const refreshAfterEdit = async (result: HoldingOperationResult) => {
+    setCurrentHolding(result.holding)
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['holding-operations', holding.id] }),
+      queryClient.invalidateQueries({ queryKey: ['holdings'] }),
+      queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
+      queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
+    ])
+    setEditingOperation(null)
+  }
+
+  if (editingOperation) {
+    return (
+      <HoldingOperationEditModal
+        holding={currentHolding}
+        operation={editingOperation}
+        onClose={() => setEditingOperation(null)}
+        onSaved={refreshAfterEdit}
+      />
+    )
+  }
+
+  return (
+    <Modal
+      title={`Opérations · ${currentHolding.name}`}
+      description={`${formatQuantity(currentHolding.quantity)} unités détenues · prix de revient ${money(currentHolding.average_price)}`}
+      onClose={onClose}
+      actions={<button className="text-button" type="button" onClick={onClose}>Fermer</button>}
+    >
+      {operations.error && <p className="form-error">{errorMessage(operations.error)}</p>}
+      {operations.isPending ? (
+        <p className="modal-hint">Chargement des opérations…</p>
+      ) : operations.data?.length ? (
+        <div className="holding-operation-list">
+          {operations.data.map((operation) => (
+            <article key={operation.id}>
+              <StatusBadge tone={operation.operation_type === 'buy' ? 'positive' : 'warning'}>
+                {operation.operation_type === 'buy' ? 'Achat' : 'Vente'}
+              </StatusBadge>
+              <span>
+                <strong className={Number(operation.quantity_delta) >= 0 ? 'positive' : 'negative'}>
+                  {Number(operation.quantity_delta) >= 0 ? '+' : '−'}
+                  {formatQuantity(String(Math.abs(Number(operation.quantity_delta))))} unité
+                  {Math.abs(Number(operation.quantity_delta)) === 1 ? '' : 's'}
+                </strong>
+                <small>{formatDate(operation.created_at.slice(0, 10))} · {money(operation.unit_price)} / unité</small>
+              </span>
+              <strong className={Number(operation.cash_flow) >= 0 ? 'positive' : 'negative'}>
+                {signedMoney(operation.cash_flow)}
+              </strong>
+              <button
+                className="icon-action"
+                type="button"
+                aria-label={`Modifier l’opération du ${formatDate(operation.created_at.slice(0, 10))}`}
+                onClick={() => setEditingOperation(operation)}
+              >
+                <Icon name="edit" />
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyState icon="holdings" text="Aucune opération enregistrée pour cet actif." />
+      )}
+    </Modal>
+  )
+}
+
+function HoldingOperationEditModal({
+  holding,
+  operation,
+  onClose,
+  onSaved,
+}: {
+  holding: Holding
+  operation: HoldingOperation
+  onClose: () => void
+  onSaved: (result: HoldingOperationResult) => Promise<void>
+}) {
+  const [operationType, setOperationType] = useState(operation.operation_type)
+  const [quantity, setQuantity] = useState(operation.quantity)
+  const [unitPrice, setUnitPrice] = useState(operation.unit_price)
+  const mutation = useMutation({
+    mutationFn: () => apiPatch<HoldingOperationResult>(
+      `/holdings/${holding.id}/operations/${operation.id}`,
+      {
+        operation_type: operationType,
+        quantity,
+        unit_price: unitPrice,
+      },
+    ),
+    onSuccess: onSaved,
+  })
+  const formId = `holding-operation-edit-${operation.id}`
+
+  return (
+    <Modal
+      title={`Modifier l’opération · ${holding.name}`}
+      description="La position sera recalculée à partir de tout l’historique."
+      onClose={onClose}
+      actions={(
+        <>
+          <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
+            {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+        </>
+      )}
+    >
+      <form className="modal-form holding-operation-form" id={formId} onSubmit={(event: FormEvent) => {
+        event.preventDefault()
+        mutation.mutate()
+      }}>
+        <div className="holding-operation-type" role="group" aria-label="Type d’opération">
+          <button
+            className={operationType === 'buy' ? 'active' : ''}
+            type="button"
+            onClick={() => setOperationType('buy')}
+          >
+            Achat
+          </button>
+          <button
+            className={operationType === 'sell' ? 'active' : ''}
+            type="button"
+            onClick={() => setOperationType('sell')}
+          >
+            Vente
+          </button>
+        </div>
+        <div className="holding-modal-grid">
+          <Field label="Quantité">
+            <FormInput type="number" min="0.000001" step="0.000001" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
+          </Field>
+          <Field label={operationType === 'buy' ? "Prix d'achat unitaire" : 'Prix de vente unitaire'}>
+            <FormInput type="number" min="0.01" step="0.01" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} required />
+          </Field>
+        </div>
         {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
     </Modal>

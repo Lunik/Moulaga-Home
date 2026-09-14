@@ -37,6 +37,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.debts == 4
     assert result.real_estate_assets == 2
     assert result.holdings == 3
+    assert result.holding_operations == 5
     assert result.households == 1
     assert result.snapshot_attachments == 2
     assert result.recurring_attachments == 2
@@ -156,6 +157,14 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         net_worth = client.get("/api/networth/overview").json()
         assert net_worth["net_worth"] != "0.00"
         assert client.get("/api/networth/history").json()
+        holdings = client.get("/api/holdings").json()
+        etf = next(item for item in holdings if item["name"] == "ETF Monde")
+        assert etf["quantity"] == "12.000000"
+        assert etf["average_price"] == "85.000000"
+        assert etf["operation_count"] == 3
+        operations = client.get(f"/api/holdings/{etf['id']}/operations").json()
+        assert len(operations) == 3
+        assert {item["operation_type"] for item in operations} == {"buy", "sell"}
 
         paths = client.get("/api/openapi.json").json()["paths"]
         assert not any("transaction" in path for path in paths)

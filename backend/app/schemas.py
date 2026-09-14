@@ -780,20 +780,16 @@ class HoldingCreate(BaseModel):
 
 
 class HoldingUpdate(BaseModel):
-    account_id: int | None = None
     name: str | None = Field(default=None, min_length=1, max_length=120)
     symbol: str | None = Field(default=None, max_length=32)
-    asset_class: str | None = Field(default=None, max_length=32)
-    quantity: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
-    average_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
-    current_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
+    current_price: Decimal | None = Field(
+        default=None, ge=0, max_digits=12, decimal_places=2
+    )
 
-    @field_validator("account_id")
+    @field_validator("name")
     @classmethod
-    def reject_null_account_id(cls, value: int | None) -> int:
-        if value is None:
-            raise ValueError("Ce champ ne peut pas etre nul")
-        return value
+    def strip_optional_name(cls, value: str | None) -> str | None:
+        return _strip_required(value) if value is not None else None
 
 
 class HoldingRead(BaseModel):
@@ -810,6 +806,58 @@ class HoldingRead(BaseModel):
     cost_basis: Decimal
     market_value: Decimal
     gain: Decimal
+    operation_count: int
+
+
+class NewHoldingForOperation(BaseModel):
+    account_id: int
+    name: str = Field(min_length=1, max_length=120)
+    symbol: str | None = Field(default=None, max_length=32)
+    asset_class: str = Field(default="equity", max_length=32)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        return _strip_required(value)
+
+
+class HoldingOperationCreate(BaseModel):
+    holding_id: int | None = None
+    new_holding: NewHoldingForOperation | None = None
+    operation_type: Literal["buy", "sell"]
+    quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> HoldingOperationCreate:
+        if (self.holding_id is None) == (self.new_holding is None):
+            raise ValueError("Choisissez un actif existant ou renseignez un nouvel actif")
+        if self.new_holding is not None and self.operation_type == "sell":
+            raise ValueError("Un nouvel actif doit commencer par un achat")
+        return self
+
+
+class HoldingOperationUpdate(BaseModel):
+    operation_type: Literal["buy", "sell"]
+    quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+
+
+class HoldingOperationRead(BaseModel):
+    id: int
+    holding_id: int
+    operation_type: Literal["buy", "sell"]
+    quantity: Decimal
+    unit_price: Decimal
+    total_value: Decimal
+    quantity_delta: Decimal
+    cash_flow: Decimal
+    created_at: datetime
+
+
+class HoldingOperationResult(BaseModel):
+    holding: HoldingRead
+    operation: HoldingOperationRead
 
 
 class ContributionCreate(BaseModel):

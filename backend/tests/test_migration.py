@@ -209,6 +209,49 @@ def test_v20_database_adds_contract_attachment_support(tmp_path, monkeypatch):
     assert len(list(tmp_path.glob("moulaga.backup-*.db"))) == 1
 
 
+def test_v21_database_backfills_existing_holding_as_initial_purchase(tmp_path, monkeypatch):
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        account = client.post(
+            "/api/accounts",
+            json={"name": "PEA historique", "type": "pea", "initial_balance": "0.00"},
+        ).json()
+        holding = client.post(
+            "/api/holdings",
+            json={
+                "account_id": account["id"],
+                "name": "ETF historique",
+                "symbol": "OLD",
+                "asset_class": "equity",
+                "quantity": "7.5",
+                "average_price": "42.25",
+                "current_price": "50.00",
+            },
+        ).json()
+
+    db_path = tmp_path / "moulaga.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE holding_operations")
+        connection.execute("PRAGMA user_version = 21")
+
+    main, _ = load_app(tmp_path, monkeypatch)
+    with TestClient(main.create_app()) as client:
+        migrated = next(
+            item for item in client.get("/api/holdings").json()
+            if item["id"] == holding["id"]
+        )
+        operations = client.get(f"/api/holdings/{holding['id']}/operations").json()
+
+    assert migrated["quantity"] == "7.500000"
+    assert migrated["average_price"] == "42.250000"
+    assert migrated["operation_count"] == 1
+    assert len(operations) == 1
+    assert operations[0]["operation_type"] == "buy"
+    assert operations[0]["quantity"] == "7.500000"
+    assert operations[0]["unit_price"] == "42.25"
+    assert len(list(tmp_path.glob("moulaga.backup-*.db"))) == 1
+
+
 def test_v16_database_drops_obsolete_recurring_columns(tmp_path, monkeypatch):
     main, _ = load_app(tmp_path, monkeypatch)
     with TestClient(main.create_app()) as client:

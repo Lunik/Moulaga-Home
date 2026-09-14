@@ -52,6 +52,7 @@ from ..models import (
     Goal,
     GoalContribution,
     Holding,
+    HoldingOperation,
     Household,
     HouseholdMember,
     PaySlip,
@@ -85,6 +86,7 @@ class SeedResult:
     debts: int
     real_estate_assets: int
     holdings: int
+    holding_operations: int
     contributions: int
     households: int
     goals: int
@@ -648,6 +650,40 @@ async def _seed(
     )
     session.add_all([etf, bond, life_fund])
     await session.flush()
+    session.add_all(
+        [
+            HoldingOperation(
+                holding_id=etf.id,
+                operation_type="buy",
+                quantity=Decimal("10"),
+                unit_price=money("80.00"),
+            ),
+            HoldingOperation(
+                holding_id=etf.id,
+                operation_type="buy",
+                quantity=Decimal("4"),
+                unit_price=money("97.50"),
+            ),
+            HoldingOperation(
+                holding_id=etf.id,
+                operation_type="sell",
+                quantity=Decimal("2"),
+                unit_price=money("110.00"),
+            ),
+            HoldingOperation(
+                holding_id=bond.id,
+                operation_type="buy",
+                quantity=Decimal("30"),
+                unit_price=money("48.00"),
+            ),
+            HoldingOperation(
+                holding_id=life_fund.id,
+                operation_type="buy",
+                quantity=Decimal("100"),
+                unit_price=money("175.00"),
+            ),
+        ]
+    )
     contribution_count = 0
     for month in months:
         session.add(
@@ -963,6 +999,7 @@ async def _seed(
         debts=4,
         real_estate_assets=2,
         holdings=3,
+        holding_operations=5,
         contributions=contribution_count,
         households=1,
         goals=1,
@@ -1011,7 +1048,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{result.categories} categories, {result.recurring} recurrence(s), "
         f"{result.debts} dette(s), "
         f"{result.real_estate_assets} bien(s) immobilier(s), "
-        f"{result.holdings} actif(s), {result.contributions} versement(s), "
+        f"{result.holdings} actif(s), {result.holding_operations} operation(s), "
+        f"{result.contributions} versement(s), "
         f"{result.portfolio_snapshots} valorisation(s), "
         f"{result.households} foyer, {result.goals} objectif, "
         f"{result.snapshot_attachments} releve(s) joint(s), "

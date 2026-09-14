@@ -1985,6 +1985,11 @@ textarea:focus-visible {
   width: min(46rem, 100%);
 }
 
+.modal-card:has(.holding-operation-form),
+.modal-card:has(.holding-operation-list) {
+  width: min(46rem, 100%);
+}
+
 .transaction-modal-form > .amount-direction-toggle {
   width: 100%;
   margin-bottom: 0;
@@ -3031,8 +3036,80 @@ textarea:focus-visible {
   font-size: 0.7rem;
 }
 
+.holding-operation-count {
+  width: fit-content;
+  margin-top: 0.35rem;
+  padding: 0;
+  border: 0;
+  color: var(--primary);
+  background: none;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .holding-value {
   text-align: right;
+}
+
+.holding-operation-type {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  padding: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface-soft);
+}
+
+.holding-operation-type button {
+  min-height: 2.5rem;
+  border: 0;
+  border-radius: 0.55rem;
+  color: var(--muted);
+  background: transparent;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.holding-operation-type button.active {
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 8px 20px rgb(49 74 200 / 24%);
+}
+
+.holding-operation-type button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.holding-operation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.holding-operation-list article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--surface-raised);
+}
+
+.holding-operation-list article span strong,
+.holding-operation-list article span small {
+  display: block;
+}
+
+.holding-operation-list article span small {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.72rem;
 }
 
 .real-estate-summary {
