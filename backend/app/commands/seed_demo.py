@@ -631,6 +631,8 @@ async def _seed(
     )
 
     # --- Holdings + multi-month operation history ------------------------- #
+    # Multiple accounts and deliberately varied gains make the account filter
+    # and the net value / performance sorting options directly testable.
     etf = Holding(
         account_id=invest.id, name="ETF Monde", symbol="EWLD", asset_class="equity",
         quantity=Decimal("12"), average_price=Decimal("85"), current_price=Decimal("102"),
