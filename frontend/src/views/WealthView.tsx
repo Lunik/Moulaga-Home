@@ -23,11 +23,11 @@ import {
 } from '../AttachmentManager'
 import type {
   Account,
+  AssetPerformancePoint,
   Debt,
   Holding,
   HoldingOperation,
   HoldingOperationResult,
-  InvestmentContribution,
   NetWorthPoint,
   NetWorthSummary,
   PerformancePoint,
@@ -109,15 +109,14 @@ export function WealthView({
     queryKey: ['portfolio-performance'],
     queryFn: () => apiGet<PerformancePoint[]>('/portfolio/performance'),
   })
+  const assetPerformance = useQuery({
+    queryKey: ['asset-performance'],
+    queryFn: () => apiGet<AssetPerformancePoint[]>('/holdings/performance'),
+  })
   const allocation = useQuery({
     queryKey: ['portfolio-allocation'],
     queryFn: () => apiGet<PortfolioAllocation[]>('/portfolio/allocation'),
   })
-  const contributions = useQuery({
-    queryKey: ['investment-contributions'],
-    queryFn: () => apiGet<InvestmentContribution[]>('/contributions'),
-  })
-
   const errors = [
     summary.error,
     netWorth.error,
@@ -127,8 +126,8 @@ export function WealthView({
     recurringSeries.error,
     realEstate.error,
     performance.error,
+    assetPerformance.error,
     allocation.error,
-    contributions.error,
   ].filter(Boolean)
 
   useLayoutEffect(() => {
@@ -163,10 +162,7 @@ export function WealthView({
 
       {tab === 'overview' && (
         <WealthOverview
-          accounts={accounts}
           allocation={allocation.data ?? []}
-          contributions={contributions.data ?? []}
-          holdings={holdings.data ?? []}
           netWorth={netWorth.data}
           netWorthHistory={netWorthHistory.data ?? []}
           performance={performance.data ?? []}
@@ -176,6 +172,7 @@ export function WealthView({
       {tab === 'holdings' && (
         <AssetsPanel
           accounts={accounts}
+          performance={assetPerformance.data ?? []}
           holdings={holdings.data ?? []}
           navigate={navigate}
           view={holdingsTab}
@@ -202,19 +199,13 @@ export function WealthView({
 }
 
 function WealthOverview({
-  accounts,
   allocation,
-  contributions,
-  holdings,
   netWorth,
   netWorthHistory,
   performance,
   summary,
 }: {
-  accounts: Account[]
   allocation: PortfolioAllocation[]
-  contributions: InvestmentContribution[]
-  holdings: Holding[]
   netWorth?: NetWorthSummary
   netWorthHistory: NetWorthPoint[]
   performance: PerformancePoint[]
@@ -227,27 +218,32 @@ function WealthOverview({
     percentage: Number(slice.weight) * 100,
     color: allocationColors[index % allocationColors.length],
   }))
-  const recentContributions = [...contributions]
-    .sort((left, right) => right.occurred_on.localeCompare(left.occurred_on))
-    .slice(0, 5)
   const assets = Number(netWorth?.cash ?? 0)
     + Number(netWorth?.investments ?? 0)
     + Number(netWorth?.real_estate ?? 0)
   const gainPercent = Number(summary?.cost_basis ?? 0) > 0
     ? (Number(summary?.gain ?? 0) / Number(summary?.cost_basis ?? 0)) * 100
     : 0
-  const netWorthChartData = netWorthHistory.map((point) => ({
-    ...point,
-    net_worth: Number(point.net_worth),
-  }))
-  const positiveNetWorthData = netWorthChartData.map((point) => ({
-    ...point,
-    net_worth: Number(point.net_worth) > 0 ? Number(point.net_worth) : null,
-  }))
-  const negativeNetWorthData = netWorthChartData.map((point) => ({
-    ...point,
-    net_worth: Number(point.net_worth) < 0 ? Number(point.net_worth) : null,
-  }))
+  const netWorthChartData = [...netWorthHistory]
+    .sort((left, right) => left.period.localeCompare(right.period))
+    .map((point) => ({
+      ...point,
+      net_worth: Number(point.net_worth),
+    }))
+  const netWorthValues = netWorthChartData.map((point) => point.net_worth)
+  const netWorthMinimum = Math.min(0, ...netWorthValues)
+  const netWorthMaximum = Math.max(0, ...netWorthValues)
+  const netWorthRange = netWorthMaximum - netWorthMinimum
+  const netWorthZeroOffset = netWorthRange > 0
+    ? `${(netWorthMaximum / netWorthRange) * 100}%`
+    : '0%'
+  const performanceData = [...performance]
+    .sort((left, right) => left.period.localeCompare(right.period))
+    .map((point) => ({
+      ...point,
+      market_value: Number(point.market_value ?? 0),
+      cost_basis: Number(point.cost_basis ?? 0),
+    }))
 
   return (
     <>
@@ -278,21 +274,22 @@ function WealthOverview({
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={netWorthChartData} margin={{ top: 12, right: 10, left: -8, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="net-worth-fill-positive" x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="0%" stopColor="#16c79a" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#16c79a" stopOpacity={0} />
+                    <linearGradient id="net-worth-stroke" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset={netWorthZeroOffset} stopColor="#16c79a" />
+                      <stop offset={netWorthZeroOffset} stopColor="#e11d48" />
                     </linearGradient>
-                    <linearGradient id="net-worth-fill-negative" x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="0%" stopColor="#e11d48" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#e11d48" stopOpacity={0} />
+                    <linearGradient id="net-worth-fill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#16c79a" stopOpacity={0.3} />
+                      <stop offset={netWorthZeroOffset} stopColor="#16c79a" stopOpacity={0.04} />
+                      <stop offset={netWorthZeroOffset} stopColor="#e11d48" stopOpacity={0.04} />
+                      <stop offset="100%" stopColor="#e11d48" stopOpacity={0.3} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
                   <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
                   <YAxis axisLine={false} padding={{ top: 12 }} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
                   <Tooltip contentStyle={chartTooltipStyle} formatter={(value) => money(Number(value))} />
-                  <Area data={positiveNetWorthData} dataKey="net_worth" name="Patrimoine net" type="monotone" stroke="#16c79a" strokeWidth={2.5} fill="url(#net-worth-fill-positive)" connectNulls={false} />
-                  <Area data={negativeNetWorthData} dataKey="net_worth" name="Patrimoine net" type="monotone" stroke="#e11d48" strokeWidth={2.5} fill="url(#net-worth-fill-negative)" connectNulls={false} />
+                  <Area dataKey="net_worth" name="Patrimoine net" type="monotone" stroke="url(#net-worth-stroke)" strokeWidth={2.5} fill="url(#net-worth-fill)" />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
@@ -335,12 +332,12 @@ function WealthOverview({
         </Panel>
       </section>
 
-      <section className="dashboard-grid lower-grid">
+      <section className="dashboard-grid full-width-grid">
         <Panel title="Plus-value / moins-value" subtitle="Valeur du portefeuille et capital investi">
           <div className="chart-container">
-            {performance.length > 0 ? (
+            {performanceData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={performance} margin={{ top: 12, right: 12, left: -8, bottom: 0 }}>
+                <LineChart data={performanceData} margin={{ top: 12, right: 12, left: -8, bottom: 0 }}>
                   <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
                   <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
                   <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
@@ -354,88 +351,8 @@ function WealthOverview({
             )}
           </div>
         </Panel>
-
-        <Panel
-          title="Contributions récentes"
-          subtitle={`Total versé : ${money(summary?.contributions_total)}`}
-          action={<ContributionForm accounts={accounts} holdings={holdings} />}
-        >
-          {recentContributions.length > 0 ? (
-            <div className="data-list">
-              {recentContributions.map((contribution) => (
-                <div key={contribution.id}>
-                  <span className="data-list-icon"><Icon name="plus" /></span>
-                  <span>
-                    <strong>Versement</strong>
-                    <small>{formatDate(contribution.occurred_on)}</small>
-                  </span>
-                  <strong>{money(contribution.amount)}</strong>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState icon="plus" text="Aucune contribution enregistrée." />
-          )}
-        </Panel>
       </section>
     </>
-  )
-}
-
-function ContributionForm({ accounts, holdings }: { accounts: Account[]; holdings: Holding[] }) {
-  const queryClient = useQueryClient()
-  const [open, setOpen] = useState(false)
-  const [accountId, setAccountId] = useState('')
-  const [holdingId, setHoldingId] = useState('')
-  const [amount, setAmount] = useState('')
-  const [bookedAt, setBookedAt] = useState(localDateInputValue)
-  const availableHoldings = accountId
-    ? holdings.filter((holding) => holding.account_id === Number(accountId))
-    : holdings
-  const mutation = useMutation({
-    mutationFn: () => apiPost<InvestmentContribution>('/contributions', {
-      holding_id: Number(holdingId || availableHoldings[0]?.id),
-      occurred_on: bookedAt,
-      amount,
-      note: null,
-    }),
-    onSuccess: async () => {
-      setOpen(false)
-      setAmount('')
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['investment-contributions'] }),
-        queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
-        queryClient.invalidateQueries({ queryKey: ['portfolio-performance'] }),
-        queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
-      ])
-    },
-  })
-  if (!open) {
-    return (
-      <button className="secondary-button small-button" type="button" onClick={() => setOpen(true)}>
-        <Icon name="plus" />Versement
-      </button>
-    )
-  }
-  return (
-    <form className="compact-inline-form contribution-form" onSubmit={(event) => {
-      event.preventDefault()
-      mutation.mutate()
-    }}>
-      <FormSelect aria-label="Compte" value={accountId} onChange={(event) => setAccountId(event.target.value)}>
-        <option value="">Tous les comptes</option>
-        {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-      </FormSelect>
-      <FormSelect aria-label="Actif" value={holdingId} onChange={(event) => setHoldingId(event.target.value)} required>
-        <option value="">Choisir un actif</option>
-        {availableHoldings.map((holding) => <option key={holding.id} value={holding.id}>{holding.name}</option>)}
-      </FormSelect>
-      <FormInput aria-label="Date" type="date" value={bookedAt} onChange={(event) => setBookedAt(event.target.value)} />
-      <FormInput aria-label="Montant" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required />
-      <button className="primary-button icon-button" type="submit" aria-label="Enregistrer" disabled={availableHoldings.length === 0}><Icon name="check" /></button>
-      <button className="text-button icon-button" type="button" aria-label="Annuler" onClick={() => setOpen(false)}><Icon name="close" /></button>
-      {mutation.error && <span className="form-error">{errorMessage(mutation.error)}</span>}
-    </form>
   )
 }
 
@@ -443,11 +360,13 @@ function AssetsPanel({
   accounts,
   holdings,
   navigate,
+  performance,
   view,
 }: {
   accounts: Account[]
   holdings: Holding[]
   navigate: (route: Route) => void
+  performance: AssetPerformancePoint[]
   view: HoldingsTab
 }) {
   const queryClient = useQueryClient()
@@ -470,6 +389,8 @@ function AssetsPanel({
       queryClient.invalidateQueries({ queryKey: ['holding-operations'] }),
       queryClient.invalidateQueries({ queryKey: ['wealth-summary'] }),
       queryClient.invalidateQueries({ queryKey: ['portfolio-allocation'] }),
+      queryClient.invalidateQueries({ queryKey: ['portfolio-performance'] }),
+      queryClient.invalidateQueries({ queryKey: ['asset-performance'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth'] }),
       queryClient.invalidateQueries({ queryKey: ['net-worth-history'] }),
     ])
@@ -494,6 +415,7 @@ function AssetsPanel({
           }}
         />
       )}
+      <AssetPerformanceChart performance={performance} />
       <nav className="module-tabs asset-subtabs" aria-label="Vues des actifs">
         <button
           className={view === 'positions' ? 'active' : ''}
@@ -526,6 +448,37 @@ function AssetsPanel({
         />
       )}
     </>
+  )
+}
+
+function AssetPerformanceChart({ performance }: { performance: AssetPerformancePoint[] }) {
+  const data = [...performance]
+    .sort((left, right) => left.period.localeCompare(right.period))
+    .map((point) => ({
+      ...point,
+      market_value: Number(point.market_value),
+      cost_basis: Number(point.cost_basis),
+    }))
+
+  return (
+    <Panel title="Évolution des actifs" subtitle="Valeur de marché et capital investi">
+      <div className="chart-container asset-performance-chart">
+        {data.length > 0 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 12, right: 12, left: -8, bottom: 0 }}>
+              <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
+              <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
+              <Tooltip contentStyle={chartTooltipStyle} formatter={(value) => money(Number(value))} />
+              <Line dataKey="market_value" name="Valeur de marché" type="monotone" stroke="#615fff" strokeWidth={2.5} dot={false} />
+              <Line dataKey="cost_basis" name="Capital investi" type="monotone" stroke="#f97316" strokeWidth={2.2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <EmptyState icon="trend" text="Ajoutez une première opération pour afficher l'évolution de vos actifs." />
+        )}
+      </div>
+    </Panel>
   )
 }
 

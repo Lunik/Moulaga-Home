@@ -630,7 +630,7 @@ async def _seed(
         ]
     )
 
-    # --- Holdings + contributions ----------------------------------------- #
+    # --- Holdings + multi-month operation history ------------------------- #
     etf = Holding(
         account_id=invest.id, name="ETF Monde", symbol="EWLD", asset_class="equity",
         quantity=Decimal("12"), average_price=Decimal("85"), current_price=Decimal("102"),
@@ -680,8 +680,15 @@ async def _seed(
             HoldingOperation(
                 holding_id=etf.id,
                 operation_type="buy",
-                quantity=Decimal("4"),
-                unit_price=money("97.50"),
+                quantity=Decimal("2"),
+                unit_price=money("95.00"),
+                occurred_on=months[1].replace(day=12),
+            ),
+            HoldingOperation(
+                holding_id=etf.id,
+                operation_type="buy",
+                quantity=Decimal("2"),
+                unit_price=money("100.00"),
                 occurred_on=months[2].replace(day=12),
             ),
             HoldingOperation(
@@ -1036,7 +1043,7 @@ async def _seed(
         debts=4,
         real_estate_assets=2,
         holdings=5,
-        holding_operations=7,
+        holding_operations=8,
         contributions=contribution_count,
         households=1,
         goals=1,

@@ -99,6 +99,7 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
     '/portfolio/summary',
     '/portfolio/allocation',
     '/portfolio/performance',
+    '/holdings/performance',
     '/networth/overview',
     '/networth/history',
     `/networth/overview${queryString({ as_of: anchorDate })}`,
@@ -107,7 +108,6 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
     '/holding-operations',
     '/debts',
     '/real-estate',
-    '/contributions',
     '/documents',
     ...(['cycle', 'year'] as const).flatMap((period) => [
       `/budget/cashflow${queryString({ on: anchorDate, period, by: 'source' })}`,

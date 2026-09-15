@@ -953,6 +953,13 @@ class PerformancePoint(BaseModel):
     cumulative_contributions: Decimal
 
 
+class AssetPerformancePoint(BaseModel):
+    period: str
+    market_value: Decimal
+    cost_basis: Decimal
+    gain: Decimal
+
+
 class NetWorthOverview(BaseModel):
     cash: Decimal
     investments: Decimal
