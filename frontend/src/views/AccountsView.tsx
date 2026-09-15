@@ -639,6 +639,9 @@ export function AccountDetailView({
           onClose={() => setShowDeleteModal(false)}
           actions={(
             <>
+              <button className="text-button" type="button" onClick={() => setShowDeleteModal(false)}>
+                Annuler
+              </button>
               <button
                 className="secondary-button destructive-button"
                 type="button"
@@ -658,9 +661,6 @@ export function AccountDetailView({
                 }}
               >
                 <Icon name="archive" /> {account.data.archived ? 'Conserver archivé' : 'Archiver plutôt'}
-              </button>
-              <button className="text-button" type="button" onClick={() => setShowDeleteModal(false)}>
-                Annuler
               </button>
             </>
           )}
@@ -685,6 +685,9 @@ export function AccountDetailView({
           onClose={() => setShowArchiveModal(false)}
           actions={(
             <>
+              <button className="text-button" type="button" onClick={() => setShowArchiveModal(false)}>
+                Annuler
+              </button>
               <button
                 className="secondary-button"
                 type="button"
@@ -692,9 +695,6 @@ export function AccountDetailView({
                 onClick={() => archive.mutate({ archived: true })}
               >
                 Archiver sans transfert
-              </button>
-              <button className="text-button" type="button" onClick={() => setShowArchiveModal(false)}>
-                Annuler
               </button>
             </>
           )}
@@ -973,6 +973,7 @@ function SnapshotRow({
           onClose={() => setEditing(false)}
           actions={(
             <>
+              <button className="text-button" type="button" onClick={() => setEditing(false)}>Annuler</button>
               <button
                 className="primary-button"
                 type="submit"
@@ -981,7 +982,6 @@ function SnapshotRow({
               >
                 {update.isPending ? 'Enregistrement…' : 'Enregistrer'}
               </button>
-              <button className="text-button" type="button" onClick={() => setEditing(false)}>Annuler</button>
             </>
           )}
         >
@@ -1580,6 +1580,7 @@ function SnapshotForm({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button
             className="primary-button"
             type="submit"
@@ -1588,7 +1589,6 @@ function SnapshotForm({
           >
             {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >

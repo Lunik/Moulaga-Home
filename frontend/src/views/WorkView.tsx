@@ -721,10 +721,10 @@ function ContractFormModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
             {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >
@@ -882,10 +882,10 @@ function PaySlipFormModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
             {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >
@@ -1015,10 +1015,10 @@ function PensionFormModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
             {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >

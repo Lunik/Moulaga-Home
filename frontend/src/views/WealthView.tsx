@@ -867,6 +867,7 @@ function HoldingModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button
             className="primary-button"
             type="submit"
@@ -875,7 +876,6 @@ function HoldingModal({
           >
             {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >
@@ -967,6 +967,7 @@ function HoldingOperationModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button
             className="primary-button"
             type="submit"
@@ -975,7 +976,6 @@ function HoldingOperationModal({
           >
             {mutation.isPending ? 'Enregistrement…' : 'Ajouter l’opération'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >
@@ -1254,10 +1254,10 @@ function HoldingOperationEditModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
             {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >
@@ -1668,10 +1668,10 @@ function RealEstateModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
             {mutation.isPending ? 'Enregistrement…' : asset ? 'Enregistrer' : 'Ajouter'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >
@@ -2026,10 +2026,10 @@ function DebtModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
             {mutation.isPending ? 'Enregistrement…' : debt ? 'Enregistrer' : 'Créer la dette'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >

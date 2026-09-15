@@ -589,6 +589,7 @@ function RecurringSeriesModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           <button
             className="primary-button"
             type="submit"
@@ -597,7 +598,6 @@ function RecurringSeriesModal({
           >
             {mutation.isPending ? 'Enregistrement…' : 'Enregistrer'}
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >
@@ -1029,6 +1029,7 @@ function CategoryModal({
       onClose={onClose}
       actions={(
         <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
           {category && (
             <button
               className="secondary-button destructive-button"
@@ -1042,7 +1043,6 @@ function CategoryModal({
           <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
             Enregistrer
           </button>
-          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
         </>
       )}
     >
