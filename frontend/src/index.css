@@ -693,6 +693,10 @@ textarea:focus-visible {
   grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.8fr);
 }
 
+.full-width-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .panel {
   min-width: 0;
   padding: clamp(1.1rem, 2vw, 1.4rem);
@@ -2980,6 +2984,10 @@ textarea:focus-visible {
 
 .tall-chart {
   height: 21rem;
+}
+
+.asset-performance-chart {
+  height: 20rem;
 }
 
 .wealth-distribution {

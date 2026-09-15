@@ -340,16 +340,6 @@ export interface HoldingOperationResult {
   operation: HoldingOperation
 }
 
-export interface InvestmentContribution {
-  id: number
-  holding_id: number
-  holding_name?: string
-  account_id?: number
-  amount: Money
-  occurred_on: string
-  note: string | null
-}
-
 export interface PortfolioAllocation {
   asset_class: string
   market_value: Money
@@ -372,6 +362,13 @@ export interface PerformancePoint {
   market_value?: Money
   cost_basis?: Money
   gain?: Money
+}
+
+export interface AssetPerformancePoint {
+  period: string
+  market_value: Money
+  cost_basis: Money
+  gain: Money
 }
 
 export interface NetWorthSummary {

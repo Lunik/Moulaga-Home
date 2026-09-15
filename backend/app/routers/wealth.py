@@ -38,6 +38,7 @@ from ..models import (
 )
 from ..schemas import (
     AllocationSlice,
+    AssetPerformancePoint,
     ContributionCreate,
     ContributionCreateAggregate,
     ContributionRead,
@@ -1583,6 +1584,92 @@ async def generate_portfolio_snapshot(
     return PortfolioSnapshotRead.model_validate(snapshot)
 
 
+async def _holding_performance(
+    session: AsyncSession,
+) -> list[AssetPerformancePoint]:
+    holdings = (await session.execute(select(Holding))).scalars().all()
+    operations = (
+        await session.execute(
+            select(HoldingOperation).order_by(
+                HoldingOperation.occurred_on,
+                HoldingOperation.created_at,
+                HoldingOperation.id,
+            )
+        )
+    ).scalars().all()
+    if not holdings and not operations:
+        return []
+
+    operations_by_period: dict[str, list[HoldingOperation]] = {}
+    for operation in operations:
+        period = operation.occurred_on.strftime("%Y-%m")
+        operations_by_period.setdefault(period, []).append(operation)
+
+    current_period = local_today().strftime("%Y-%m")
+    periods = sorted(set(operations_by_period) | {current_period})
+    positions: dict[int, tuple[Decimal, Decimal, Decimal]] = {}
+    points: list[AssetPerformancePoint] = []
+    for period in periods:
+        for operation in operations_by_period.get(period, []):
+            quantity, average_price, _ = positions.get(
+                operation.holding_id,
+                (Decimal("0"), Decimal("0"), Decimal("0")),
+            )
+            operation_quantity = Decimal(operation.quantity)
+            operation_price = Decimal(operation.unit_price)
+            if operation.operation_type == "buy":
+                next_quantity = quantity + operation_quantity
+                average_price = (
+                    (quantity * average_price + operation_quantity * operation_price)
+                    / next_quantity
+                )
+            else:
+                next_quantity = quantity - operation_quantity
+                if next_quantity < 0:
+                    raise ValueError("Une vente historique depasse la position disponible")
+                if next_quantity == 0:
+                    average_price = Decimal("0")
+            positions[operation.holding_id] = (
+                next_quantity,
+                average_price,
+                operation_price,
+            )
+
+        market_value = sum(
+            (quantity * last_price for quantity, _, last_price in positions.values()),
+            Decimal("0"),
+        )
+        cost_basis = sum(
+            (quantity * average_price for quantity, average_price, _ in positions.values()),
+            Decimal("0"),
+        )
+        if period == current_period:
+            market_value = sum(
+                (Decimal(row.quantity) * Decimal(row.current_price) for row in holdings),
+                Decimal("0"),
+            )
+            cost_basis = sum(
+                (Decimal(row.quantity) * Decimal(row.average_price) for row in holdings),
+                Decimal("0"),
+            )
+        points.append(
+            AssetPerformancePoint(
+                period=period,
+                market_value=money(market_value),
+                cost_basis=money(cost_basis),
+                gain=money(market_value - cost_basis),
+            )
+        )
+    return points
+
+
+@router.get("/holdings/performance", response_model=list[AssetPerformancePoint])
+async def holding_performance(
+    session: AsyncSession = Depends(get_session),
+) -> list[AssetPerformancePoint]:
+    return await _holding_performance(session)
+
+
 @router.get("/portfolio/performance", response_model=list[PerformancePoint])
 async def portfolio_performance(session: AsyncSession = Depends(get_session)) -> list[PerformancePoint]:
     month_expr = func.strftime("%Y-%m", Contribution.occurred_on)
@@ -1599,22 +1686,51 @@ async def portfolio_performance(session: AsyncSession = Depends(get_session)) ->
         await session.execute(select(PortfolioSnapshot).order_by(PortfolioSnapshot.period))
     ).scalars().all()
     snapshot_by_period = {s.period: s for s in snapshots}
+    if not snapshot_by_period:
+        asset_points = await _holding_performance(session)
+        asset_by_period = {point.period: point for point in asset_points}
+        periods = sorted(set(contrib_by_period) | set(asset_by_period))
+        points: list[PerformancePoint] = []
+        cumulative = Decimal("0")
+        latest_market_value = Decimal("0")
+        latest_cost_basis = Decimal("0")
+        for period in periods:
+            contributed = contrib_by_period.get(period, Decimal("0"))
+            cumulative += contributed
+            asset_point = asset_by_period.get(period)
+            if asset_point is not None:
+                latest_market_value = asset_point.market_value
+                latest_cost_basis = asset_point.cost_basis
+            points.append(
+                PerformancePoint(
+                    period=period,
+                    market_value=money(latest_market_value),
+                    cost_basis=money(latest_cost_basis),
+                    gain=money(latest_market_value - latest_cost_basis),
+                    contributions=money(contributed),
+                    cumulative_contributions=money(cumulative),
+                )
+            )
+        return points
 
     periods = sorted(set(contrib_by_period) | set(snapshot_by_period))
     points: list[PerformancePoint] = []
     cumulative = Decimal("0")
+    latest_market_value = Decimal("0")
+    latest_cost_basis = Decimal("0")
     for period in periods:
         contributed = contrib_by_period.get(period, Decimal("0"))
         cumulative += contributed
         snapshot = snapshot_by_period.get(period)
-        market_value = Decimal(snapshot.market_value) if snapshot else Decimal("0")
-        cost_basis = Decimal(snapshot.cost_basis) if snapshot else Decimal("0")
+        if snapshot is not None:
+            latest_market_value = Decimal(snapshot.market_value)
+            latest_cost_basis = Decimal(snapshot.cost_basis)
         points.append(
             PerformancePoint(
                 period=period,
-                market_value=money(market_value),
-                cost_basis=money(cost_basis),
-                gain=money(market_value - cost_basis),
+                market_value=money(latest_market_value),
+                cost_basis=money(latest_cost_basis),
+                gain=money(latest_market_value - latest_cost_basis),
                 contributions=money(contributed),
                 cumulative_contributions=money(cumulative),
             )

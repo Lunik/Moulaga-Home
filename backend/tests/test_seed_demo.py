@@ -37,7 +37,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.debts == 4
     assert result.real_estate_assets == 2
     assert result.holdings == 5
-    assert result.holding_operations == 7
+    assert result.holding_operations == 8
     assert result.households == 1
     assert result.snapshot_attachments == 2
     assert result.recurring_attachments == 2
@@ -164,16 +164,16 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         etf = next(item for item in etfs if item["quantity"] == "12.0000000000")
         assert etf["quantity"] == "12.0000000000"
         assert etf["average_price"] == "85.000000"
-        assert etf["operation_count"] == 3
+        assert etf["operation_count"] == 4
         bitcoin = next(item for item in holdings if item["symbol"] == "BTC")
         assert bitcoin["asset_class"] == "crypto"
         assert bitcoin["quantity"] == "0.1250000001"
         assert bitcoin["operation_count"] == 1
         operations = client.get(f"/api/holdings/{etf['id']}/operations").json()
-        assert len(operations) == 3
+        assert len(operations) == 4
         assert {item["operation_type"] for item in operations} == {"buy", "sell"}
         all_operations = client.get("/api/holding-operations").json()
-        assert len(all_operations) == 7
+        assert len(all_operations) == 8
         assert [item["occurred_on"] for item in all_operations] == sorted(
             [item["occurred_on"] for item in all_operations],
             reverse=True,
@@ -181,6 +181,16 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert {item["holding_id"] for item in all_operations}.issuperset(
             {item["id"] for item in etfs}
         )
+        asset_performance = client.get("/api/holdings/performance").json()
+        assert len(asset_performance) == 4
+        assert [item["period"] for item in asset_performance] == sorted(
+            item["period"] for item in asset_performance
+        )
+        assert all(float(item["market_value"]) > 0 for item in asset_performance)
+        assert any(float(item["gain"]) != 0 for item in asset_performance)
+        portfolio_performance = client.get("/api/portfolio/performance").json()
+        assert len(portfolio_performance) == 4
+        assert all(float(item["market_value"]) > 0 for item in portfolio_performance)
 
         paths = client.get("/api/openapi.json").json()["paths"]
         assert not any("transaction" in path for path in paths)

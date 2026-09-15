@@ -474,6 +474,66 @@ def test_portfolio_and_net_worth_do_not_double_count_investment_accounts(client)
     assert net_worth["net_worth"] == "1500.00"
 
 
+def test_holding_performance_uses_operations_without_portfolio_snapshots(client):
+    investment = client.post(
+        "/api/accounts",
+        json={"name": "PEA performance", "type": "pea", "initial_balance": "0.00"},
+    ).json()
+    purchase = client.post(
+        "/api/holding-operations",
+        json={
+            "new_holding": {
+                "account_id": investment["id"],
+                "name": "ETF Performance",
+                "symbol": "PERF",
+                "asset_class": "equity",
+            },
+            "operation_type": "buy",
+            "quantity": "10",
+            "unit_price": "80.00",
+            "occurred_on": "2024-01-10",
+        },
+    ).json()
+    holding_id = purchase["holding"]["id"]
+    client.post(
+        "/api/holding-operations",
+        json={
+            "holding_id": holding_id,
+            "operation_type": "buy",
+            "quantity": "5",
+            "unit_price": "110.00",
+            "occurred_on": "2024-03-10",
+        },
+    )
+    client.patch(f"/api/holdings/{holding_id}", json={"current_price": "120.00"})
+
+    performance = client.get("/api/holdings/performance")
+    assert performance.status_code == 200
+    points = performance.json()
+    assert [point["period"] for point in points] == sorted(
+        point["period"] for point in points
+    )
+    assert points[0] == {
+        "period": "2024-01",
+        "market_value": "800.00",
+        "cost_basis": "800.00",
+        "gain": "0.00",
+    }
+    assert points[1] == {
+        "period": "2024-03",
+        "market_value": "1650.00",
+        "cost_basis": "1350.00",
+        "gain": "300.00",
+    }
+    assert points[-1]["market_value"] == "1800.00"
+    assert points[-1]["cost_basis"] == "1350.00"
+    assert points[-1]["gain"] == "450.00"
+
+    portfolio_performance = client.get("/api/portfolio/performance").json()
+    assert portfolio_performance[-1]["market_value"] == "1800.00"
+    assert portfolio_performance[-1]["cost_basis"] == "1350.00"
+
+
 def test_holding_operations_create_and_update_positions(client):
     investment = client.post(
         "/api/accounts",
