@@ -158,6 +158,10 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert net_worth["net_worth"] != "0.00"
         assert client.get("/api/networth/history").json()
         holdings = client.get("/api/holdings").json()
+        assert len({item["account_id"] for item in holdings}) == 3
+        assert any(float(item["gain"]) > 0 for item in holdings)
+        assert any(float(item["gain"]) < 0 for item in holdings)
+        assert len({item["market_value"] for item in holdings}) > 1
         etfs = [item for item in holdings if item["name"] == "ETF Monde"]
         assert len(etfs) == 2
         assert len({item["account_id"] for item in etfs}) == 2

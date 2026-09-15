@@ -63,6 +63,15 @@ import {
 
 const allocationColors = ['#615fff', '#16c79a', '#1da9e8', '#f97316', '#8758f6', '#ec4899', '#f7b500']
 
+type HoldingSort =
+  | 'default'
+  | 'market-value-desc'
+  | 'market-value-asc'
+  | 'gain-desc'
+  | 'gain-asc'
+  | 'gain-percent-desc'
+  | 'gain-percent-asc'
+
 export function WealthView({
   tab,
   holdingsTab = 'positions',
@@ -497,16 +506,30 @@ function HoldingsPanel({
   const [operationsHolding, setOperationsHolding] = useState<Holding | null>(null)
   const [search, setSearch] = useState('')
   const [assetClass, setAssetClass] = useState('all')
-  const filtered = useMemo(() => {
+  const [accountId, setAccountId] = useState('all')
+  const [sort, setSort] = useState<HoldingSort>('default')
+  const filterableAccounts = useMemo(() => {
+    const holdingAccountIds = new Set(holdings.map((holding) => holding.account_id))
+    return accounts.filter((account) =>
+      supportsHoldings(account.type)
+      && (holdingAccountIds.has(account.id) || accountId === String(account.id)),
+    )
+  }, [accountId, accounts, holdings])
+  const visibleHoldings = useMemo(() => {
     const normalized = search.trim().toLocaleLowerCase('fr-FR')
-    return holdings.filter((holding) => {
-      const matchesSearch =
-        !normalized
-        || holding.name.toLocaleLowerCase('fr-FR').includes(normalized)
-        || (holding.symbol ?? '').toLocaleLowerCase('fr-FR').includes(normalized)
-      return matchesSearch && (assetClass === 'all' || holding.asset_class === assetClass)
-    })
-  }, [assetClass, holdings, search])
+    return holdings
+      .filter((holding) => {
+        const matchesSearch =
+          !normalized
+          || holding.name.toLocaleLowerCase('fr-FR').includes(normalized)
+          || (holding.symbol ?? '').toLocaleLowerCase('fr-FR').includes(normalized)
+        const matchesAccount = accountId === 'all' || holding.account_id === Number(accountId)
+        return matchesSearch
+          && matchesAccount
+          && (assetClass === 'all' || holding.asset_class === assetClass)
+      })
+      .sort((left, right) => compareHoldings(left, right, sort))
+  }, [accountId, assetClass, holdings, search, sort])
 
   return (
     <>
@@ -529,12 +552,12 @@ function HoldingsPanel({
         />
       )}
       <Panel title="Patrimoine" subtitle="Votre portefeuille en un coup d'œil">
-        <div className="filter-row">
+        <div className="filter-row asset-position-filters">
           <label className="search-field">
             <Icon name="search" />
             <FormInput value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Rechercher un titre ou un symbole" />
           </label>
-          <FormSelect value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
+          <FormSelect aria-label="Filtrer par type d'actif" value={assetClass} onChange={(event) => setAssetClass(event.target.value)}>
             <option value="all">Tous les actifs</option>
             <option value="cash">Liquidités</option>
             <option value="savings">Épargne</option>
@@ -545,10 +568,31 @@ function HoldingsPanel({
             <option value="real_estate">Immobilier</option>
             <option value="other">Autres</option>
           </FormSelect>
+          <FormSelect aria-label="Filtrer par compte" value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+            <option value="all">Tous les comptes</option>
+            {filterableAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}{account.archived ? ' (archivé)' : ''}
+              </option>
+            ))}
+          </FormSelect>
+          <FormSelect
+            aria-label="Trier les actifs"
+            value={sort}
+            onChange={(event) => setSort(event.target.value as HoldingSort)}
+          >
+            <option value="default">Tri par défaut</option>
+            <option value="market-value-desc">Valeur nette : décroissante</option>
+            <option value="market-value-asc">Valeur nette : croissante</option>
+            <option value="gain-desc">Plus / moins-value (€) : décroissante</option>
+            <option value="gain-asc">Plus / moins-value (€) : croissante</option>
+            <option value="gain-percent-desc">Plus / moins-value (%) : décroissante</option>
+            <option value="gain-percent-asc">Plus / moins-value (%) : croissante</option>
+          </FormSelect>
         </div>
-        {filtered.length > 0 ? (
+        {visibleHoldings.length > 0 ? (
           <div className="holding-list">
-            {filtered.map((holding) => (
+            {visibleHoldings.map((holding) => (
               <HoldingRow
                 accounts={accounts}
                 holding={holding}
@@ -2125,6 +2169,16 @@ function holdingGainPercent(holding: Holding): number {
   return Number(holding.cost_basis) > 0
     ? (Number(holding.gain) / Number(holding.cost_basis)) * 100
     : 0
+}
+
+function compareHoldings(left: Holding, right: Holding, sort: HoldingSort): number {
+  if (sort === 'market-value-desc') return Number(right.market_value) - Number(left.market_value)
+  if (sort === 'market-value-asc') return Number(left.market_value) - Number(right.market_value)
+  if (sort === 'gain-desc') return Number(right.gain) - Number(left.gain)
+  if (sort === 'gain-asc') return Number(left.gain) - Number(right.gain)
+  if (sort === 'gain-percent-desc') return holdingGainPercent(right) - holdingGainPercent(left)
+  if (sort === 'gain-percent-asc') return holdingGainPercent(left) - holdingGainPercent(right)
+  return 0
 }
 
 function holdingQuantityStep(assetClass?: Holding['asset_class']): string {
