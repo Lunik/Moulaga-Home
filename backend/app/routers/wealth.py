@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -67,6 +69,100 @@ from ..schemas import (
 )
 
 router = APIRouter(tags=["wealth"])
+
+
+@dataclass(slots=True)
+class HoldingRealizedMetrics:
+    realized_cost_basis: Decimal = Decimal("0")
+    realized_gain: Decimal = Decimal("0")
+
+
+@dataclass(slots=True)
+class HoldingOperationMetrics:
+    realized_cost_basis: Decimal | None
+    realized_gain: Decimal | None
+
+
+@dataclass(slots=True)
+class HoldingPerformanceState:
+    quantity: Decimal = Decimal("0")
+    average_price: Decimal = Decimal("0")
+    last_price: Decimal = Decimal("0")
+    realized_cost_basis: Decimal = Decimal("0")
+    realized_gain: Decimal = Decimal("0")
+
+
+def _holding_operation_sort_key(
+    operation: HoldingOperation,
+) -> tuple[date, str, int]:
+    return (
+        operation.occurred_on,
+        operation.created_at.isoformat() if operation.created_at else "9999",
+        operation.id or 0,
+    )
+
+
+def _holding_realized_metrics(
+    operations: list[HoldingOperation],
+) -> HoldingRealizedMetrics:
+    quantity = Decimal("0")
+    average_price = Decimal("0")
+    realized_cost_basis = Decimal("0")
+    realized_gain = Decimal("0")
+    for operation in sorted(operations, key=_holding_operation_sort_key):
+        operation_quantity = Decimal(operation.quantity)
+        operation_price = Decimal(operation.unit_price)
+        if operation.operation_type == "buy":
+            next_quantity = quantity + operation_quantity
+            total_cost = quantity * average_price + operation_quantity * operation_price
+            quantity = next_quantity
+            average_price = (total_cost / next_quantity).quantize(Decimal("0.000001"))
+            continue
+        if operation_quantity > quantity:
+            raise ValueError("Une vente historique depasse la position disponible")
+        sale_cost_basis = operation_quantity * average_price
+        realized_cost_basis += sale_cost_basis
+        realized_gain += operation_quantity * (operation_price - average_price)
+        quantity -= operation_quantity
+        if quantity == 0:
+            average_price = Decimal("0")
+    return HoldingRealizedMetrics(
+        realized_cost_basis=realized_cost_basis,
+        realized_gain=realized_gain,
+    )
+
+
+def _holding_operation_metrics(
+    operations: list[HoldingOperation],
+) -> dict[int, HoldingOperationMetrics]:
+    quantity = Decimal("0")
+    average_price = Decimal("0")
+    metrics: dict[int, HoldingOperationMetrics] = {}
+    for operation in sorted(operations, key=_holding_operation_sort_key):
+        operation_quantity = Decimal(operation.quantity)
+        operation_price = Decimal(operation.unit_price)
+        if operation.operation_type == "buy":
+            next_quantity = quantity + operation_quantity
+            total_cost = quantity * average_price + operation_quantity * operation_price
+            quantity = next_quantity
+            average_price = (total_cost / next_quantity).quantize(Decimal("0.000001"))
+            metrics[operation.id] = HoldingOperationMetrics(
+                realized_cost_basis=None,
+                realized_gain=None,
+            )
+            continue
+        if operation_quantity > quantity:
+            raise ValueError("Une vente historique depasse la position disponible")
+        sale_cost_basis = operation_quantity * average_price
+        realized_gain = operation_quantity * (operation_price - average_price)
+        metrics[operation.id] = HoldingOperationMetrics(
+            realized_cost_basis=money(sale_cost_basis),
+            realized_gain=money(realized_gain),
+        )
+        quantity -= operation_quantity
+        if quantity == 0:
+            average_price = Decimal("0")
+    return metrics
 
 
 def _debt_read(
@@ -884,10 +980,21 @@ async def delete_real_estate_attachment(
 # --------------------------------------------------------------------------- #
 # Holdings
 # --------------------------------------------------------------------------- #
-def _holding_read(holding: Holding, operation_count: int = 0) -> HoldingRead:
+def _holding_read(
+    holding: Holding,
+    operation_count: int = 0,
+    *,
+    realized_cost_basis: Decimal = Decimal("0"),
+    realized_gain: Decimal = Decimal("0"),
+) -> HoldingRead:
     quantity = Decimal(holding.quantity)
     cost_basis = money(quantity * Decimal(holding.average_price))
     market_value = money(quantity * Decimal(holding.current_price))
+    unrealized_gain = money(market_value - cost_basis)
+    realized_cost_basis = money(realized_cost_basis)
+    realized_gain = money(realized_gain)
+    total_cost_basis = money(cost_basis + realized_cost_basis)
+    total_gain = money(unrealized_gain + realized_gain)
     return HoldingRead(
         id=holding.id,
         account_id=holding.account_id,
@@ -898,22 +1005,39 @@ def _holding_read(holding: Holding, operation_count: int = 0) -> HoldingRead:
         average_price=Decimal(holding.average_price),
         current_price=Decimal(holding.current_price),
         cost_basis=cost_basis,
+        unrealized_cost_basis=cost_basis,
+        realized_cost_basis=realized_cost_basis,
+        total_cost_basis=total_cost_basis,
         market_value=market_value,
-        gain=money(market_value - cost_basis),
+        unrealized_gain=unrealized_gain,
+        realized_gain=realized_gain,
+        total_gain=total_gain,
+        gain=total_gain,
         operation_count=operation_count,
     )
 
 
 async def _holding_response(session: AsyncSession, holding: Holding) -> HoldingRead:
-    operation_count = await session.scalar(
-        select(func.count())
-        .select_from(HoldingOperation)
-        .where(HoldingOperation.holding_id == holding.id)
+    operations = (
+        await session.execute(
+            select(HoldingOperation).where(HoldingOperation.holding_id == holding.id)
+        )
+    ).scalars().all()
+    realized = _holding_realized_metrics(operations)
+    return _holding_read(
+        holding,
+        len(operations),
+        realized_cost_basis=realized.realized_cost_basis,
+        realized_gain=realized.realized_gain,
     )
-    return _holding_read(holding, int(operation_count or 0))
 
 
-def _holding_operation_read(operation: HoldingOperation) -> HoldingOperationRead:
+def _holding_operation_read(
+    operation: HoldingOperation,
+    *,
+    realized_cost_basis: Decimal | None = None,
+    realized_gain: Decimal | None = None,
+) -> HoldingOperationRead:
     quantity = Decimal(operation.quantity)
     total_value = money(quantity * Decimal(operation.unit_price))
     is_buy = operation.operation_type == "buy"
@@ -924,11 +1048,33 @@ def _holding_operation_read(operation: HoldingOperation) -> HoldingOperationRead
         quantity=quantity,
         unit_price=money(operation.unit_price),
         total_value=total_value,
+        realized_cost_basis=realized_cost_basis,
+        realized_gain=realized_gain,
         quantity_delta=quantity if is_buy else -quantity,
         cash_flow=-total_value if is_buy else total_value,
         occurred_on=operation.occurred_on,
         created_at=operation.created_at,
     )
+
+
+def _holding_operation_reads(
+    operations: list[HoldingOperation],
+) -> list[HoldingOperationRead]:
+    metrics = _holding_operation_metrics(operations)
+    result: list[HoldingOperationRead] = []
+    for operation in operations:
+        operation_metrics = metrics.get(
+            operation.id,
+            HoldingOperationMetrics(realized_cost_basis=None, realized_gain=None),
+        )
+        result.append(
+            _holding_operation_read(
+                operation,
+                realized_cost_basis=operation_metrics.realized_cost_basis,
+                realized_gain=operation_metrics.realized_gain,
+            )
+        )
+    return result
 
 
 def _replayed_holding_position(
@@ -947,9 +1093,9 @@ def _replayed_holding_position(
         key=lambda operation: (
             updated_occurred_on
             if operation.id == updated_operation_id and updated_occurred_on is not None
-            else operation.occurred_on,
-            operation.created_at.isoformat() if operation.created_at else "9999",
-            operation.id or 0,
+            else _holding_operation_sort_key(operation)[0],
+            _holding_operation_sort_key(operation)[1],
+            _holding_operation_sort_key(operation)[2],
         ),
     )
     for operation in ordered_operations:
@@ -1044,16 +1190,35 @@ async def list_holdings(
             raise HTTPException(status_code=404, detail="Compte introuvable")
         statement = statement.where(Holding.account_id == account_id)
     rows = (await session.execute(statement)).scalars().all()
-    operation_counts = {
-        holding_id: count
-        for holding_id, count in (
+    operations_by_holding: dict[int, list[HoldingOperation]] = defaultdict(list)
+    holding_ids = [row.id for row in rows]
+    if holding_ids:
+        for operation in (
             await session.execute(
-                select(HoldingOperation.holding_id, func.count(HoldingOperation.id))
-                .group_by(HoldingOperation.holding_id)
+                select(HoldingOperation)
+                .where(HoldingOperation.holding_id.in_(holding_ids))
+                .order_by(
+                    HoldingOperation.holding_id,
+                    HoldingOperation.occurred_on,
+                    HoldingOperation.created_at,
+                    HoldingOperation.id,
+                )
             )
-        ).all()
-    }
-    return [_holding_read(row, int(operation_counts.get(row.id, 0))) for row in rows]
+        ).scalars().all():
+            operations_by_holding[operation.holding_id].append(operation)
+    result: list[HoldingRead] = []
+    for row in rows:
+        operations = operations_by_holding[row.id]
+        realized = _holding_realized_metrics(operations)
+        result.append(
+            _holding_read(
+                row,
+                len(operations),
+                realized_cost_basis=realized.realized_cost_basis,
+                realized_gain=realized.realized_gain,
+            )
+        )
+    return result
 
 
 @router.post("/holdings", response_model=HoldingRead, status_code=201)
@@ -1168,7 +1333,12 @@ async def list_holding_operations(
             )
         )
     ).scalars().all()
-    return [_holding_operation_read(row) for row in rows]
+    chronological = sorted(rows, key=_holding_operation_sort_key)
+    reads_by_id = {
+        operation.id: operation
+        for operation in _holding_operation_reads(chronological)
+    }
+    return [reads_by_id[row.id] for row in rows]
 
 
 @router.get(
@@ -1187,7 +1357,14 @@ async def list_all_holding_operations(
             )
         )
     ).scalars().all()
-    return [_holding_operation_read(row) for row in rows]
+    operations_by_holding: dict[int, list[HoldingOperation]] = defaultdict(list)
+    for row in sorted(rows, key=lambda operation: (operation.holding_id, *_holding_operation_sort_key(operation))):
+        operations_by_holding[row.holding_id].append(row)
+    reads_by_id: dict[int, HoldingOperationRead] = {}
+    for operations in operations_by_holding.values():
+        for operation_read in _holding_operation_reads(operations):
+            reads_by_id[operation_read.id] = operation_read
+    return [reads_by_id[row.id] for row in rows]
 
 
 @router.post(
@@ -1267,9 +1444,13 @@ async def create_holding_operation(
     await session.commit()
     await session.refresh(holding)
     await session.refresh(operation)
+    persisted_operations = await _holding_operations_chronological(session, holding.id)
+    operation_reads = {
+        item.id: item for item in _holding_operation_reads(persisted_operations)
+    }
     return HoldingOperationResult(
         holding=await _holding_response(session, holding),
-        operation=_holding_operation_read(operation),
+        operation=operation_reads[operation.id],
     )
 
 
@@ -1349,9 +1530,13 @@ async def update_holding_operation(
     await session.commit()
     await session.refresh(destination)
     await session.refresh(operation)
+    destination_operations = await _holding_operations_chronological(session, destination.id)
+    operation_reads = {
+        item.id: item for item in _holding_operation_reads(destination_operations)
+    }
     return HoldingOperationResult(
         holding=await _holding_response(session, destination),
-        operation=_holding_operation_read(operation),
+        operation=operation_reads[operation.id],
     )
 
 
@@ -1477,26 +1662,65 @@ async def create_aggregate_contribution(
 async def portfolio_summary(session: AsyncSession = Depends(get_session)) -> PortfolioSummary:
     holdings = (await session.execute(select(Holding))).scalars().all()
     properties = (await session.execute(select(RealEstateAsset))).scalars().all()
-    holdings_cost_basis = sum(
+    holding_operations = (
+        await session.execute(
+            select(HoldingOperation).order_by(
+                HoldingOperation.holding_id,
+                HoldingOperation.occurred_on,
+                HoldingOperation.created_at,
+                HoldingOperation.id,
+            )
+        )
+    ).scalars().all()
+    operations_by_holding: dict[int, list[HoldingOperation]] = defaultdict(list)
+    for operation in holding_operations:
+        operations_by_holding[operation.holding_id].append(operation)
+    holdings_unrealized_cost_basis = sum(
         (Decimal(h.quantity) * Decimal(h.average_price) for h in holdings), Decimal("0")
     )
     holdings_market_value = sum(
         (Decimal(h.quantity) * Decimal(h.current_price) for h in holdings), Decimal("0")
     )
+    holdings_realized = [
+        _holding_realized_metrics(operations_by_holding[holding.id]) for holding in holdings
+    ]
+    holdings_realized_cost_basis = sum(
+        (item.realized_cost_basis for item in holdings_realized),
+        Decimal("0"),
+    )
+    holdings_realized_gain = sum(
+        (item.realized_gain for item in holdings_realized),
+        Decimal("0"),
+    )
     property_values = [_real_estate_owned_values(asset) for asset in properties]
-    cost_basis = holdings_cost_basis + sum(
+    properties_cost_basis = sum(
         (purchase_price for purchase_price, _ in property_values), Decimal("0")
     )
-    market_value = holdings_market_value + sum(
+    properties_market_value = sum(
         (current_value for _, current_value in property_values), Decimal("0")
     )
+    unrealized_cost_basis = holdings_unrealized_cost_basis + properties_cost_basis
+    realized_cost_basis = holdings_realized_cost_basis
+    total_cost_basis = unrealized_cost_basis + realized_cost_basis
+    market_value = holdings_market_value + properties_market_value
+    unrealized_gain = (holdings_market_value - holdings_unrealized_cost_basis) + (
+        properties_market_value - properties_cost_basis
+    )
+    realized_gain = holdings_realized_gain
+    total_gain = unrealized_gain + realized_gain
     contributions_total = await session.scalar(
         select(func.coalesce(func.sum(Contribution.amount), 0))
     )
     return PortfolioSummary(
-        cost_basis=money(cost_basis),
+        cost_basis=money(total_cost_basis),
+        unrealized_cost_basis=money(unrealized_cost_basis),
+        realized_cost_basis=money(realized_cost_basis),
+        total_cost_basis=money(total_cost_basis),
         market_value=money(market_value),
-        gain=money(market_value - cost_basis),
+        unrealized_gain=money(unrealized_gain),
+        realized_gain=money(realized_gain),
+        total_gain=money(total_gain),
+        gain=money(total_gain),
         contributions_total=money(contributions_total),
         holdings=len(holdings),
         properties=len(properties),
@@ -1510,9 +1734,13 @@ async def portfolio_allocation(session: AsyncSession = Depends(get_session)) -> 
     by_class: dict[str, Decimal] = {}
     for holding in holdings:
         value = Decimal(holding.quantity) * Decimal(holding.current_price)
+        if value <= 0:
+            continue
         by_class[holding.asset_class] = by_class.get(holding.asset_class, Decimal("0")) + value
     for asset in properties:
         _, value = _real_estate_owned_values(asset)
+        if value <= 0:
+            continue
         by_class["real_estate"] = by_class.get("real_estate", Decimal("0")) + value
     total = sum(by_class.values(), Decimal("0"))
     slices = []
@@ -1564,6 +1792,26 @@ async def generate_portfolio_snapshot(
     cost_basis = sum(
         (Decimal(h.quantity) * Decimal(h.average_price) for h in holdings), Decimal("0")
     )
+    holding_operations = (
+        await session.execute(
+            select(HoldingOperation).order_by(
+                HoldingOperation.holding_id,
+                HoldingOperation.occurred_on,
+                HoldingOperation.created_at,
+                HoldingOperation.id,
+            )
+        )
+    ).scalars().all()
+    operations_by_holding: dict[int, list[HoldingOperation]] = defaultdict(list)
+    for operation in holding_operations:
+        operations_by_holding[operation.holding_id].append(operation)
+    cost_basis += sum(
+        (
+            _holding_realized_metrics(operations_by_holding[holding.id]).realized_cost_basis
+            for holding in holdings
+        ),
+        Decimal("0"),
+    )
     market_value = sum(
         (Decimal(h.quantity) * Decimal(h.current_price) for h in holdings), Decimal("0")
     )
@@ -1607,40 +1855,49 @@ async def _holding_performance(
 
     current_period = local_today().strftime("%Y-%m")
     periods = sorted(set(operations_by_period) | {current_period})
-    positions: dict[int, tuple[Decimal, Decimal, Decimal]] = {}
+    positions: dict[int, HoldingPerformanceState] = {}
     points: list[AssetPerformancePoint] = []
     for period in periods:
         for operation in operations_by_period.get(period, []):
-            quantity, average_price, _ = positions.get(
-                operation.holding_id,
-                (Decimal("0"), Decimal("0"), Decimal("0")),
-            )
+            state = positions.get(operation.holding_id, HoldingPerformanceState())
             operation_quantity = Decimal(operation.quantity)
             operation_price = Decimal(operation.unit_price)
             if operation.operation_type == "buy":
-                next_quantity = quantity + operation_quantity
-                average_price = (
-                    (quantity * average_price + operation_quantity * operation_price)
+                next_quantity = state.quantity + operation_quantity
+                state.average_price = (
+                    (state.quantity * state.average_price + operation_quantity * operation_price)
                     / next_quantity
                 )
+                state.quantity = next_quantity
             else:
-                next_quantity = quantity - operation_quantity
+                next_quantity = state.quantity - operation_quantity
                 if next_quantity < 0:
                     raise ValueError("Une vente historique depasse la position disponible")
+                sale_cost_basis = operation_quantity * state.average_price
+                state.realized_cost_basis += sale_cost_basis
+                state.realized_gain += operation_quantity * (
+                    operation_price - state.average_price
+                )
                 if next_quantity == 0:
-                    average_price = Decimal("0")
-            positions[operation.holding_id] = (
-                next_quantity,
-                average_price,
-                operation_price,
-            )
+                    state.average_price = Decimal("0")
+                state.quantity = next_quantity
+            state.last_price = operation_price
+            positions[operation.holding_id] = state
 
         market_value = sum(
-            (quantity * last_price for quantity, _, last_price in positions.values()),
+            (state.quantity * state.last_price for state in positions.values()),
             Decimal("0"),
         )
-        cost_basis = sum(
-            (quantity * average_price for quantity, average_price, _ in positions.values()),
+        unrealized_cost_basis = sum(
+            (state.quantity * state.average_price for state in positions.values()),
+            Decimal("0"),
+        )
+        realized_cost_basis = sum(
+            (state.realized_cost_basis for state in positions.values()),
+            Decimal("0"),
+        )
+        realized_gain = sum(
+            (state.realized_gain for state in positions.values()),
             Decimal("0"),
         )
         if period == current_period:
@@ -1648,16 +1905,25 @@ async def _holding_performance(
                 (Decimal(row.quantity) * Decimal(row.current_price) for row in holdings),
                 Decimal("0"),
             )
-            cost_basis = sum(
+            unrealized_cost_basis = sum(
                 (Decimal(row.quantity) * Decimal(row.average_price) for row in holdings),
                 Decimal("0"),
             )
+        unrealized_gain = market_value - unrealized_cost_basis
+        total_cost_basis = unrealized_cost_basis + realized_cost_basis
+        total_gain = unrealized_gain + realized_gain
         points.append(
             AssetPerformancePoint(
                 period=period,
                 market_value=money(market_value),
-                cost_basis=money(cost_basis),
-                gain=money(market_value - cost_basis),
+                cost_basis=money(total_cost_basis),
+                unrealized_cost_basis=money(unrealized_cost_basis),
+                realized_cost_basis=money(realized_cost_basis),
+                total_cost_basis=money(total_cost_basis),
+                unrealized_gain=money(unrealized_gain),
+                realized_gain=money(realized_gain),
+                total_gain=money(total_gain),
+                gain=money(total_gain),
             )
         )
     return points
@@ -1694,6 +1960,11 @@ async def portfolio_performance(session: AsyncSession = Depends(get_session)) ->
         cumulative = Decimal("0")
         latest_market_value = Decimal("0")
         latest_cost_basis = Decimal("0")
+        latest_unrealized_cost_basis = Decimal("0")
+        latest_realized_cost_basis = Decimal("0")
+        latest_unrealized_gain = Decimal("0")
+        latest_realized_gain = Decimal("0")
+        latest_total_gain = Decimal("0")
         for period in periods:
             contributed = contrib_by_period.get(period, Decimal("0"))
             cumulative += contributed
@@ -1701,12 +1972,23 @@ async def portfolio_performance(session: AsyncSession = Depends(get_session)) ->
             if asset_point is not None:
                 latest_market_value = asset_point.market_value
                 latest_cost_basis = asset_point.cost_basis
+                latest_unrealized_cost_basis = asset_point.unrealized_cost_basis
+                latest_realized_cost_basis = asset_point.realized_cost_basis
+                latest_unrealized_gain = asset_point.unrealized_gain
+                latest_realized_gain = asset_point.realized_gain
+                latest_total_gain = asset_point.total_gain
             points.append(
                 PerformancePoint(
                     period=period,
                     market_value=money(latest_market_value),
                     cost_basis=money(latest_cost_basis),
-                    gain=money(latest_market_value - latest_cost_basis),
+                    unrealized_cost_basis=money(latest_unrealized_cost_basis),
+                    realized_cost_basis=money(latest_realized_cost_basis),
+                    total_cost_basis=money(latest_cost_basis),
+                    unrealized_gain=money(latest_unrealized_gain),
+                    realized_gain=money(latest_realized_gain),
+                    total_gain=money(latest_total_gain),
+                    gain=money(latest_total_gain),
                     contributions=money(contributed),
                     cumulative_contributions=money(cumulative),
                 )
@@ -1718,6 +2000,10 @@ async def portfolio_performance(session: AsyncSession = Depends(get_session)) ->
     cumulative = Decimal("0")
     latest_market_value = Decimal("0")
     latest_cost_basis = Decimal("0")
+    latest_unrealized_cost_basis = Decimal("0")
+    latest_realized_cost_basis = Decimal("0")
+    latest_unrealized_gain = Decimal("0")
+    latest_realized_gain = Decimal("0")
     for period in periods:
         contributed = contrib_by_period.get(period, Decimal("0"))
         cumulative += contributed
@@ -1725,12 +2011,23 @@ async def portfolio_performance(session: AsyncSession = Depends(get_session)) ->
         if snapshot is not None:
             latest_market_value = Decimal(snapshot.market_value)
             latest_cost_basis = Decimal(snapshot.cost_basis)
+        latest_unrealized_cost_basis = latest_cost_basis
+        latest_realized_cost_basis = Decimal("0")
+        latest_unrealized_gain = latest_market_value - latest_cost_basis
+        latest_realized_gain = Decimal("0")
+        latest_total_gain = latest_unrealized_gain
         points.append(
             PerformancePoint(
                 period=period,
                 market_value=money(latest_market_value),
                 cost_basis=money(latest_cost_basis),
-                gain=money(latest_market_value - latest_cost_basis),
+                unrealized_cost_basis=money(latest_unrealized_cost_basis),
+                realized_cost_basis=money(latest_realized_cost_basis),
+                total_cost_basis=money(latest_cost_basis),
+                unrealized_gain=money(latest_unrealized_gain),
+                realized_gain=money(latest_realized_gain),
+                total_gain=money(latest_total_gain),
+                gain=money(latest_total_gain),
                 contributions=money(contributed),
                 cumulative_contributions=money(cumulative),
             )

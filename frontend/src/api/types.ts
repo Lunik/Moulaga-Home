@@ -316,7 +316,13 @@ export interface Holding {
   quantity: string
   average_price: Money
   current_price: Money
+  unrealized_cost_basis: Money
+  realized_cost_basis: Money
+  total_cost_basis: Money
   market_value: Money
+  unrealized_gain: Money
+  realized_gain: Money
+  total_gain: Money
   cost_basis: Money
   gain: Money
   operation_count: number
@@ -329,6 +335,8 @@ export interface HoldingOperation {
   quantity: string
   unit_price: Money
   total_value: Money
+  realized_cost_basis: Money | null
+  realized_gain: Money | null
   quantity_delta: string
   cash_flow: Money
   occurred_on: string
@@ -348,7 +356,13 @@ export interface PortfolioAllocation {
 
 export interface PortfolioSummary {
   cost_basis: Money
+  unrealized_cost_basis: Money
+  realized_cost_basis: Money
+  total_cost_basis: Money
   market_value: Money
+  unrealized_gain: Money
+  realized_gain: Money
+  total_gain: Money
   gain: Money
   contributions_total: Money
   holdings: number
@@ -361,6 +375,12 @@ export interface PerformancePoint {
   cumulative_contributions: Money
   market_value?: Money
   cost_basis?: Money
+  unrealized_cost_basis?: Money
+  realized_cost_basis?: Money
+  total_cost_basis?: Money
+  unrealized_gain?: Money
+  realized_gain?: Money
+  total_gain?: Money
   gain?: Money
 }
 
@@ -368,6 +388,12 @@ export interface AssetPerformancePoint {
   period: string
   market_value: Money
   cost_basis: Money
+  unrealized_cost_basis: Money
+  realized_cost_basis: Money
+  total_cost_basis: Money
+  unrealized_gain: Money
+  realized_gain: Money
+  total_gain: Money
   gain: Money
 }
 

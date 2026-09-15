@@ -505,6 +505,16 @@ def test_holding_performance_uses_operations_without_portfolio_snapshots(client)
             "occurred_on": "2024-03-10",
         },
     )
+    client.post(
+        "/api/holding-operations",
+        json={
+            "holding_id": holding_id,
+            "operation_type": "sell",
+            "quantity": "5",
+            "unit_price": "130.00",
+            "occurred_on": "2024-04-10",
+        },
+    )
     client.patch(f"/api/holdings/{holding_id}", json={"current_price": "120.00"})
 
     performance = client.get("/api/holdings/performance")
@@ -517,21 +527,53 @@ def test_holding_performance_uses_operations_without_portfolio_snapshots(client)
         "period": "2024-01",
         "market_value": "800.00",
         "cost_basis": "800.00",
+        "unrealized_cost_basis": "800.00",
+        "realized_cost_basis": "0.00",
+        "total_cost_basis": "800.00",
+        "unrealized_gain": "0.00",
+        "realized_gain": "0.00",
+        "total_gain": "0.00",
         "gain": "0.00",
     }
     assert points[1] == {
         "period": "2024-03",
         "market_value": "1650.00",
         "cost_basis": "1350.00",
+        "unrealized_cost_basis": "1350.00",
+        "realized_cost_basis": "0.00",
+        "total_cost_basis": "1350.00",
+        "unrealized_gain": "300.00",
+        "realized_gain": "0.00",
+        "total_gain": "300.00",
         "gain": "300.00",
     }
-    assert points[-1]["market_value"] == "1800.00"
+    assert points[2] == {
+        "period": "2024-04",
+        "market_value": "1300.00",
+        "cost_basis": "1350.00",
+        "unrealized_cost_basis": "900.00",
+        "realized_cost_basis": "450.00",
+        "total_cost_basis": "1350.00",
+        "unrealized_gain": "400.00",
+        "realized_gain": "200.00",
+        "total_gain": "600.00",
+        "gain": "600.00",
+    }
+    assert points[-1]["market_value"] == "1200.00"
     assert points[-1]["cost_basis"] == "1350.00"
-    assert points[-1]["gain"] == "450.00"
+    assert points[-1]["unrealized_cost_basis"] == "900.00"
+    assert points[-1]["realized_cost_basis"] == "450.00"
+    assert points[-1]["unrealized_gain"] == "300.00"
+    assert points[-1]["realized_gain"] == "200.00"
+    assert points[-1]["total_gain"] == "500.00"
+    assert points[-1]["gain"] == "500.00"
 
     portfolio_performance = client.get("/api/portfolio/performance").json()
-    assert portfolio_performance[-1]["market_value"] == "1800.00"
+    assert portfolio_performance[-1]["market_value"] == "1200.00"
     assert portfolio_performance[-1]["cost_basis"] == "1350.00"
+    assert portfolio_performance[-1]["realized_gain"] == "200.00"
+    assert portfolio_performance[-1]["unrealized_gain"] == "300.00"
+    assert portfolio_performance[-1]["total_gain"] == "500.00"
 
 
 def test_holding_operations_create_and_update_positions(client):
@@ -593,8 +635,12 @@ def test_holding_operations_create_and_update_positions(client):
     assert sale.status_code == 201
     assert sale.json()["holding"]["quantity"] == "11.0000000000"
     assert sale.json()["holding"]["average_price"] == "90.000000"
+    assert sale.json()["holding"]["realized_gain"] == "120.00"
+    assert sale.json()["holding"]["total_gain"] == "120.00"
     assert sale.json()["operation"]["quantity_delta"] == "-4.0000000000"
     assert sale.json()["operation"]["cash_flow"] == "480.00"
+    assert sale.json()["operation"]["realized_cost_basis"] == "360.00"
+    assert sale.json()["operation"]["realized_gain"] == "120.00"
 
     excessive_sale = client.post(
         "/api/holding-operations",
@@ -636,8 +682,12 @@ def test_holding_operations_create_and_update_positions(client):
     assert edited.json()["operation"]["operation_type"] == "sell"
     assert edited.json()["operation"]["cash_flow"] == "345.00"
     assert edited.json()["operation"]["occurred_on"] == "2026-02-10"
+    assert edited.json()["operation"]["realized_cost_basis"] == "240.00"
+    assert edited.json()["operation"]["realized_gain"] == "105.00"
     assert edited.json()["holding"]["quantity"] == "3.0000000000"
     assert edited.json()["holding"]["average_price"] == "80.000000"
+    assert edited.json()["holding"]["realized_gain"] == "265.00"
+    assert edited.json()["holding"]["total_gain"] == "265.00"
 
     initial_purchase_operation = operations[2]
     invalid_edit = client.patch(
@@ -679,6 +729,62 @@ def test_holding_operations_create_and_update_positions(client):
         },
     )
     assert invalid_backdated_sale.status_code == 422
+
+
+def test_closed_holding_keeps_realized_gain_and_stays_out_of_allocation(client):
+    investment = client.post(
+        "/api/accounts",
+        json={"name": "PEA closed", "type": "pea", "initial_balance": "0.00"},
+    ).json()
+    purchase = client.post(
+        "/api/holding-operations",
+        json={
+            "new_holding": {
+                "account_id": investment["id"],
+                "name": "Action cédée",
+                "symbol": "CLOSE",
+                "asset_class": "equity",
+            },
+            "operation_type": "buy",
+            "quantity": "2",
+            "unit_price": "50.00",
+            "occurred_on": "2026-01-10",
+        },
+    ).json()
+    holding_id = purchase["holding"]["id"]
+    sale = client.post(
+        "/api/holding-operations",
+        json={
+            "holding_id": holding_id,
+            "operation_type": "sell",
+            "quantity": "2",
+            "unit_price": "70.00",
+            "occurred_on": "2026-02-10",
+        },
+    )
+    assert sale.status_code == 201
+    closed = next(item for item in client.get("/api/holdings").json() if item["id"] == holding_id)
+    assert closed["quantity"] == "0.0000000000"
+    assert closed["market_value"] == "0.00"
+    assert closed["cost_basis"] == "0.00"
+    assert closed["unrealized_gain"] == "0.00"
+    assert closed["realized_gain"] == "40.00"
+    assert closed["total_gain"] == "40.00"
+    assert closed["gain"] == "40.00"
+
+    operations = client.get(f"/api/holdings/{holding_id}/operations").json()
+    assert operations[0]["operation_type"] == "sell"
+    assert operations[0]["realized_cost_basis"] == "100.00"
+    assert operations[0]["realized_gain"] == "40.00"
+
+    summary = client.get("/api/portfolio/summary").json()
+    assert summary["market_value"] == "0.00"
+    assert summary["realized_gain"] == "40.00"
+    assert summary["unrealized_gain"] == "0.00"
+    assert summary["total_gain"] == "40.00"
+
+    allocation = client.get("/api/portfolio/allocation").json()
+    assert allocation == []
 
 
 def test_crypto_operations_support_ten_decimal_quantity(client):

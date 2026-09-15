@@ -230,8 +230,10 @@ function WealthOverview({
   const assets = Number(netWorth?.cash ?? 0)
     + Number(netWorth?.investments ?? 0)
     + Number(netWorth?.real_estate ?? 0)
-  const gainPercent = Number(summary?.cost_basis ?? 0) > 0
-    ? (Number(summary?.gain ?? 0) / Number(summary?.cost_basis ?? 0)) * 100
+  const totalGain = Number(summary?.total_gain ?? summary?.gain ?? 0)
+  const totalCostBasis = Number(summary?.total_cost_basis ?? summary?.cost_basis ?? 0)
+  const gainPercent = totalCostBasis > 0
+    ? (totalGain / totalCostBasis) * 100
     : 0
   const netWorthChartData = [...netWorthHistory]
     .sort((left, right) => left.period.localeCompare(right.period))
@@ -252,6 +254,9 @@ function WealthOverview({
       ...point,
       market_value: Number(point.market_value ?? 0),
       cost_basis: Number(point.cost_basis ?? 0),
+      realized_gain: Number(point.realized_gain ?? 0),
+      unrealized_gain: Number(point.unrealized_gain ?? 0),
+      total_gain: Number(point.total_gain ?? point.gain ?? 0),
     }))
 
   return (
@@ -268,11 +273,17 @@ function WealthOverview({
           <small>Les liquidités proviennent des derniers relevés de comptes.</small>
         </div>
         <div className="wealth-performance">
-          <span className={Number(summary?.gain ?? 0) >= 0 ? 'positive' : 'negative'}>
+          <span className={totalGain >= 0 ? 'positive' : 'negative'}>
             <Icon name="trend" />
-            {signedMoney(summary?.gain ?? 0)}
+            {signedMoney(summary?.total_gain ?? summary?.gain ?? 0)}
           </span>
           <small>{gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}% de performance</small>
+          <small className={Number(summary?.realized_gain ?? 0) >= 0 ? 'positive' : 'negative'}>
+            Réalisé : {signedMoney(summary?.realized_gain ?? 0)}
+          </small>
+          <small className={Number(summary?.unrealized_gain ?? 0) >= 0 ? 'positive' : 'negative'}>
+            Latent : {signedMoney(summary?.unrealized_gain ?? 0)}
+          </small>
         </div>
       </section>
 
@@ -342,7 +353,7 @@ function WealthOverview({
       </section>
 
       <section className="dashboard-grid full-width-grid">
-        <Panel title="Plus-value / moins-value" subtitle="Valeur du portefeuille et capital investi">
+        <Panel title="Plus-value / moins-value" subtitle="Valeur du portefeuille, capital investi et gains réalisés">
           <div className="chart-container">
             {performanceData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -358,6 +369,26 @@ function WealthOverview({
             ) : (
               <EmptyState icon="trend" text="La performance sera calculée à partir des relevés et positions." />
             )}
+          </div>
+          <div className="wealth-performance-breakdown">
+            <span>
+              <small>Performance totale</small>
+              <strong className={totalGain >= 0 ? 'positive' : 'negative'}>
+                {signedMoney(summary?.total_gain ?? summary?.gain ?? 0)}
+              </strong>
+            </span>
+            <span>
+              <small>Plus-values réalisées</small>
+              <strong className={Number(summary?.realized_gain ?? 0) >= 0 ? 'positive' : 'negative'}>
+                {signedMoney(summary?.realized_gain ?? 0)}
+              </strong>
+            </span>
+            <span>
+              <small>Plus-values latentes</small>
+              <strong className={Number(summary?.unrealized_gain ?? 0) >= 0 ? 'positive' : 'negative'}>
+                {signedMoney(summary?.unrealized_gain ?? 0)}
+              </strong>
+            </span>
           </div>
         </Panel>
       </section>
@@ -467,10 +498,14 @@ function AssetPerformanceChart({ performance }: { performance: AssetPerformanceP
       ...point,
       market_value: Number(point.market_value),
       cost_basis: Number(point.cost_basis),
+      realized_gain: Number(point.realized_gain),
+      unrealized_gain: Number(point.unrealized_gain),
+      total_gain: Number(point.total_gain),
     }))
+  const latest = data.at(-1)
 
   return (
-    <Panel title="Évolution des actifs" subtitle="Valeur de marché et capital investi">
+    <Panel title="Évolution des actifs" subtitle="Valeur de marché, capital investi et gains réalisés">
       <div className="chart-container asset-performance-chart">
         {data.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
@@ -487,6 +522,28 @@ function AssetPerformanceChart({ performance }: { performance: AssetPerformanceP
           <EmptyState icon="trend" text="Ajoutez une première opération pour afficher l'évolution de vos actifs." />
         )}
       </div>
+      {latest && (
+        <div className="wealth-performance-breakdown">
+          <span>
+            <small>Performance totale</small>
+            <strong className={latest.total_gain >= 0 ? 'positive' : 'negative'}>
+              {signedMoney(latest.total_gain)}
+            </strong>
+          </span>
+          <span>
+            <small>Plus-values réalisées</small>
+            <strong className={latest.realized_gain >= 0 ? 'positive' : 'negative'}>
+              {signedMoney(latest.realized_gain)}
+            </strong>
+          </span>
+          <span>
+            <small>Plus-values latentes</small>
+            <strong className={latest.unrealized_gain >= 0 ? 'positive' : 'negative'}>
+              {signedMoney(latest.unrealized_gain)}
+            </strong>
+          </span>
+        </div>
+      )}
     </Panel>
   )
 }
@@ -507,6 +564,7 @@ function HoldingsPanel({
   const [search, setSearch] = useState('')
   const [assetClass, setAssetClass] = useState('all')
   const [accountId, setAccountId] = useState('all')
+  const [status, setStatus] = useState<'all' | 'open' | 'closed'>('all')
   const [sort, setSort] = useState<HoldingSort>('default')
   const filterableAccounts = useMemo(() => {
     const holdingAccountIds = new Set(holdings.map((holding) => holding.account_id))
@@ -524,12 +582,16 @@ function HoldingsPanel({
           || holding.name.toLocaleLowerCase('fr-FR').includes(normalized)
           || (holding.symbol ?? '').toLocaleLowerCase('fr-FR').includes(normalized)
         const matchesAccount = accountId === 'all' || holding.account_id === Number(accountId)
+        const matchesStatus = status === 'all'
+          || (status === 'open' && Number(holding.quantity) > 0)
+          || (status === 'closed' && Number(holding.quantity) === 0)
         return matchesSearch
           && matchesAccount
+          && matchesStatus
           && (assetClass === 'all' || holding.asset_class === assetClass)
       })
       .sort((left, right) => compareHoldings(left, right, sort))
-  }, [accountId, assetClass, holdings, search, sort])
+  }, [accountId, assetClass, holdings, search, sort, status])
 
   return (
     <>
@@ -575,6 +637,11 @@ function HoldingsPanel({
                 {account.name}{account.archived ? ' (archivé)' : ''}
               </option>
             ))}
+          </FormSelect>
+          <FormSelect aria-label="Filtrer par statut" value={status} onChange={(event) => setStatus(event.target.value as 'all' | 'open' | 'closed')}>
+            <option value="all">Ouvertes et clôturées</option>
+            <option value="open">Positions ouvertes</option>
+            <option value="closed">Positions clôturées</option>
           </FormSelect>
           <FormSelect
             aria-label="Trier les actifs"
@@ -641,12 +708,21 @@ function HoldingRow({
           {holding.operation_count} opération{holding.operation_count === 1 ? '' : 's'}
         </button>
       </span>
-      <StatusBadge>{assetLabel(holding.asset_class)}</StatusBadge>
+      <span className="holding-badges">
+        <StatusBadge>{assetLabel(holding.asset_class)}</StatusBadge>
+        {Number(holding.quantity) === 0 && <StatusBadge tone="warning">Clôturée</StatusBadge>}
+      </span>
       <span className="holding-value">
         <strong>{money(holding.market_value)}</strong>
         <small>Prix actuel : {money(holding.current_price)} / unité</small>
-        <small className={Number(holding.gain) >= 0 ? 'positive' : 'negative'}>
-          {signedMoney(holding.gain)} · {holdingGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+        <small className={Number(holding.total_gain) >= 0 ? 'positive' : 'negative'}>
+          Total : {signedMoney(holding.total_gain)} · {holdingTotalGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+        </small>
+        <small className={Number(holding.realized_gain) >= 0 ? 'positive' : 'negative'}>
+          Réalisé : {signedMoney(holding.realized_gain)} · {holdingRealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+        </small>
+        <small className={Number(holding.unrealized_gain) >= 0 ? 'positive' : 'negative'}>
+          Latent : {signedMoney(holding.unrealized_gain)} · {holdingUnrealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
         </small>
       </span>
       <span className="row-actions">
@@ -792,7 +868,10 @@ function HoldingOperationsPanel({
                   </small>
                 </span>
                 <strong className={`operation-cash-flow ${Number(operation.cash_flow) >= 0 ? 'positive' : 'negative'}`}>
-                  {signedMoney(operation.cash_flow)}
+                  Flux {signedMoney(operation.cash_flow)}
+                </strong>
+                <strong className={`operation-gain ${Number(operation.realized_gain ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+                  P/MV {operation.realized_gain == null ? '—' : signedMoney(operation.realized_gain)}
                 </strong>
                 <span className="row-actions">
                   <button
@@ -1157,7 +1236,7 @@ function HoldingOperationsModal({
   return (
     <Modal
       title={`Opérations · ${currentHolding.name}`}
-      description={`${formatQuantity(currentHolding.quantity, currentHolding.asset_class)} unités détenues · prix de revient ${money(currentHolding.average_price)}`}
+      description={`${formatQuantity(currentHolding.quantity, currentHolding.asset_class)} unités détenues · total ${signedMoney(currentHolding.total_gain)}`}
       onClose={onClose}
       actions={<button className="text-button" type="button" onClick={onClose}>Fermer</button>}
     >
@@ -1180,7 +1259,10 @@ function HoldingOperationsModal({
                 <small>{formatDate(operation.occurred_on)} · {money(operation.unit_price)} / unité</small>
               </span>
               <strong className={Number(operation.cash_flow) >= 0 ? 'positive' : 'negative'}>
-                {signedMoney(operation.cash_flow)}
+                Flux {signedMoney(operation.cash_flow)}
+              </strong>
+              <strong className={`operation-gain ${Number(operation.realized_gain ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+                P/MV {operation.realized_gain == null ? '—' : signedMoney(operation.realized_gain)}
               </strong>
               <button
                 className="icon-action"
@@ -2165,19 +2247,31 @@ function propertyTypeLabel(propertyType: RealEstateAsset['property_type']): stri
   return labels[propertyType] ?? propertyType
 }
 
-function holdingGainPercent(holding: Holding): number {
-  return Number(holding.cost_basis) > 0
-    ? (Number(holding.gain) / Number(holding.cost_basis)) * 100
+function gainPercent(gain: string | number, costBasis: string | number): number {
+  return Number(costBasis) > 0
+    ? (Number(gain) / Number(costBasis)) * 100
     : 0
+}
+
+function holdingTotalGainPercent(holding: Holding): number {
+  return gainPercent(holding.total_gain, holding.total_cost_basis)
+}
+
+function holdingRealizedGainPercent(holding: Holding): number {
+  return gainPercent(holding.realized_gain, holding.realized_cost_basis)
+}
+
+function holdingUnrealizedGainPercent(holding: Holding): number {
+  return gainPercent(holding.unrealized_gain, holding.unrealized_cost_basis)
 }
 
 function compareHoldings(left: Holding, right: Holding, sort: HoldingSort): number {
   if (sort === 'market-value-desc') return Number(right.market_value) - Number(left.market_value)
   if (sort === 'market-value-asc') return Number(left.market_value) - Number(right.market_value)
-  if (sort === 'gain-desc') return Number(right.gain) - Number(left.gain)
-  if (sort === 'gain-asc') return Number(left.gain) - Number(right.gain)
-  if (sort === 'gain-percent-desc') return holdingGainPercent(right) - holdingGainPercent(left)
-  if (sort === 'gain-percent-asc') return holdingGainPercent(left) - holdingGainPercent(right)
+  if (sort === 'gain-desc') return Number(right.total_gain) - Number(left.total_gain)
+  if (sort === 'gain-asc') return Number(left.total_gain) - Number(right.total_gain)
+  if (sort === 'gain-percent-desc') return holdingTotalGainPercent(right) - holdingTotalGainPercent(left)
+  if (sort === 'gain-percent-asc') return holdingTotalGainPercent(left) - holdingTotalGainPercent(right)
   return 0
 }
 
