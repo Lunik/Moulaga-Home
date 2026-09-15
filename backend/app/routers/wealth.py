@@ -1358,7 +1358,13 @@ async def list_all_holding_operations(
         )
     ).scalars().all()
     operations_by_holding: dict[int, list[HoldingOperation]] = defaultdict(list)
-    for row in sorted(rows, key=lambda operation: (operation.holding_id, *_holding_operation_sort_key(operation))):
+    for row in sorted(
+        rows,
+        key=lambda operation: (
+            operation.holding_id,
+            *_holding_operation_sort_key(operation),
+        ),
+    ):
         operations_by_holding[row.holding_id].append(row)
     reads_by_id: dict[int, HoldingOperationRead] = {}
     for operations in operations_by_holding.values():
