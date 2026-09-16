@@ -159,8 +159,8 @@ export function DashboardView({
   const assets = netWorthData
     ? Number(netWorthData.cash) + Number(netWorthData.investments) + Number(netWorthData.real_estate)
     : 0
-  const portfolioCostBasis = Number(portfolioData?.cost_basis ?? 0)
-  const portfolioGain = Number(portfolioData?.gain ?? 0)
+  const portfolioCostBasis = Number(portfolioData?.total_cost_basis ?? portfolioData?.cost_basis ?? 0)
+  const portfolioGain = Number(portfolioData?.total_gain ?? portfolioData?.gain ?? 0)
   const gainPercent = portfolioCostBasis > 0
     ? (portfolioGain / portfolioCostBasis) * 100
     : 0

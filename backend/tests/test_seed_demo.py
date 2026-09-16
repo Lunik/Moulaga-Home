@@ -36,8 +36,8 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.recurring == 14
     assert result.debts == 4
     assert result.real_estate_assets == 2
-    assert result.holdings == 5
-    assert result.holding_operations == 8
+    assert result.holdings == 7
+    assert result.holding_operations == 12
     assert result.households == 1
     assert result.snapshot_attachments == 2
     assert result.recurring_attachments == 2
@@ -161,6 +161,14 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert len({item["account_id"] for item in holdings}) == 3
         assert any(float(item["gain"]) > 0 for item in holdings)
         assert any(float(item["gain"]) < 0 for item in holdings)
+        assert any(
+            item["quantity"] == "0.0000000000" and float(item["realized_gain"]) > 0
+            for item in holdings
+        )
+        assert any(
+            item["quantity"] == "0.0000000000" and float(item["realized_gain"]) < 0
+            for item in holdings
+        )
         assert len({item["market_value"] for item in holdings}) > 1
         etfs = [item for item in holdings if item["name"] == "ETF Monde"]
         assert len(etfs) == 2
@@ -177,7 +185,15 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert len(operations) == 4
         assert {item["operation_type"] for item in operations} == {"buy", "sell"}
         all_operations = client.get("/api/holding-operations").json()
-        assert len(all_operations) == 8
+        assert len(all_operations) == 12
+        assert any(
+            item["operation_type"] == "sell" and float(item["realized_gain"] or 0) > 0
+            for item in all_operations
+        )
+        assert any(
+            item["operation_type"] == "sell" and float(item["realized_gain"] or 0) < 0
+            for item in all_operations
+        )
         assert [item["occurred_on"] for item in all_operations] == sorted(
             [item["occurred_on"] for item in all_operations],
             reverse=True,

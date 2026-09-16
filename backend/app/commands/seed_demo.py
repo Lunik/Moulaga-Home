@@ -668,7 +668,25 @@ async def _seed(
         average_price=Decimal("42000"),
         current_price=Decimal("45000"),
     )
-    session.add_all([etf, bond, life_fund, life_etf, bitcoin])
+    winner = Holding(
+        account_id=invest.id,
+        name="Action revendue en gain",
+        symbol="GAIN",
+        asset_class="equity",
+        quantity=Decimal("0"),
+        average_price=Decimal("0"),
+        current_price=Decimal("75"),
+    )
+    loser = Holding(
+        account_id=invest.id,
+        name="Action revendue en perte",
+        symbol="LOSS",
+        asset_class="equity",
+        quantity=Decimal("0"),
+        average_price=Decimal("0"),
+        current_price=Decimal("18"),
+    )
+    session.add_all([etf, bond, life_fund, life_etf, bitcoin, winner, loser])
     await session.flush()
     session.add_all(
         [
@@ -727,6 +745,34 @@ async def _seed(
                 quantity=Decimal("0.1250000001"),
                 unit_price=money("42000.00"),
                 occurred_on=months[1].replace(day=21),
+            ),
+            HoldingOperation(
+                holding_id=winner.id,
+                operation_type="buy",
+                quantity=Decimal("3"),
+                unit_price=money("40.00"),
+                occurred_on=months[1].replace(day=7),
+            ),
+            HoldingOperation(
+                holding_id=winner.id,
+                operation_type="sell",
+                quantity=Decimal("3"),
+                unit_price=money("55.00"),
+                occurred_on=months[2].replace(day=14),
+            ),
+            HoldingOperation(
+                holding_id=loser.id,
+                operation_type="buy",
+                quantity=Decimal("4"),
+                unit_price=money("25.00"),
+                occurred_on=months[2].replace(day=9),
+            ),
+            HoldingOperation(
+                holding_id=loser.id,
+                operation_type="sell",
+                quantity=Decimal("4"),
+                unit_price=money("18.00"),
+                occurred_on=months[3].replace(day=11),
             ),
         ]
     )
@@ -1044,8 +1090,8 @@ async def _seed(
         recurring=int(total_recurring or 0),
         debts=4,
         real_estate_assets=2,
-        holdings=5,
-        holding_operations=8,
+        holdings=7,
+        holding_operations=12,
         contributions=contribution_count,
         households=1,
         goals=1,

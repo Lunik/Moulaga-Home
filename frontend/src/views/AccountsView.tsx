@@ -1115,10 +1115,10 @@ function AccountPositions({
             </thead>
             <tbody>
               {holdings.map((holding) => {
-                const gainPercent = Number(holding.cost_basis) > 0
-                  ? (Number(holding.gain) / Number(holding.cost_basis)) * 100
+                const gainPercent = Number(holding.total_cost_basis) > 0
+                  ? (Number(holding.total_gain) / Number(holding.total_cost_basis)) * 100
                   : 0
-                const gainTone = Number(holding.gain) >= 0 ? 'positive' : 'negative'
+                const gainTone = Number(holding.total_gain) >= 0 ? 'positive' : 'negative'
                 return (
                   <tr key={holding.id}>
                     <td data-label="Ticker"><strong>{holding.symbol || '—'}</strong></td>
@@ -1127,7 +1127,7 @@ function AccountPositions({
                     <td data-label="Prix moyen d'achat" className="amount-column">{money(holding.average_price)}</td>
                     <td data-label="Prix du titre" className="amount-column">{money(holding.current_price)}</td>
                     <td data-label="Valeur" className="amount-column">{money(holding.market_value)}</td>
-                    <td data-label="Plus-value / Moins-value" className={`amount-column ${gainTone}`}>{signedMoney(holding.gain)}</td>
+                    <td data-label="Plus-value / Moins-value" className={`amount-column ${gainTone}`}>{signedMoney(holding.total_gain)}</td>
                     <td data-label="Plus-value / Moins-value %" className={`amount-column ${gainTone}`}>
                       {signedPercent(gainPercent)}
                     </td>

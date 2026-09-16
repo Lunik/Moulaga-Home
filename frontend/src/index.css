@@ -3014,7 +3014,7 @@ textarea:focus-visible {
 }
 
 .filter-row.asset-position-filters {
-  grid-template-columns: minmax(14rem, 1fr) repeat(3, minmax(10rem, 15rem));
+  grid-template-columns: minmax(14rem, 1fr) repeat(4, minmax(10rem, 15rem));
 }
 
 .holding-list {
@@ -3053,6 +3053,13 @@ textarea:focus-visible {
   display: block;
 }
 
+.holding-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
 .holding-copy small,
 .holding-value small {
   margin-top: 0.2rem;
@@ -3075,6 +3082,34 @@ textarea:focus-visible {
 
 .holding-value {
   text-align: right;
+}
+
+.wealth-performance-breakdown {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.wealth-performance-breakdown > span {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--surface-soft);
+}
+
+.wealth-performance-breakdown small,
+.wealth-performance-breakdown strong {
+  display: block;
+}
+
+.wealth-performance-breakdown small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.wealth-performance-breakdown strong {
+  margin-top: 0.35rem;
 }
 
 .holding-operation-type {
@@ -3116,7 +3151,7 @@ textarea:focus-visible {
 
 .holding-operation-list article {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
   align-items: center;
   gap: 0.85rem;
   padding: 0.85rem;
@@ -3137,11 +3172,16 @@ textarea:focus-visible {
 }
 
 .asset-operation-list article {
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
 }
 
 .asset-operation-list .operation-cash-flow {
   white-space: nowrap;
+}
+
+.holding-operation-list .operation-gain {
+  white-space: nowrap;
+  text-align: right;
 }
 
 .asset-operation-list .row-actions {
@@ -5031,6 +5071,11 @@ html[data-theme="light"] .status-badge {
     grid-column: 2;
   }
 
+  .holding-badges {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
   .holding-value {
     grid-column: 3;
     grid-row: 1 / span 2;
@@ -5053,9 +5098,17 @@ html[data-theme="light"] .status-badge {
     grid-column: 2;
   }
 
+  .asset-operation-list .operation-gain {
+    grid-column: 2;
+  }
+
   .asset-operation-list .row-actions {
     grid-column: 3;
     justify-content: flex-end;
+  }
+
+  .wealth-performance-breakdown {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .real-estate-summary {

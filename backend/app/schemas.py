@@ -825,7 +825,13 @@ class HoldingRead(BaseModel):
     average_price: Decimal
     current_price: Decimal
     cost_basis: Decimal
+    unrealized_cost_basis: Decimal
+    realized_cost_basis: Decimal
+    total_cost_basis: Decimal
     market_value: Decimal
+    unrealized_gain: Decimal
+    realized_gain: Decimal
+    total_gain: Decimal
     gain: Decimal
     operation_count: int
 
@@ -879,6 +885,8 @@ class HoldingOperationRead(BaseModel):
     quantity: Decimal
     unit_price: Decimal
     total_value: Decimal
+    realized_cost_basis: Decimal | None
+    realized_gain: Decimal | None
     quantity_delta: Decimal
     cash_flow: Decimal
     occurred_on: date
@@ -922,7 +930,13 @@ class AllocationSlice(BaseModel):
 
 class PortfolioSummary(BaseModel):
     cost_basis: Decimal
+    unrealized_cost_basis: Decimal
+    realized_cost_basis: Decimal
+    total_cost_basis: Decimal
     market_value: Decimal
+    unrealized_gain: Decimal
+    realized_gain: Decimal
+    total_gain: Decimal
     gain: Decimal
     contributions_total: Decimal
     holdings: int
@@ -948,6 +962,12 @@ class PerformancePoint(BaseModel):
     period: str
     market_value: Decimal
     cost_basis: Decimal
+    unrealized_cost_basis: Decimal
+    realized_cost_basis: Decimal
+    total_cost_basis: Decimal
+    unrealized_gain: Decimal
+    realized_gain: Decimal
+    total_gain: Decimal
     gain: Decimal
     contributions: Decimal
     cumulative_contributions: Decimal
@@ -957,6 +977,12 @@ class AssetPerformancePoint(BaseModel):
     period: str
     market_value: Decimal
     cost_basis: Decimal
+    unrealized_cost_basis: Decimal
+    realized_cost_basis: Decimal
+    total_cost_basis: Decimal
+    unrealized_gain: Decimal
+    realized_gain: Decimal
+    total_gain: Decimal
     gain: Decimal
 
 
