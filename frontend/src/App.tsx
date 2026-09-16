@@ -109,8 +109,7 @@ export default function App() {
             )}
             <button
               aria-label={hideNumericValues ? 'Afficher les valeurs' : 'Masquer les valeurs'}
-              aria-pressed={hideNumericValues}
-              className="privacy-toggle"
+              className={`privacy-toggle${hideNumericValues ? ' active' : ''}`}
               onClick={() => setHideNumericValues((hidden) => !hidden)}
               title={hideNumericValues ? 'Afficher les valeurs' : 'Masquer les valeurs'}
               type="button"

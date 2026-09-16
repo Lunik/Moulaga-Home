@@ -275,7 +275,7 @@ textarea:focus-visible {
 }
 
 .privacy-toggle:hover,
-.privacy-toggle[aria-pressed="true"] {
+.privacy-toggle.active {
   background: var(--surface-soft);
   color: var(--text);
 }
