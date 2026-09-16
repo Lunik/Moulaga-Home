@@ -39,6 +39,7 @@ import {
   formatMonth,
   linkedEntityTargetId,
   localDateInputValue,
+  maskNumericValue,
   money,
   signedMoney,
   type AmountDirection,
@@ -188,7 +189,7 @@ function BudgetOverviewPanel({ navigate }: { navigate: (route: Route) => void })
                         <i style={{ background: envelope.color }} />
                         {envelope.category_name}
                       </span>
-                      <strong>{Math.round(ratio)}%</strong>
+                      <strong>{maskNumericValue(`${Math.round(ratio)}%`)}</strong>
                     </div>
                     <ProgressBar value={ratio} color={envelope.color} danger={ratio > 100} />
                   </div>

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiGet } from './api/client'
@@ -53,7 +53,8 @@ export default function App() {
     queryKey: ['settings'],
     queryFn: () => apiGet<AppSettings>('/preferences'),
   })
-  configureUiPreferences(settings.data?.language, settings.data?.date_format)
+  const [hideNumericValues, setHideNumericValues] = usePrivacyMode()
+  configureUiPreferences(settings.data?.language, settings.data?.date_format, hideNumericValues)
   useAppearance(settings.data)
 
   const refreshCore = async () => {
@@ -100,11 +101,23 @@ export default function App() {
               {isRouteBeta(route) && <BetaBadge />}
             </div>
           </div>
-          {!isOnline && (
-            <span className="offline-status" role="status">
-              <Icon name="database" /> Hors ligne · vues en cache
-            </span>
-          )}
+          <div className="page-header-actions">
+            {!isOnline && (
+              <span className="offline-status" role="status">
+                <Icon name="database" /> Hors ligne · vues en cache
+              </span>
+            )}
+            <button
+              aria-label={hideNumericValues ? 'Afficher les valeurs' : 'Masquer les valeurs'}
+              aria-pressed={hideNumericValues}
+              className="privacy-toggle"
+              onClick={() => setHideNumericValues((hidden) => !hidden)}
+              title={hideNumericValues ? 'Afficher les valeurs' : 'Masquer les valeurs'}
+              type="button"
+            >
+              <Icon name={hideNumericValues ? 'eye-off' : 'eye'} />
+            </button>
+          </div>
         </header>
 
         {firstError && route.name !== 'dashboard' && (
@@ -170,6 +183,17 @@ export default function App() {
       </main>
     </div>
   )
+}
+
+function usePrivacyMode() {
+  const [hidden, setHidden] = useState(() => window.localStorage.getItem('moulaga-hide-numeric-values') === 'true')
+
+  useEffect(() => {
+    window.localStorage.setItem('moulaga-hide-numeric-values', String(hidden))
+    document.documentElement.dataset.numericValues = hidden ? 'hidden' : 'visible'
+  }, [hidden])
+
+  return [hidden, setHidden] as const
 }
 
 function Sidebar({

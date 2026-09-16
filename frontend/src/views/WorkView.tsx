@@ -47,6 +47,7 @@ import {
   compactMoney,
   errorMessage,
   formatDate,
+  maskNumericValue,
   money,
 } from '../ui'
 
@@ -232,7 +233,7 @@ export function WorkView({
             <MetricCard
               label="Dernier net après impôt"
               value={money(summary.data?.latest_net_after_tax ?? '0.00')}
-              detail={`${summary.data?.active_contracts_count ?? 0} contrat(s) actif(s)`}
+              detail={`${maskNumericValue(String(summary.data?.active_contracts_count ?? 0))} contrat(s) actif(s)`}
               icon="receipt"
             />
             <MetricCard
@@ -243,14 +244,14 @@ export function WorkView({
             />
             <MetricCard
               label="Taux moyen PAS"
-              value={`${summary.data?.average_pas_rate ?? '0.00'} %`}
+              value={maskNumericValue(`${summary.data?.average_pas_rate ?? '0.00'} %`)}
               detail="Prélèvement à la source"
               icon="grid"
             />
             <MetricCard
               label="Pension retraite estimée"
               value={money(summary.data?.estimated_pension ?? '0.00')}
-              detail={`${summary.data?.validated_quarters ?? 0} / ${summary.data?.required_quarters ?? 172} trimestres`}
+              detail={`${maskNumericValue(`${summary.data?.validated_quarters ?? 0} / ${summary.data?.required_quarters ?? 172}`)} trimestres`}
               icon="target"
             />
           </section>
@@ -348,7 +349,7 @@ export function WorkView({
                             : `Depuis le ${formatDate(contract.start_date)}`}
                         </small>
                         <small>
-                          {contract.work_percentage}% · Versé sur {contract.payment_period_months} mois
+                          {maskNumericValue(`${contract.work_percentage}%`)} · Versé sur {maskNumericValue(String(contract.payment_period_months))} mois
                         </small>
                         {linkedSeries && (
                           <span className="linked-entities work-contract-links">
@@ -448,7 +449,7 @@ export function WorkView({
                     <span className="work-list-copy">
                       <span className="work-list-heading">
                         <strong>{payslip.period}</strong>
-                        <StatusBadge>PAS {payslip.pas_rate}%</StatusBadge>
+                        <StatusBadge>PAS {maskNumericValue(`${payslip.pas_rate}%`)}</StatusBadge>
                       </span>
                       <small>
                         Brut {money(payslip.gross_salary)} · Net imposable {money(payslip.taxable_net)}

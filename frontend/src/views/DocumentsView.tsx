@@ -25,6 +25,7 @@ import {
   formatDate,
   formatFileSize,
   formatMonth,
+  maskNumericValue,
 } from '../ui'
 
 const PAGE_SIZE = 12
@@ -139,20 +140,20 @@ function DocumentsOverview({
       <section className="metric-grid" aria-label="Indicateurs documentaires">
         <MetricCard
           label="Documents"
-          value={String(center.stats.total_documents)}
+          value={maskNumericValue(String(center.stats.total_documents))}
           detail={formatFileSize(center.stats.total_size)}
           icon="documents"
         />
         <MetricCard
           label="Ressources couvertes"
-          value={`${coverage}%`}
-          detail={`${center.stats.covered_resources} sur ${center.stats.total_resources}`}
+          value={maskNumericValue(`${coverage}%`)}
+          detail={`${maskNumericValue(String(center.stats.covered_resources))} sur ${maskNumericValue(String(center.stats.total_resources))}`}
           icon="check"
           tone="positive"
         />
         <MetricCard
           label="À compléter"
-          value={String(center.stats.missing_resources)}
+          value={maskNumericValue(String(center.stats.missing_resources))}
           detail="Sans pièce jointe"
           icon="alert"
           tone={center.stats.missing_resources > 0 ? 'negative' : 'positive'}
@@ -176,11 +177,11 @@ function DocumentsOverview({
                   <div>
                     <span>
                       <strong>{kind.label}</strong>
-                      <small>{kind.covered_resources} / {kind.total_resources}</small>
+                      <small>{maskNumericValue(`${kind.covered_resources} / ${kind.total_resources}`)}</small>
                     </span>
                     <ProgressBar value={value} />
                   </div>
-                  <strong>{value}%</strong>
+                  <strong>{maskNumericValue(`${value}%`)}</strong>
                 </div>
               )
             })}
