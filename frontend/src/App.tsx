@@ -186,10 +186,20 @@ export default function App() {
 }
 
 function usePrivacyMode() {
-  const [hidden, setHidden] = useState(() => window.localStorage.getItem('moulaga-hide-numeric-values') === 'true')
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return window.localStorage.getItem('moulaga-hide-numeric-values') === 'true'
+    } catch {
+      return false
+    }
+  })
 
   useEffect(() => {
-    window.localStorage.setItem('moulaga-hide-numeric-values', String(hidden))
+    try {
+      window.localStorage.setItem('moulaga-hide-numeric-values', String(hidden))
+    } catch {
+      // Privacy mode remains available for the current session.
+    }
     document.documentElement.dataset.numericValues = hidden ? 'hidden' : 'visible'
   }, [hidden])
 
