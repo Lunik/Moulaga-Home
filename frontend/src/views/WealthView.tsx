@@ -56,6 +56,7 @@ import {
   initials,
   linkedEntityTargetId,
   localDateInputValue,
+  maskNumericValue,
   money,
   signedMoney,
   useLinkedEntityFocus,
@@ -275,14 +276,14 @@ function WealthOverview({
         <div className="wealth-performance">
           <span className={totalGain >= 0 ? 'positive' : 'negative'}>
             <Icon name="trend" />
-            {signedMoney(summary?.total_gain ?? summary?.gain ?? 0)}
+            {signedMoney(summary?.total_gain ?? summary?.gain ?? 0, true)}
           </span>
           <small>{gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}% de performance</small>
           <small className={Number(summary?.realized_gain ?? 0) >= 0 ? 'positive' : 'negative'}>
-            Réalisé : {signedMoney(summary?.realized_gain ?? 0)}
+            Réalisé : {signedMoney(summary?.realized_gain ?? 0, true)}
           </small>
           <small className={Number(summary?.unrealized_gain ?? 0) >= 0 ? 'positive' : 'negative'}>
-            Latent : {signedMoney(summary?.unrealized_gain ?? 0)}
+            Latent : {signedMoney(summary?.unrealized_gain ?? 0, true)}
           </small>
         </div>
       </section>
@@ -344,7 +345,7 @@ function WealthOverview({
               {allocationData.map((slice) => (
                 <div key={slice.asset_class}>
                   <span><i style={{ background: slice.color }} />{slice.name}</span>
-                  <strong>{slice.percentage.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%</strong>
+                  <strong>{maskNumericValue(`${slice.percentage.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%`)}</strong>
                 </div>
               ))}
             </div>
@@ -374,19 +375,19 @@ function WealthOverview({
             <span>
               <small>Performance totale</small>
               <strong className={totalGain >= 0 ? 'positive' : 'negative'}>
-                {signedMoney(summary?.total_gain ?? summary?.gain ?? 0)}
+                {signedMoney(summary?.total_gain ?? summary?.gain ?? 0, true)}
               </strong>
             </span>
             <span>
               <small>Plus-values réalisées</small>
               <strong className={Number(summary?.realized_gain ?? 0) >= 0 ? 'positive' : 'negative'}>
-                {signedMoney(summary?.realized_gain ?? 0)}
+                {signedMoney(summary?.realized_gain ?? 0, true)}
               </strong>
             </span>
             <span>
               <small>Plus-values latentes</small>
               <strong className={Number(summary?.unrealized_gain ?? 0) >= 0 ? 'positive' : 'negative'}>
-                {signedMoney(summary?.unrealized_gain ?? 0)}
+                {signedMoney(summary?.unrealized_gain ?? 0, true)}
               </strong>
             </span>
           </div>
@@ -527,19 +528,19 @@ function AssetPerformanceChart({ performance }: { performance: AssetPerformanceP
           <span>
             <small>Performance totale</small>
             <strong className={latest.total_gain >= 0 ? 'positive' : 'negative'}>
-              {signedMoney(latest.total_gain)}
+              {signedMoney(latest.total_gain, true)}
             </strong>
           </span>
           <span>
             <small>Plus-values réalisées</small>
             <strong className={latest.realized_gain >= 0 ? 'positive' : 'negative'}>
-              {signedMoney(latest.realized_gain)}
+              {signedMoney(latest.realized_gain, true)}
             </strong>
           </span>
           <span>
             <small>Plus-values latentes</small>
             <strong className={latest.unrealized_gain >= 0 ? 'positive' : 'negative'}>
-              {signedMoney(latest.unrealized_gain)}
+              {signedMoney(latest.unrealized_gain, true)}
             </strong>
           </span>
         </div>
@@ -716,13 +717,13 @@ function HoldingRow({
         <strong>{money(holding.market_value)}</strong>
         <small>Prix actuel : {money(holding.current_price)} / unité</small>
         <small className={Number(holding.total_gain) >= 0 ? 'positive' : 'negative'}>
-          Total : {signedMoney(holding.total_gain)} · {holdingTotalGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+          Total : {signedMoney(holding.total_gain, true)} · {holdingTotalGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
         </small>
         <small className={Number(holding.realized_gain) >= 0 ? 'positive' : 'negative'}>
-          Réalisé : {signedMoney(holding.realized_gain)} · {holdingRealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+          Réalisé : {signedMoney(holding.realized_gain, true)} · {holdingRealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
         </small>
         <small className={Number(holding.unrealized_gain) >= 0 ? 'positive' : 'negative'}>
-          Latent : {signedMoney(holding.unrealized_gain)} · {holdingUnrealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+          Latent : {signedMoney(holding.unrealized_gain, true)} · {holdingUnrealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
         </small>
       </span>
       <span className="row-actions">
@@ -871,7 +872,7 @@ function HoldingOperationsPanel({
                   Flux {signedMoney(operation.cash_flow)}
                 </strong>
                 <strong className={`operation-gain ${Number(operation.realized_gain ?? 0) >= 0 ? 'positive' : 'negative'}`}>
-                  P/MV {operation.realized_gain == null ? '—' : signedMoney(operation.realized_gain)}
+                  P/MV {operation.realized_gain == null ? '—' : signedMoney(operation.realized_gain, true)}
                 </strong>
                 <span className="row-actions">
                   <button
@@ -1236,7 +1237,7 @@ function HoldingOperationsModal({
   return (
     <Modal
       title={`Opérations · ${currentHolding.name}`}
-      description={`${formatQuantity(currentHolding.quantity, currentHolding.asset_class)} unités détenues · total ${signedMoney(currentHolding.total_gain)}`}
+      description={`${formatQuantity(currentHolding.quantity, currentHolding.asset_class)} unités détenues · total ${signedMoney(currentHolding.total_gain, true)}`}
       onClose={onClose}
       actions={<button className="text-button" type="button" onClick={onClose}>Fermer</button>}
     >
@@ -1262,7 +1263,7 @@ function HoldingOperationsModal({
                 Flux {signedMoney(operation.cash_flow)}
               </strong>
               <strong className={`operation-gain ${Number(operation.realized_gain ?? 0) >= 0 ? 'positive' : 'negative'}`}>
-                P/MV {operation.realized_gain == null ? '—' : signedMoney(operation.realized_gain)}
+                P/MV {operation.realized_gain == null ? '—' : signedMoney(operation.realized_gain, true)}
               </strong>
               <button
                 className="icon-action"
@@ -1591,7 +1592,7 @@ function RealEstateRow({
         <strong>{asset.name}</strong>
         <small>{propertyTypeLabel(asset.property_type)}{asset.address ? ` · ${asset.address}` : ''}</small>
         <small>
-          Quote-part {Number(asset.ownership_share).toLocaleString('fr-FR', { maximumFractionDigits: 2 })}%
+          Quote-part {maskNumericValue(`${Number(asset.ownership_share).toLocaleString('fr-FR', { maximumFractionDigits: 2 })}%`)}
           {asset.acquired_on ? ` · Acquis le ${formatDate(asset.acquired_on)}` : ''}
         </small>
       </span>
@@ -1602,7 +1603,7 @@ function RealEstateRow({
           <small>Valeur actuelle non renseignée</small>
         ) : (
           <small className={Number(asset.gain) >= 0 ? 'positive' : 'negative'}>
-            {signedMoney(asset.gain)} · {gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+            {signedMoney(asset.gain, true)} · {gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
           </small>
         )}
       </span>
@@ -1965,9 +1966,9 @@ function DebtRow({
       </div>
       <ProgressBar value={Number(debt.progress) * 100} color={debt.color ?? '#ff6b70'} />
       <div className="debt-meta">
-        <span>{(Number(debt.progress) * 100).toLocaleString('fr-FR', { maximumFractionDigits: 0 })}% remboursé</span>
+        <span>{maskNumericValue(`${(Number(debt.progress) * 100).toLocaleString('fr-FR', { maximumFractionDigits: 0 })}%`)} remboursé</span>
         {debt.minimum_payment !== null && <span>{money(debt.minimum_payment)} / mois</span>}
-        {debt.interest_rate !== null && <span>Taux {Number(debt.interest_rate).toLocaleString('fr-FR')}%</span>}
+        {debt.interest_rate !== null && <span>Taux {maskNumericValue(`${Number(debt.interest_rate).toLocaleString('fr-FR')}%`)}</span>}
         {debt.due_date && <span>Fin prévue {formatDate(debt.due_date)}</span>}
         {(asset || (debt.recurring_series_repayment_id || debt.recurring_series_insurance_id)) && (
           <span className="linked-entities debt-links">
@@ -2280,7 +2281,7 @@ function holdingQuantityStep(assetClass?: Holding['asset_class']): string {
 }
 
 function formatQuantity(value: string, assetClass?: Holding['asset_class']): string {
-  return Number(value).toLocaleString('fr-FR', {
+  return maskNumericValue(Number(value).toLocaleString('fr-FR', {
     maximumFractionDigits: assetClass === 'crypto' ? 10 : 6,
-  })
+  }))
 }

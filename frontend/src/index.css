@@ -255,6 +255,40 @@ textarea:focus-visible {
   margin-bottom: 2rem;
 }
 
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.privacy-toggle {
+  display: inline-grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.privacy-toggle:hover,
+.privacy-toggle.active {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.privacy-toggle svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
+  visibility: hidden;
+}
+
 .offline-status {
   display: inline-flex;
   align-items: center;

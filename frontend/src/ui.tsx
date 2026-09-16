@@ -17,6 +17,8 @@ export type IconName =
   | 'debt'
   | 'documents'
   | 'edit'
+  | 'eye'
+  | 'eye-off'
   | 'family'
   | 'grid'
   | 'home'
@@ -101,6 +103,17 @@ export function Icon({ name, className }: { name: IconName; className?: string }
       <>
         <path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z" />
         <path d="m14 7 3 3" />
+      </>
+    ),
+    eye: (
+      <>
+        <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+        <circle cx="12" cy="12" r="2.5" />
+      </>
+    ),
+    'eye-off': (
+      <>
+        <path d="m3 3 18 18M10.6 6.2A9.5 9.5 0 0 1 12 6c6 0 9.5 6 9.5 6a15 15 0 0 1-2.1 2.8M6.2 6.2C3.8 7.8 2.5 12 2.5 12s3.5 6 9.5 6a9.7 9.7 0 0 0 3.2-.5M9.9 9.9a3 3 0 0 0 4.2 4.2" />
       </>
     ),
     family: (
@@ -563,7 +576,13 @@ export function ProgressBar({
   const width = Math.min(100, Math.max(0, value))
   const style: CSSProperties | undefined = color && !danger ? { width: `${width}%`, background: color } : { width: `${width}%` }
   return (
-    <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(value)}>
+    <div
+      className="progress-track"
+      role="progressbar"
+      aria-valuemin={numericValuesHidden ? undefined : 0}
+      aria-valuemax={numericValuesHidden ? undefined : 100}
+      aria-valuenow={numericValuesHidden ? undefined : Math.round(value)}
+    >
       <span className={danger ? 'danger' : ''} style={style} />
     </div>
   )
@@ -586,26 +605,37 @@ export const chartTooltipStyle: CSSProperties = {
 
 let activeLocale = 'fr-FR'
 let activeDateFormat: 'localized' | 'day-month-year' | 'YYYY-MM-DD' = 'localized'
+let numericValuesHidden = false
 
 export function configureUiPreferences(
   language: 'fr' | 'en' | 'de' | 'es' = 'fr',
   dateFormat: 'localized' | 'day-month-year' | 'YYYY-MM-DD' = 'localized',
+  hideNumericValues = false,
 ) {
   activeLocale = { fr: 'fr-FR', en: 'en-GB', de: 'de-DE', es: 'es-ES' }[language]
   activeDateFormat = dateFormat
+  numericValuesHidden = hideNumericValues
+}
+
+export function maskNumericValue(value: string, reveal = false): string {
+  return numericValuesHidden && !reveal ? '••••' : value
 }
 
 export function money(value: string | number | undefined | null): string {
+  if (numericValuesHidden) return '•••• €'
   return new Intl.NumberFormat(activeLocale, { style: 'currency', currency: 'EUR' }).format(Number(value ?? 0))
 }
 
-export function signedMoney(value: string | number): string {
+export function signedMoney(value: string | number, reveal = false): string {
   const amount = Number(value)
-  if (amount === 0) return money(0)
-  return `${amount > 0 ? '+' : '−'}${money(Math.abs(amount))}`
+  const formatted = new Intl.NumberFormat(activeLocale, { style: 'currency', currency: 'EUR' }).format(Math.abs(amount))
+  if (numericValuesHidden && !reveal) return '•••• €'
+  if (amount === 0) return formatted
+  return `${amount > 0 ? '+' : '−'}${formatted}`
 }
 
 export function compactMoney(value: number): string {
+  if (numericValuesHidden) return '••••'
   const absolute = Math.abs(value)
   if (absolute >= 1_000_000) return `${(value / 1_000_000).toLocaleString(activeLocale, { maximumFractionDigits: 1 })}\u202fM`
   if (absolute >= 1_000) return `${(value / 1_000).toLocaleString(activeLocale, { maximumFractionDigits: 1 })}\u202fk`
@@ -631,6 +661,7 @@ export function formatMonth(value: string | null | undefined): string {
 }
 
 export function formatFileSize(size: number): string {
+  if (numericValuesHidden) return '••••'
   if (size >= 1024 * 1024) {
     return `${(size / (1024 * 1024)).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mio`
   }

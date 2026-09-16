@@ -49,6 +49,7 @@ import {
   compactMoney,
   errorMessage,
   localDateInputValue,
+  maskNumericValue,
   money,
   signedMoney,
 } from '../ui'
@@ -1127,7 +1128,7 @@ function AccountPositions({
                     <td data-label="Prix moyen d'achat" className="amount-column">{money(holding.average_price)}</td>
                     <td data-label="Prix du titre" className="amount-column">{money(holding.current_price)}</td>
                     <td data-label="Valeur" className="amount-column">{money(holding.market_value)}</td>
-                    <td data-label="Plus-value / Moins-value" className={`amount-column ${gainTone}`}>{signedMoney(holding.total_gain)}</td>
+                    <td data-label="Plus-value / Moins-value" className={`amount-column ${gainTone}`}>{signedMoney(holding.total_gain, true)}</td>
                     <td data-label="Plus-value / Moins-value %" className={`amount-column ${gainTone}`}>
                       {signedPercent(gainPercent)}
                     </td>
@@ -1693,7 +1694,7 @@ function missingStatementsLabel(count: number): string {
 }
 
 function formatQuantity(value: string): string {
-  return Number(value).toLocaleString('fr-FR', { maximumFractionDigits: 6 })
+  return maskNumericValue(Number(value).toLocaleString('fr-FR', { maximumFractionDigits: 6 }))
 }
 
 function signedPercent(value: number): string {

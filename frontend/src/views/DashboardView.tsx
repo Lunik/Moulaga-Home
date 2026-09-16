@@ -40,6 +40,7 @@ import {
   formatMonth,
   initials,
   localDateInputValue,
+  maskNumericValue,
   money,
   shortMonthYear,
   signedMoney,
@@ -208,7 +209,7 @@ export function DashboardView({
               portfolioCostBasis > 0 ? (
                 <span className={portfolioGain >= 0 ? 'portfolio-change positive' : 'portfolio-change negative'}>
                   <Icon name="trend" />
-                  Performance des placements : {signedMoney(portfolioGain)} ({gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%)
+                  Performance des placements : {signedMoney(portfolioGain, true)} ({gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%)
                 </span>
               ) : (
                 <span className="portfolio-change"><Icon name="trend" />Aucun placement valorisé</span>
@@ -371,7 +372,7 @@ export function DashboardView({
                 <div className="debt-head"><span><i style={{ background: debt.color ?? '#ff6b70' }} /><strong>{debt.name}</strong></span><strong className="negative">{money(debt.balance)}</strong></div>
                 <ProgressBar value={Number(debt.progress) * 100} color={debt.color ?? '#ff6b70'} />
 <div className="debt-meta">
-                  <span>{Math.round(Number(debt.progress) * 100)}% remboursé</span>
+                  <span>{maskNumericValue(`${Math.round(Number(debt.progress) * 100)}%`)} remboursé</span>
                 </div>
               </article>
             ))}
