@@ -973,7 +973,38 @@ async def _seed(
         status="ended",
         notes="Expérience professionnelle entièrement synthétique",
     )
-    session.add_all([current_contract, previous_contract])
+    apprenticeship_contract = WorkContract(
+        employer="Atelier Logiciel Démo",
+        position="Développeur en alternance",
+        contract_type="Alternance",
+        start_date=date(2017, 9, 1),
+        end_date=date(2019, 8, 31),
+        gross_annual_salary=money("18000.00"),
+        work_percentage=100,
+        payment_period_months=12,
+        status="ended",
+        notes="Contrat d'alternance entièrement synthétique",
+    )
+    internship_contract = WorkContract(
+        employer="Laboratoire Numérique Démo",
+        position="Stagiaire développement web",
+        contract_type="Stage",
+        start_date=date(2017, 3, 1),
+        end_date=date(2017, 8, 31),
+        gross_annual_salary=money("7200.00"),
+        work_percentage=100,
+        payment_period_months=12,
+        status="ended",
+        notes="Stage entièrement synthétique",
+    )
+    session.add_all(
+        [
+            current_contract,
+            previous_contract,
+            apprenticeship_contract,
+            internship_contract,
+        ]
+    )
     await session.flush()
 
     contract_attachment_payload = (
@@ -1100,7 +1131,7 @@ async def _seed(
         recurring_attachments=len(recurring_attachments),
         debt_attachments=len(debt_attachments),
         real_estate_attachments=len(real_estate_attachments),
-        contracts=2,
+        contracts=4,
         contract_attachments=1,
         payslips=len(payslips),
         payslip_attachments=1,

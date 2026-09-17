@@ -43,7 +43,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.recurring_attachments == 2
     assert result.debt_attachments == 1
     assert result.real_estate_attachments == 1
-    assert result.contracts == 2
+    assert result.contracts == 4
     assert result.contract_attachments == 1
     assert result.payslips == 6
     assert result.payslip_attachments == 1
@@ -82,15 +82,33 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert salary["amount"] == "3126.50"
 
         contracts = client.get("/api/work/contracts").json()
-        assert len(contracts) == 2
+        assert len(contracts) == 4
+        assert {item["contract_type"] for item in contracts} == {
+            "Alternance",
+            "CDD",
+            "CDI",
+            "Stage",
+        }
         current_contract = next(item for item in contracts if item["status"] == "active")
-        previous_contract = next(item for item in contracts if item["status"] == "ended")
+        previous_contract = next(
+            item for item in contracts if item["contract_type"] == "CDD"
+        )
+        apprenticeship_contract = next(
+            item for item in contracts if item["contract_type"] == "Alternance"
+        )
+        internship_contract = next(
+            item for item in contracts if item["contract_type"] == "Stage"
+        )
         assert current_contract["recurring_series_id"] == salary["id"]
         assert current_contract["payment_period_months"] == 12
         assert current_contract["attachment_count"] == 1
         assert previous_contract["recurring_series_id"] is None
         assert previous_contract["attachment_count"] == 0
         assert previous_contract["end_date"] == "2021-08-31"
+        assert apprenticeship_contract["position"] == "Développeur en alternance"
+        assert apprenticeship_contract["status"] == "ended"
+        assert internship_contract["position"] == "Stagiaire développement web"
+        assert internship_contract["status"] == "ended"
 
         payslips = client.get("/api/work/payslips").json()
         assert len(payslips) == 6
