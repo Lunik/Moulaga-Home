@@ -1,4 +1,4 @@
-import { FormEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Area,
@@ -104,6 +104,7 @@ export function WorkView({
     payslip?: PaySlip
   }>({ open: false })
   const [expandedPayslipAttachments, setExpandedPayslipAttachments] = useState<number | null>(null)
+  const [payslipContractFilter, setPayslipContractFilter] = useState('all')
 
   const [pensionModal, setPensionModal] = useState<boolean>(false)
 
@@ -167,6 +168,40 @@ export function WorkView({
       { name: 'Cotisations patronales', montant: parseFloat(latest.employer_contributions) },
     ]
   }, [payslips.data])
+
+  const filteredPayslips = useMemo(() => {
+    if (payslipContractFilter === 'all') return payslips.data ?? []
+    if (payslipContractFilter === 'none') {
+      return (payslips.data ?? []).filter((payslip) => payslip.contract_id === null)
+    }
+    return (payslips.data ?? []).filter(
+      (payslip) => payslip.contract_id === Number(payslipContractFilter),
+    )
+  }, [payslipContractFilter, payslips.data])
+
+  const selectedPayslipContract = contracts.data?.find(
+    (contract) => contract.id === Number(payslipContractFilter),
+  )
+  const hasUnassociatedPayslips = payslips.data?.some(
+    (payslip) => payslip.contract_id === null,
+  ) ?? false
+
+  useEffect(() => {
+    if (!contracts.data || !payslips.data || payslipContractFilter === 'all') return
+
+    const filterIsValid = payslipContractFilter === 'none'
+      ? hasUnassociatedPayslips
+      : Boolean(selectedPayslipContract)
+    if (!filterIsValid) {
+      setPayslipContractFilter('all')
+    }
+  }, [
+    contracts.data,
+    hasUnassociatedPayslips,
+    payslipContractFilter,
+    payslips.data,
+    selectedPayslipContract,
+  ])
 
   const pensionProjectionData = useMemo(() => {
     const prof = pension.data
@@ -420,18 +455,34 @@ export function WorkView({
             subtitle="Historique des bulletins de paie et justificatifs"
             className="work-action-panel"
             action={
-              <button
-                className="primary-button"
-                type="button"
-                onClick={() => setPayslipModal({ open: true })}
-              >
-                <Icon name="plus" /> Ajouter une fiche de paie
-              </button>
+              <div className="header-actions work-payslip-actions">
+                <FormSelect
+                  className="work-payslip-filter"
+                  aria-label="Filtrer les fiches de paie par contrat"
+                  value={payslipContractFilter}
+                  onChange={(event) => setPayslipContractFilter(event.target.value)}
+                >
+                  <option value="all">Tous les contrats</option>
+                  {(contracts.data ?? []).map((contract) => (
+                    <option key={contract.id} value={contract.id}>
+                      {contract.employer} · {contract.position}
+                    </option>
+                  ))}
+                  {hasUnassociatedPayslips && <option value="none">Sans contrat</option>}
+                </FormSelect>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => setPayslipModal({ open: true })}
+                >
+                  <Icon name="plus" /> Ajouter une fiche de paie
+                </button>
+              </div>
             }
           >
-            {payslips.data && payslips.data.length > 0 ? (
+            {filteredPayslips.length > 0 ? (
               <div className="work-payslip-list">
-                {payslips.data.map((payslip) => (
+                {filteredPayslips.map((payslip) => (
                   <article className="work-payslip-card" key={payslip.id}>
                     <span className="work-list-icon"><Icon name="receipt" /></span>
                     <span className="work-list-copy">
@@ -503,8 +554,20 @@ export function WorkView({
               </div>
             ) : (
               <EmptyState
-                title="Aucune fiche de paie enregistrée"
-                text="Conservez vos fiches de paie pour analyser vos revenus réels et vos cotisations."
+                title={
+                  payslipContractFilter === 'all'
+                    ? 'Aucune fiche de paie enregistrée'
+                    : payslipContractFilter === 'none'
+                      ? 'Aucune fiche de paie sans contrat'
+                      : 'Aucune fiche de paie pour ce contrat'
+                }
+                text={
+                  selectedPayslipContract
+                    ? `Aucun bulletin n'est associé au contrat ${selectedPayslipContract.employer} · ${selectedPayslipContract.position}.`
+                    : payslipContractFilter === 'none'
+                      ? "Toutes les fiches de paie enregistrées sont associées à un contrat."
+                      : "Conservez vos fiches de paie pour analyser vos revenus réels et vos cotisations."
+                }
               />
             )}
           </Panel>

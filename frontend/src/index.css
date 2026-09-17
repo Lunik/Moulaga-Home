@@ -1366,6 +1366,7 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
 .field textarea,
 .transaction-toolbar select,
 .account-type-filter-select,
+.work-payslip-filter,
 .search-field {
   width: 100%;
   min-height: 2.8rem;
@@ -1378,7 +1379,8 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
 
 .field select,
 .transaction-toolbar select,
-.account-type-filter-select {
+.account-type-filter-select,
+.work-payslip-filter {
   appearance: none;
   padding-right: 2.8rem;
   background-image:
@@ -1393,7 +1395,8 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
 
 .field select:hover,
 .transaction-toolbar select:hover,
-.account-type-filter-select:hover {
+.account-type-filter-select:hover,
+.work-payslip-filter:hover {
   border-color: var(--faint);
 }
 
@@ -2413,6 +2416,11 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
 .work-payslip-list {
   display: flex;
   flex-direction: column;
+}
+
+.work-payslip-filter {
+  min-width: 15rem;
+  max-width: 22rem;
 }
 
 .work-contract-card,
@@ -4755,6 +4763,7 @@ html[data-theme="light"] .section-intro select,
 html[data-theme="light"] .filter-row select,
 html[data-theme="light"] .transaction-toolbar select,
 html[data-theme="light"] .account-type-filter-select,
+html[data-theme="light"] .work-payslip-filter,
 html[data-theme="light"] .search-field,
 html[data-theme="light"] .compact-feature-form input,
 html[data-theme="light"] .compact-feature-form select,
@@ -4915,8 +4924,14 @@ html[data-theme="light"] .status-badge {
     flex-direction: column;
   }
 
-  .work-action-panel .panel-header > .primary-button {
+  .work-action-panel .panel-header .primary-button {
     width: 100%;
+  }
+
+  .work-payslip-actions,
+  .work-payslip-filter {
+    width: 100%;
+    max-width: none;
   }
 
   .sidebar {
