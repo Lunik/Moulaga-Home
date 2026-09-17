@@ -39,6 +39,7 @@ import type {
 import { supportsHoldings } from '../accountCapabilities'
 import { routeHash, type HoldingsTab, type Route, type WealthTab } from '../routing'
 import {
+  DatePicker,
   EmptyState,
   Field,
   FormInput,
@@ -57,6 +58,8 @@ import {
   linkedEntityTargetId,
   localDateInputValue,
   maskNumericValue,
+  monthBoundaryDate,
+  monthInputValue,
   money,
   signedMoney,
   useLinkedEntityFocus,
@@ -1005,7 +1008,7 @@ function HoldingOperationModal({
   const [assetClass, setAssetClass] = useState('equity')
   const [quantity, setQuantity] = useState('')
   const [unitPrice, setUnitPrice] = useState('')
-  const [occurredOn, setOccurredOn] = useState(localDateInputValue())
+  const [occurredOn, setOccurredOn] = useState(monthInputValue(localDateInputValue()))
   const selectedHolding = holdings.find((holding) => holding.id === Number(target))
   const isNew = target === 'new'
   const targetHolding = selectedHolding && !isNew
@@ -1034,7 +1037,7 @@ function HoldingOperationModal({
       operation_type: operationType,
       quantity,
       unit_price: unitPrice,
-      occurred_on: occurredOn,
+      occurred_on: monthBoundaryDate(occurredOn),
     }),
     onSuccess: onSaved,
   })
@@ -1145,8 +1148,8 @@ function HoldingOperationModal({
           </div>
         )}
         <div className="holding-modal-grid">
-          <Field label="Date">
-            <FormInput type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} required />
+          <Field label="Mois de l’opération">
+            <DatePicker value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} required />
           </Field>
           <Field label="Quantité">
             <FormInput
@@ -1314,7 +1317,7 @@ function HoldingOperationEditModal({
   const [operationType, setOperationType] = useState(operation.operation_type)
   const [quantity, setQuantity] = useState(operation.quantity)
   const [unitPrice, setUnitPrice] = useState(operation.unit_price)
-  const [occurredOn, setOccurredOn] = useState(operation.occurred_on)
+  const [occurredOn, setOccurredOn] = useState(monthInputValue(operation.occurred_on))
   const mutation = useMutation({
     mutationFn: () => apiPatch<HoldingOperationResult>(
       `/holdings/${holding.id}/operations/${operation.id}`,
@@ -1323,7 +1326,7 @@ function HoldingOperationEditModal({
         operation_type: operationType,
         quantity,
         unit_price: unitPrice,
-        occurred_on: occurredOn,
+        occurred_on: monthBoundaryDate(occurredOn),
       },
     ),
     onSuccess: onSaved,
@@ -1370,8 +1373,8 @@ function HoldingOperationEditModal({
           </FormSelect>
         </Field>
         <div className="holding-modal-grid">
-          <Field label="Date">
-            <FormInput type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} required />
+          <Field label="Mois de l’opération">
+            <DatePicker value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} required />
           </Field>
           <Field label="Quantité">
             <FormInput
@@ -1711,7 +1714,7 @@ function RealEstateModal({
   const [name, setName] = useState(asset?.name ?? '')
   const [propertyType, setPropertyType] = useState(asset?.property_type ?? 'primary_residence')
   const [address, setAddress] = useState(asset?.address ?? '')
-  const [acquiredOn, setAcquiredOn] = useState(asset?.acquired_on ?? '')
+  const [acquiredOn, setAcquiredOn] = useState(monthInputValue(asset?.acquired_on))
   const [purchasePrice, setPurchasePrice] = useState(asset?.purchase_price ?? '')
   const [currentValue, setCurrentValue] = useState(asset?.current_value ?? '')
   const [ownershipShare, setOwnershipShare] = useState(asset?.ownership_share ?? '100')
@@ -1724,7 +1727,7 @@ function RealEstateModal({
         name,
         property_type: propertyType,
         address,
-        acquired_on: acquiredOn || null,
+        acquired_on: acquiredOn ? monthBoundaryDate(acquiredOn) : null,
         purchase_price: purchasePrice,
         current_value: currentValue || null,
         ownership_share: ownershipShare,
@@ -1778,8 +1781,8 @@ function RealEstateModal({
         <Field label="Adresse">
           <FormInput value={address} onChange={(event) => setAddress(event.target.value)} maxLength={200} placeholder="Facultatif" />
         </Field>
-        <Field label="Date d’acquisition">
-          <FormInput type="date" value={acquiredOn} onChange={(event) => setAcquiredOn(event.target.value)} />
+        <Field label="Mois d’acquisition">
+          <DatePicker value={acquiredOn} onChange={(event) => setAcquiredOn(event.target.value)} />
         </Field>
         <Field label="Prix d’achat">
           <FormInput type="number" min="0" step="0.01" value={purchasePrice} onChange={(event) => setPurchasePrice(event.target.value)} required />
@@ -2066,7 +2069,7 @@ function DebtModal({
   const [accountId, setAccountId] = useState(String(debt?.account_id ?? ''))
   const [recurringSeriesRepaymentId, setRecurringSeriesRepaymentId] = useState(String(debt?.recurring_series_repayment_id ?? ''))
   const [recurringSeriesInsuranceId, setRecurringSeriesInsuranceId] = useState(String(debt?.recurring_series_insurance_id ?? ''))
-  const [dueDate, setDueDate] = useState(debt?.due_date ?? '')
+  const [dueDate, setDueDate] = useState(monthInputValue(debt?.due_date))
   const [color, setColor] = useState(debt?.color ?? '#ff6b70')
   const [archived, setArchived] = useState(debt?.archived ?? false)
   const [attachment, setAttachment] = useState<File | null>(null)
@@ -2082,7 +2085,7 @@ function DebtModal({
         account_id: accountId ? Number(accountId) : null,
         recurring_series_repayment_id: recurringSeriesRepaymentId ? Number(recurringSeriesRepaymentId) : null,
         recurring_series_insurance_id: recurringSeriesInsuranceId ? Number(recurringSeriesInsuranceId) : null,
-        due_date: dueDate || null,
+        due_date: dueDate ? monthBoundaryDate(dueDate, 'end') : null,
         color,
         ...(debt ? { archived } : {}),
       }
@@ -2178,8 +2181,8 @@ function DebtModal({
             Une série mensuelle de remboursement sera créée automatiquement dans le budget.
           </p>
         )}
-        <Field label="Fin prévue">
-          <FormInput type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+        <Field label="Mois de fin prévu">
+          <DatePicker value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
         </Field>
         <Field label="Couleur">
           <FormInput type="color" value={color} onChange={(event) => setColor(event.target.value)} />

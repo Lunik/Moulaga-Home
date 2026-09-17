@@ -35,6 +35,7 @@ import {
 import type { Route } from '../routing'
 import { calculateSavingsProjection } from '../savingsProjection'
 import {
+  DatePicker,
   EmptyState,
   Field,
   FormInput,
@@ -995,8 +996,7 @@ function SnapshotRow({
             }}
           >
             <Field label="Période">
-              <FormInput
-                type="month"
+              <DatePicker
                 value={period}
                 onChange={(event) => setPeriod(event.target.value)}
                 required
@@ -1602,8 +1602,7 @@ function SnapshotForm({
         }}
       >
         <Field label="Période">
-          <FormInput
-            type="month"
+          <DatePicker
             value={period}
             onChange={(event) => setPeriod(event.target.value)}
             required

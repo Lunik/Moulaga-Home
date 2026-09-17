@@ -23,6 +23,7 @@ import type {
 import type { BudgetTab, Route } from '../routing'
 import {
   AmountDirectionToggle,
+  DatePicker,
   EmptyState,
   Field,
   FormInput,
@@ -40,6 +41,8 @@ import {
   linkedEntityTargetId,
   localDateInputValue,
   maskNumericValue,
+  monthBoundaryDate,
+  monthInputValue,
   money,
   signedMoney,
   type AmountDirection,
@@ -543,7 +546,9 @@ function RecurringSeriesModal({
   )
   const [amount, setAmount] = useState(item?.amount ? String(Math.abs(Number(item.amount))) : '')
   const [frequency, setFrequency] = useState<RecurringSeries['frequency']>(item?.frequency ?? 'monthly')
-  const [nextDue, setNextDue] = useState(item?.next_due ?? localDateInputValue())
+  const [nextDue, setNextDue] = useState(
+    monthInputValue(item?.next_due ?? localDateInputValue()),
+  )
   const [variable, setVariable] = useState(item?.amount_type === 'variable')
   const [recurringType, setRecurringType] = useState<RecurringType>(
     item?.recurring_type ?? 'subscription',
@@ -560,7 +565,7 @@ function RecurringSeriesModal({
         category_id: categoryId ? Number(categoryId) : null,
         amount: directedAmount(amount, direction),
         frequency,
-        next_due: nextDue,
+        next_due: monthBoundaryDate(nextDue),
         amount_type: variable ? 'variable' : 'fixed',
         status: item?.status ?? 'active',
         recurring_type: recurringType,
@@ -690,9 +695,8 @@ function RecurringSeriesModal({
             <option value="yearly">Annuelle</option>
           </FormSelect>
         </Field>
-        <Field label="Prochaine échéance">
-          <FormInput
-            type="date"
+        <Field label="Mois de la prochaine échéance">
+          <DatePicker
             value={nextDue}
             onChange={(event) => setNextDue(event.target.value)}
             required

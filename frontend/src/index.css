@@ -1418,6 +1418,16 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   padding-right: 3.1rem;
 }
 
+.date-picker-input {
+  color: transparent !important;
+  caret-color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.date-picker-input::-webkit-datetime-edit {
+  opacity: 0;
+}
+
 .date-picker-control input::-webkit-calendar-picker-indicator {
   position: absolute;
   top: 0;
@@ -1428,6 +1438,22 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   padding: 0;
   cursor: pointer;
   opacity: 0;
+}
+
+.date-picker-value {
+  position: absolute;
+  top: 50%;
+  left: 0.8rem;
+  color: var(--text);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.date-picker-placeholder {
+  color: #64646b;
 }
 
 .date-picker-icon {
