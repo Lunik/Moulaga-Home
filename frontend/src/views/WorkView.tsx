@@ -15,7 +15,7 @@ import {
   YAxis,
 } from 'recharts'
 
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiUpload } from '../api/client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../api/client'
 import {
   AttachmentManager,
   AttachmentPicker,
@@ -101,6 +101,7 @@ export function WorkView({
     open: boolean
     payslip?: PaySlip
   }>({ open: false })
+  const [expandedPayslipAttachments, setExpandedPayslipAttachments] = useState<number | null>(null)
 
   const [pensionModal, setPensionModal] = useState<boolean>(false)
 
@@ -137,21 +138,6 @@ export function WorkView({
   // PaySlip Mutations
   const deletePayslipMutation = useMutation({
     mutationFn: (id: number) => apiDelete(`/work/payslips/${id}`),
-    onSuccess: refreshWorkData,
-  })
-
-  // Attachment Mutations
-  const uploadAttachmentMutation = useMutation({
-    mutationFn: ({ payslipId, file }: { payslipId: number; file: File }) => {
-      const formData = new FormData()
-      formData.append('file', file)
-      return apiUpload(`/work/payslips/${payslipId}/attachments`, formData)
-    },
-    onSuccess: refreshWorkData,
-  })
-
-  const deleteAttachmentMutation = useMutation({
-    mutationFn: (attachmentId: number) => apiDelete(`/work/attachments/${attachmentId}`),
     onSuccess: refreshWorkData,
   })
 
@@ -460,41 +446,26 @@ export function WorkView({
                           ? ` · Primes ${money(Number(payslip.bonuses) + Number(payslip.employer_profit_sharing))}`
                           : ''}
                       </small>
-                      <span className="work-attachments">
-                        {payslip.attachments.map((attachment) => (
-                          <span className="work-attachment" key={attachment.id}>
-                            <a href={`/api/work/attachments/${attachment.id}`} target="_blank" rel="noreferrer">
-                              <Icon name="attachment" /> {attachment.original_name}
-                            </a>
-                            <button
-                              className="icon-action destructive-button"
-                              type="button"
-                              aria-label={`Supprimer ${attachment.original_name}`}
-                              onClick={() => deleteAttachmentMutation.mutate(attachment.id)}
-                            >
-                              <Icon name="trash" />
-                            </button>
-                          </span>
-                        ))}
-                        <label className="secondary-button work-attachment-upload">
-                          <Icon name="attachment" />
-                          <span>Joindre</span>
-                          <input
-                            type="file"
-                            className="work-file-input"
-                            onChange={(event) => {
-                              const file = event.target.files?.[0]
-                              if (file) uploadAttachmentMutation.mutate({ payslipId: payslip.id, file })
-                            }}
-                          />
-                        </label>
-                      </span>
                     </span>
                     <span className="work-list-value">
                       <strong>{money(payslip.net_after_tax)}</strong>
                       <small>net versé</small>
                     </span>
                     <span className="row-actions">
+                      <button
+                        className="icon-action attachment-button"
+                        type="button"
+                        aria-label={`Pièces jointes${payslip.attachments.length > 0 ? ` (${payslip.attachments.length})` : ''}`}
+                        aria-expanded={expandedPayslipAttachments === payslip.id}
+                        onClick={() => setExpandedPayslipAttachments((current) => (
+                          current === payslip.id ? null : payslip.id
+                        ))}
+                      >
+                        <Icon name="attachment" />
+                        {payslip.attachments.length > 0 && (
+                          <span className="attachment-count-badge">{payslip.attachments.length}</span>
+                        )}
+                      </button>
                       <button
                         className="icon-action"
                         type="button"
@@ -517,6 +488,14 @@ export function WorkView({
                         <Icon name="trash" />
                       </button>
                     </span>
+                    {expandedPayslipAttachments === payslip.id && (
+                      <div className="entity-attachment-panel">
+                        <AttachmentManager
+                          owner={{ kind: 'payslip', payslipId: payslip.id }}
+                          readOnly={false}
+                        />
+                      </div>
+                    )}
                   </article>
                 ))}
               </div>
