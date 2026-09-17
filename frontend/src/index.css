@@ -2365,57 +2365,6 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   height: 1rem;
 }
 
-.work-attachments {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.5rem;
-}
-
-.work-attachment {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8rem;
-}
-
-.work-attachment a {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  overflow: hidden;
-  max-width: 12rem;
-  color: var(--accent);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.work-attachment .app-icon {
-  width: 0.85rem;
-}
-
-.work-attachment .icon-action {
-  width: 1.65rem;
-  height: 1.65rem;
-  min-height: 1.65rem;
-  border-radius: 0.5rem;
-}
-
-.work-attachment-upload {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  min-height: 1.75rem;
-  padding: 0.2rem 0.45rem;
-  cursor: pointer;
-  font-size: 0.75rem;
-}
-
-.work-file-input {
-  display: none;
-}
-
 .work-quarter-progress {
   margin-top: 1.5rem;
 }
