@@ -45,7 +45,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.real_estate_attachments == 1
     assert result.contracts == 4
     assert result.contract_attachments == 1
-    assert result.payslips == 6
+    assert result.payslips == 8
     assert result.payslip_attachments == 1
 
     with TestClient(main.create_app()) as client:
@@ -111,7 +111,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert internship_contract["status"] == "ended"
 
         payslips = client.get("/api/work/payslips").json()
-        assert len(payslips) == 6
+        assert len(payslips) == 8
         assert payslips[0]["period"] == "2026-09"
         assert payslips[0]["net_after_tax"] == salary["amount"]
         assert len(payslips[0]["attachments"]) == 1
@@ -119,6 +119,55 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         work_summary = client.get("/api/work/summary").json()
         assert work_summary["active_contracts_count"] == 1
         assert work_summary["latest_net_after_tax"] == salary["amount"]
+        assert work_summary["declared_validated_quarters"] == 59
+        assert work_summary["payslip_quarters"] == 9
+        assert work_summary["validated_quarters"] == 68
+
+        pension = client.get("/api/work/pension").json()
+        assert pension["birth_month"] == 8
+        assert pension["estimated_total_quarters"] == 68
+        assert pension["quarter_calculation"] == [
+            {
+                "year": 2026,
+                "gross_salary": "25999.98",
+                "quarter_threshold": "1803.00",
+                "validated_quarters": 4,
+                "next_quarter_remaining": None,
+            },
+            {
+                "year": 2011,
+                "gross_salary": "1800.00",
+                "quarter_threshold": "1800.00",
+                "validated_quarters": 1,
+                "next_quarter_remaining": "1800.00",
+            },
+            {
+                "year": 2010,
+                "gross_salary": "7088.00",
+                "quarter_threshold": "1772.00",
+                "validated_quarters": 4,
+                "next_quarter_remaining": None,
+            },
+        ]
+        projection = pension["projection"]
+        assert projection["reference_annual_gross"] == "51999.96"
+        assert projection["simulated_end_annual_gross"] == "75208.71"
+        assert projection["payslip_count"] == 8
+        assert projection["covered_years"] == [2026, 2011, 2010]
+        assert [scenario["kind"] for scenario in projection["scenarios"]] == [
+            "long_career",
+            "legal_age",
+            "full_rate_automatic",
+        ]
+        assert projection["scenarios"][0]["projected_quarters"] == 175
+        assert projection["long_career"] == {
+            "status": "eligible",
+            "cutoff_year": 2011,
+            "required_early_quarters": 5,
+            "entered_early_quarters": 5,
+            "projected_quarters_at_63": 175,
+            "required_total_quarters": 172,
+        }
 
         documents = client.get("/api/documents").json()
         assert documents["stats"]["total_documents"] == 8

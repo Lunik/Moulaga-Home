@@ -1,8 +1,6 @@
 import { FormEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -24,6 +22,7 @@ import {
 import type {
   PaySlip,
   PensionProfile,
+  PensionProjectionScenario,
   RecurringSeries,
   WorkContract,
   WorkSummary,
@@ -106,6 +105,7 @@ export function WorkView({
   const [expandedPayslipAttachments, setExpandedPayslipAttachments] = useState<number | null>(null)
 
   const [pensionModal, setPensionModal] = useState<boolean>(false)
+  const [incomeSimulationModal, setIncomeSimulationModal] = useState<boolean>(false)
 
   // Scroll active tab into view
   useLayoutEffect(() => {
@@ -168,16 +168,16 @@ export function WorkView({
     ]
   }, [payslips.data])
 
-  const pensionProjectionData = useMemo(() => {
-    const prof = pension.data
-    const est = prof ? parseFloat(prof.estimated_monthly_pension) : 0
-    const target = prof ? parseFloat(prof.target_monthly_income) : 0
-    return [
-      { age: '62 ans (décote)', pension: Math.round(est * 0.82), cible: target },
-      { age: `${prof?.target_retirement_age ?? 64} ans (taux plein)`, pension: Math.round(est), cible: target },
-      { age: '67 ans (automatique)', pension: Math.round(est * 1.1), cible: target },
-    ]
-  }, [pension.data])
+  const targetPensionScenario = pension.data?.projection?.scenarios.find(
+    (scenario) => scenario.age_years === pension.data?.target_retirement_age,
+  )
+  const incomeProjectionData = useMemo(
+    () => pension.data?.projection?.income_evolution.map((point) => ({
+      age: `${point.age_years} ans`,
+      revenu: parseFloat(point.annual_gross),
+    })) ?? [],
+    [pension.data?.projection?.income_evolution],
+  )
 
   return (
     <div className="view-stack">
@@ -532,9 +532,9 @@ export function WorkView({
           >
             <section className="metric-grid">
               <MetricCard
-                label="Trimestres validés"
-                value={`${pension.data?.validated_quarters ?? 0} / ${pension.data?.required_quarters ?? 172}`}
-                detail="Pour le taux plein"
+                label="Total estimé"
+                value={`${pension.data?.estimated_total_quarters ?? 0} / ${pension.data?.required_quarters ?? 172}`}
+                detail={`${pension.data?.validated_quarters ?? 0} déclarés + ${pension.data?.payslip_quarters ?? 0} calculés`}
                 icon="target"
               />
               <MetricCard
@@ -545,8 +545,8 @@ export function WorkView({
               />
               <MetricCard
                 label="Pension mensuelle estimée"
-                value={money(pension.data?.estimated_monthly_pension ?? '0.00')}
-                detail="Au taux plein"
+                value={money(targetPensionScenario?.total_monthly_pension ?? '0.00')}
+                detail={targetPensionScenario ? 'Brut estimé depuis les fiches' : 'Ajoutez des fiches de paie'}
                 icon="trend"
               />
               <MetricCard
@@ -563,7 +563,7 @@ export function WorkView({
               </p>
               <ProgressBar
                 value={Math.round(
-                  ((pension.data?.validated_quarters ?? 0) / (pension.data?.required_quarters ?? 172)) * 100,
+                  ((pension.data?.estimated_total_quarters ?? 0) / (pension.data?.required_quarters ?? 172)) * 100,
                 )}
               />
             </div>
@@ -575,20 +575,152 @@ export function WorkView({
             )}
           </Panel>
 
-          <Panel title="Projection de la pension selon l'âge de départ" subtitle="Simulation indicative de vos revenus à la retraite">
-            <div className="chart-container tall-chart">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={pensionProjectionData} margin={{ top: 12, right: 12, left: -8, bottom: 0 }}>
-                  <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
-                  <XAxis dataKey="age" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }} tickFormatter={compactMoney} />
-                  <Tooltip contentStyle={chartTooltipStyle} formatter={(val: unknown) => [money(Number(val ?? 0)), '']} />
-                  <Legend />
-                  <Area type="monotone" dataKey="pension" name="Pension estimée" stroke="#4f46e5" fill="#4f46e5" fillOpacity={0.2} />
-                  <Area type="monotone" dataKey="cible" name="Objectif souhaité" stroke="#16c79a" fill="#16c79a" fillOpacity={0.1} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+          <Panel
+            title="Évolution simulée des revenus"
+            subtitle="Revenus bruts annuels jusqu’à l’âge de départ cible"
+            className="work-action-panel"
+            action={
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setIncomeSimulationModal(true)}
+              >
+                <Icon name="edit" /> Paramètres de simulation
+              </button>
+            }
+          >
+            {incomeProjectionData.length > 1 ? (
+              <div className="chart-container tall-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={incomeProjectionData} margin={{ top: 12, right: 12, left: -4, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--line)" strokeDasharray="4 5" vertical={false} />
+                    <XAxis dataKey="age" axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 11 }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: 'var(--muted)', fontSize: 11 }} tickFormatter={compactMoney} />
+                    <Tooltip contentStyle={chartTooltipStyle} formatter={(val: unknown) => [money(Number(val ?? 0)), 'Revenu brut annuel']} />
+                    <Bar dataKey="revenu" name="Revenu brut annuel" fill="#0f727b" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <EmptyState
+                title="Aucune évolution à afficher"
+                text="Ajoutez une fiche de paie et choisissez un âge de départ futur."
+              />
+            )}
+          </Panel>
+
+          <Panel
+            title="Calcul automatique depuis les fiches de paie"
+            subtitle="Salaire brut cumulé par année civile, dans la limite de 4 trimestres par an"
+          >
+            {pension.data?.quarter_calculation.length ? (
+              <div className="work-quarter-calculation">
+                <div className="work-quarter-calculation-header" aria-hidden="true">
+                  <span>Année</span>
+                  <span>Salaire brut saisi</span>
+                  <span>Seuil / trimestre</span>
+                  <span>Trimestres</span>
+                </div>
+                {pension.data.quarter_calculation.map((year) => (
+                  <div className="work-quarter-calculation-row" key={year.year}>
+                    <strong>{year.year}</strong>
+                    <span>{money(year.gross_salary)}</span>
+                    <span>{money(year.quarter_threshold)}</span>
+                    <span>
+                      <strong>{year.validated_quarters} / 4</strong>
+                      <small>
+                        {year.next_quarter_remaining === null
+                          ? 'Plafond annuel atteint'
+                          : `${money(year.next_quarter_remaining)} avant le prochain`}
+                      </small>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                title="Aucun trimestre calculable"
+                text="Ajoutez une fiche de paie avec son salaire brut pour obtenir une estimation automatique."
+              />
+            )}
+            <p className="work-quarter-method">
+              Estimation indicative à partir du brut soumis à cotisations. Le relevé de carrière de
+              l’Assurance retraite reste la référence officielle.
+            </p>
+            {!!pension.data?.unsupported_payslip_years.length && (
+              <p className="form-error">
+                Barème indisponible pour : {pension.data.unsupported_payslip_years.join(', ')}.
+                Ces fiches ne sont pas incluses dans l’estimation.
+              </p>
+            )}
+          </Panel>
+
+          <Panel
+            title="Pension estimée selon l'âge de départ"
+            subtitle="Projection automatique depuis vos fiches de paie"
+          >
+            {pension.data?.projection?.scenarios.length ? (
+              <div className="work-pension-scenarios">
+                {pension.data.projection.scenarios.map((scenario) => (
+                  <article className="work-pension-scenario" key={scenario.kind}>
+                    <div>
+                      <small>En partant à</small>
+                      <strong>{pensionAgeLabel(scenario)}</strong>
+                    </div>
+                    <div>
+                      <small>Scénario</small>
+                      <strong>{pensionProjectionKindLabel(scenario.kind)}</strong>
+                    </div>
+                    <div>
+                      <small>Détail mensuel brut estimé</small>
+                      <strong>
+                        Base {money(scenario.base_monthly_pension)}
+                        {' + '}
+                        complémentaire {money(scenario.complementary_monthly_pension)}
+                      </strong>
+                      <small>{scenario.projected_quarters} trimestres projetés</small>
+                    </div>
+                    <div className="work-pension-scenario-amount">
+                      <strong>{money(scenario.total_monthly_pension)}</strong>
+                      <small>brut/mois estimé</small>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                title="Estimation impossible"
+                text="Ajoutez au moins une fiche de paie avec un salaire brut pour calculer la projection."
+              />
+            )}
+            {pension.data?.projection && (
+              <div className={`work-long-career-status ${pension.data.projection.long_career.status}`}>
+                <strong>Carrière longue avant 21 ans</strong>
+                <span>{longCareerAssessmentLabel(pension.data.projection.long_career)}</span>
+              </div>
+            )}
+            {pension.data?.projection && (
+              <div className="work-pension-assumptions">
+                <strong>Hypothèses de calcul</strong>
+                <span>
+                  Salaire brut annuel reconstitué : {money(pension.data.projection.reference_annual_gross)}
+                  {' '}sur {pension.data.projection.payslip_count} bulletin(s)
+                </span>
+                <span>
+                  Retraite de base : salaire plafonné à {money(pension.data.projection.annual_social_security_ceiling)},
+                  taux maximum de 50 % et durée d’assurance projetée.
+                </span>
+                <span>
+                  Retraite complémentaire : estimation de points Agirc-Arrco aux paramètres 2026,
+                  selon le scénario de revenus choisi.
+                </span>
+              </div>
+            )}
+            <p className="work-quarter-method">
+              Projection indicative en euros 2026. Elle ne remplace pas l’estimation officielle et
+              n’intègre pas les périodes assimilées, enfants, autres régimes ou changements futurs
+              de réglementation.
+            </p>
           </Panel>
         </div>
       )}
@@ -630,6 +762,17 @@ export function WorkView({
           onClose={() => setPensionModal(false)}
           onSuccess={() => {
             setPensionModal(false)
+            refreshWorkData()
+          }}
+        />
+      )}
+
+      {incomeSimulationModal && (
+        <IncomeSimulationFormModal
+          profile={pension.data}
+          onClose={() => setIncomeSimulationModal(false)}
+          onSuccess={() => {
+            setIncomeSimulationModal(false)
             refreshWorkData()
           }}
         />
@@ -1000,11 +1143,16 @@ function PensionFormModal({
     const fd = new FormData(e.currentTarget)
     mutation.mutate({
       birth_year: Number(fd.get('birth_year') || 1990),
+      birth_month: Number(fd.get('birth_month') || 1),
       target_retirement_age: Number(fd.get('target_retirement_age') || 64),
       validated_quarters: Number(fd.get('validated_quarters') || 0),
       required_quarters: Number(fd.get('required_quarters') || 172),
-      estimated_monthly_pension: String(fd.get('estimated_monthly_pension') || '0.00'),
+      estimated_monthly_pension: profile?.estimated_monthly_pension ?? '0.00',
       target_monthly_income: String(fd.get('target_monthly_income') || '0.00'),
+      income_growth_scenario: profile?.income_growth_scenario ?? 'regular',
+      future_annual_gross: profile?.future_annual_gross ?? null,
+      future_work_percentage: profile?.future_work_percentage ?? 100,
+      planned_unemployment_months: profile?.planned_unemployment_months ?? 0,
       notes: fd.get('notes') ? String(fd.get('notes')) : null,
     })
   }
@@ -1012,7 +1160,7 @@ function PensionFormModal({
   return (
     <Modal
       title="Paramètres du profil retraite"
-      description="Renseignez les estimations de votre relevé de carrière pour suivre votre progression."
+      description="Renseignez votre situation ; les montants sont calculés automatiquement depuis vos fiches de paie."
       onClose={onClose}
       actions={(
         <>
@@ -1031,13 +1179,27 @@ function PensionFormModal({
             <FormInput type="number" name="birth_year" defaultValue={profile?.birth_year ?? 1990} required />
           </Field>
 
+          <Field label="Mois de naissance">
+            <FormSelect name="birth_month" defaultValue={profile?.birth_month ?? 1} required>
+              {[
+                'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+                'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+              ].map((month, index) => (
+                <option key={month} value={index + 1}>{month}</option>
+              ))}
+            </FormSelect>
+          </Field>
+
           <Field label="Âge de départ cible">
             <FormInput type="number" name="target_retirement_age" defaultValue={profile?.target_retirement_age ?? 64} required />
           </Field>
         </div>
 
         <div className="work-form-grid">
-          <Field label="Trimestres validés">
+          <Field
+            label="Trimestres déjà validés"
+            hint="Indiquez ici uniquement les trimestres de votre relevé de carrière qui ne sont pas couverts par les fiches de paie saisies."
+          >
             <FormInput type="number" name="validated_quarters" defaultValue={profile?.validated_quarters ?? 40} required />
           </Field>
 
@@ -1047,10 +1209,6 @@ function PensionFormModal({
         </div>
 
         <div className="work-form-grid">
-          <Field label="Pension estimée au taux plein (€)">
-            <FormInput type="number" step="0.01" name="estimated_monthly_pension" defaultValue={profile?.estimated_monthly_pension ?? '0.00'} />
-          </Field>
-
           <Field label="Revenu mensuel cible (€)">
             <FormInput type="number" step="0.01" name="target_monthly_income" defaultValue={profile?.target_monthly_income ?? '0.00'} />
           </Field>
@@ -1063,6 +1221,173 @@ function PensionFormModal({
       </form>
     </Modal>
   )
+}
+
+function IncomeSimulationFormModal({
+  profile,
+  onClose,
+  onSuccess,
+}: {
+  profile?: PensionProfile
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  const [error, setError] = useState<string | null>(null)
+  const [futureMonthlyGross, setFutureMonthlyGross] = useState(
+    profile?.future_annual_gross
+      ? (Number(profile.future_annual_gross) / 12).toFixed(2)
+      : '',
+  )
+  const formId = 'work-income-simulation'
+  const mutation = useMutation({
+    mutationFn: (data: Partial<PensionProfile>) => apiPut('/work/pension', data),
+    onSuccess,
+    onError: (err) => setError(errorMessage(err)),
+  })
+
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    setError(null)
+    const fd = new FormData(e.currentTarget)
+    mutation.mutate({
+      birth_year: profile?.birth_year ?? 1990,
+      birth_month: profile?.birth_month ?? 1,
+      target_retirement_age: profile?.target_retirement_age ?? 64,
+      validated_quarters: profile?.validated_quarters ?? 40,
+      required_quarters: profile?.required_quarters ?? 172,
+      estimated_monthly_pension: profile?.estimated_monthly_pension ?? '0.00',
+      target_monthly_income: profile?.target_monthly_income ?? '0.00',
+      income_growth_scenario: String(
+        fd.get('income_growth_scenario') || 'regular',
+      ) as PensionProfile['income_growth_scenario'],
+      future_annual_gross: futureMonthlyGross
+        ? (Number(futureMonthlyGross) * 12).toFixed(2)
+        : null,
+      future_work_percentage: Number(fd.get('future_work_percentage') || 100),
+      planned_unemployment_months: Number(fd.get('planned_unemployment_months') || 0),
+      notes: profile?.notes ?? null,
+    })
+  }
+
+  return (
+    <Modal
+      title="Simulation de l’évolution des revenus"
+      description="Ajustez vos hypothèses de carrière pour recalculer la projection de retraite."
+      onClose={onClose}
+      actions={(
+        <>
+          <button className="text-button" type="button" onClick={onClose}>Annuler</button>
+          <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
+            {mutation.isPending ? 'Enregistrement…' : 'Appliquer la simulation'}
+          </button>
+        </>
+      )}
+    >
+      <form className="modal-form work-modal-form" id={formId} onSubmit={handleSubmit}>
+        {error && <p className="form-error work-modal-wide">{error}</p>}
+
+        <section className="work-simulation-options work-modal-wide">
+          <div>
+            <strong>Évolution future des revenus</strong>
+            <small>Choisissez la forme de progression utilisée jusqu’à l’âge de départ cible.</small>
+          </div>
+          <div className="work-growth-options">
+            {[
+              ['none', 'Pas d’évolution', '—'],
+              ['regular', 'Croissance régulière', '↗'],
+              ['strong_early', 'Forte au début', '⌒'],
+              ['strong_late', 'Forte à la fin', '⌣'],
+            ].map(([value, label, symbol]) => (
+              <label className="work-growth-option" key={value}>
+                <input
+                  type="radio"
+                  name="income_growth_scenario"
+                  value={value}
+                  defaultChecked={(profile?.income_growth_scenario ?? 'regular') === value}
+                />
+                <span aria-hidden="true">{symbol}</span>
+                <strong>{label}</strong>
+              </label>
+            ))}
+          </div>
+
+          <div className="work-form-grid">
+            <Field
+              label="Revenu brut mensuel visé à temps plein (€)"
+              hint={`Laissez vide pour utiliser la progression automatique. Équivalent annuel : ${money(futureMonthlyGross ? Number(futureMonthlyGross) * 12 : Number(profile?.projection?.simulated_end_annual_gross || 0))}.`}
+            >
+              <FormInput
+                type="number"
+                min="0"
+                step="0.01"
+                value={futureMonthlyGross}
+                placeholder={
+                  profile?.projection?.simulated_end_annual_gross
+                    ? (Number(profile.projection.simulated_end_annual_gross) / 12).toFixed(2)
+                    : '0.00'
+                }
+                onChange={(event) => setFutureMonthlyGross(event.target.value)}
+              />
+            </Field>
+            <Field
+              label="Taux d’activité futur (%)"
+              hint="100 % pour un temps plein ; réduisez ce taux pour simuler un temps partiel."
+            >
+              <FormInput
+                type="number"
+                min="1"
+                max="100"
+                name="future_work_percentage"
+                defaultValue={profile?.future_work_percentage ?? 100}
+                required
+              />
+            </Field>
+          </div>
+
+          <Field
+            label="Périodes de chômage prévues (mois)"
+            hint="Hypothèse conservatrice : ces mois réduisent les revenus, les points et les trimestres futurs."
+          >
+            <FormInput
+              type="number"
+              min="0"
+              max="600"
+              name="planned_unemployment_months"
+              defaultValue={profile?.planned_unemployment_months ?? 0}
+              required
+            />
+          </Field>
+        </section>
+      </form>
+    </Modal>
+  )
+}
+
+function pensionAgeLabel(scenario: PensionProjectionScenario): string {
+  return scenario.age_months
+    ? `${scenario.age_years} ans et ${scenario.age_months} mois`
+    : `${scenario.age_years} ans`
+}
+
+function pensionProjectionKindLabel(kind: PensionProjectionScenario['kind']): string {
+  return {
+    long_career: 'Carrière longue avant 21 ans',
+    target: 'Âge cible',
+    legal_age: 'Âge légal',
+    full_rate_automatic: 'Taux plein automatique',
+  }[kind]
+}
+
+function longCareerAssessmentLabel(
+  assessment: NonNullable<PensionProfile['projection']>['long_career'],
+): string {
+  if (assessment.status === 'eligible') {
+    return `${assessment.entered_early_quarters}/${assessment.required_early_quarters} trimestres avant fin ${assessment.cutoff_year} et ${assessment.projected_quarters_at_63}/${assessment.required_total_quarters} à 63 ans : départ anticipé estimé possible.`
+  }
+  if (assessment.status === 'insufficient_projected_quarters') {
+    return `Début de carrière confirmé, mais seulement ${assessment.projected_quarters_at_63}/${assessment.required_total_quarters} trimestres projetés à 63 ans.`
+  }
+  return `${assessment.entered_early_quarters}/${assessment.required_early_quarters} trimestres retrouvés avant fin ${assessment.cutoff_year}. Ajoutez les bulletins historiques manquants pour vérifier l’éligibilité.`
 }
 
 function frequencyLabel(frequency: RecurringSeries['frequency']): string {

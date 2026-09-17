@@ -551,10 +551,19 @@ class PensionProfile(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     birth_year: Mapped[int] = mapped_column(Integer, default=1990)
+    birth_month: Mapped[int] = mapped_column(Integer, default=1)
     target_retirement_age: Mapped[int] = mapped_column(Integer, default=64)
     validated_quarters: Mapped[int] = mapped_column(Integer, default=40)
     required_quarters: Mapped[int] = mapped_column(Integer, default=172)
     estimated_monthly_pension: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
     target_monthly_income: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
+    income_growth_scenario: Mapped[str] = mapped_column(
+        String(24), default="regular"
+    )
+    future_annual_gross: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
+    future_work_percentage: Mapped[int] = mapped_column(Integer, default=100)
+    planned_unemployment_months: Mapped[int] = mapped_column(Integer, default=0)
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

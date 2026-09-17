@@ -1246,12 +1246,74 @@ class PaySlipRead(BaseModel):
 
 class PensionProfileCreateOrUpdate(BaseModel):
     birth_year: int = Field(default=1990, ge=1930, le=2020)
+    birth_month: int = Field(default=1, ge=1, le=12)
     target_retirement_age: int = Field(default=64, ge=50, le=75)
     validated_quarters: int = Field(default=40, ge=0, le=300)
     required_quarters: int = Field(default=172, ge=1, le=300)
     estimated_monthly_pension: Decimal = Field(default=Decimal("0.00"), **_MONEY)
     target_monthly_income: Decimal = Field(default=Decimal("0.00"), **_MONEY)
+    income_growth_scenario: Literal[
+        "none", "regular", "strong_early", "strong_late"
+    ] = "regular"
+    future_annual_gross: Decimal | None = Field(default=None, ge=0, **_MONEY)
+    future_work_percentage: int = Field(default=100, ge=1, le=100)
+    planned_unemployment_months: int = Field(default=0, ge=0, le=600)
     notes: str | None = Field(default=None, max_length=500)
+
+
+class PensionQuarterYearRead(BaseModel):
+    year: int
+    gross_salary: Decimal
+    quarter_threshold: Decimal
+    validated_quarters: int
+    next_quarter_remaining: Decimal | None
+
+
+class PensionProjectionScenarioRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    kind: Literal["long_career", "target", "legal_age", "full_rate_automatic"]
+    age_years: int
+    age_months: int
+    projected_quarters: int
+    base_monthly_pension: Decimal
+    complementary_monthly_pension: Decimal
+    total_monthly_pension: Decimal
+
+
+class PensionIncomePointRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    age_years: int
+    annual_gross: Decimal
+
+
+class LongCareerAssessmentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    status: Literal[
+        "eligible",
+        "insufficient_early_records",
+        "insufficient_projected_quarters",
+    ]
+    cutoff_year: int
+    required_early_quarters: int
+    entered_early_quarters: int
+    projected_quarters_at_63: int
+    required_total_quarters: int
+
+
+class PensionProjectionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    reference_annual_gross: Decimal
+    payslip_count: int
+    covered_years: list[int]
+    annual_social_security_ceiling: Decimal
+    simulated_end_annual_gross: Decimal
+    income_evolution: list[PensionIncomePointRead]
+    scenarios: list[PensionProjectionScenarioRead]
+    long_career: LongCareerAssessmentRead
 
 
 class PensionProfileRead(BaseModel):
@@ -1259,12 +1321,24 @@ class PensionProfileRead(BaseModel):
 
     id: int
     birth_year: int
+    birth_month: int
     target_retirement_age: int
     validated_quarters: int
     required_quarters: int
     estimated_monthly_pension: Decimal
     target_monthly_income: Decimal
+    income_growth_scenario: Literal[
+        "none", "regular", "strong_early", "strong_late"
+    ]
+    future_annual_gross: Decimal | None
+    future_work_percentage: int
+    planned_unemployment_months: int
     notes: str | None
+    payslip_quarters: int = 0
+    estimated_total_quarters: int = 0
+    quarter_calculation: list[PensionQuarterYearRead] = Field(default_factory=list)
+    unsupported_payslip_years: list[int] = Field(default_factory=list)
+    projection: PensionProjectionRead | None = None
 
 
 class WorkSummary(BaseModel):
@@ -1277,6 +1351,8 @@ class WorkSummary(BaseModel):
     ytd_profit_sharing: Decimal
     average_pas_rate: Decimal
     estimated_pension: Decimal
+    declared_validated_quarters: int
+    payslip_quarters: int
     validated_quarters: int
     required_quarters: int
 

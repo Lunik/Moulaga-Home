@@ -977,8 +977,8 @@ async def _seed(
         employer="Atelier Logiciel Démo",
         position="Développeur en alternance",
         contract_type="Alternance",
-        start_date=date(2017, 9, 1),
-        end_date=date(2019, 8, 31),
+        start_date=date(2010, 9, 1),
+        end_date=date(2012, 8, 31),
         gross_annual_salary=money("18000.00"),
         work_percentage=100,
         payment_period_months=12,
@@ -1080,6 +1080,28 @@ async def _seed(
             notes=None,
         )
         payslips.append(sl)
+    payslips.extend(
+        [
+            PaySlip(
+                contract_id=apprenticeship_contract.id,
+                period="2010-12",
+                gross_salary=money("7088.00"),
+                taxable_net=money("5600.00"),
+                net_before_tax=money("5500.00"),
+                net_after_tax=money("5500.00"),
+                notes="Cumul annuel synthétique pour le parcours carrière longue",
+            ),
+            PaySlip(
+                contract_id=apprenticeship_contract.id,
+                period="2011-01",
+                gross_salary=money("1800.00"),
+                taxable_net=money("1420.00"),
+                net_before_tax=money("1400.00"),
+                net_after_tax=money("1400.00"),
+                notes="Bulletin synthétique validant le 5e trimestre avant 21 ans",
+            ),
+        ]
+    )
     session.add_all(payslips)
     await session.flush()
 
@@ -1104,12 +1126,17 @@ async def _seed(
 
     pension = PensionProfile(
         birth_year=1990,
+        birth_month=8,
         target_retirement_age=64,
-        validated_quarters=48,
+        validated_quarters=59,
         required_quarters=172,
-        estimated_monthly_pension=money("2450.00"),
+        estimated_monthly_pension=money("0.00"),
         target_monthly_income=money("3000.00"),
-        notes="Estimation basée sur Relevé Individuel de Situation (RIS) Agirc-Arrco 2026",
+        income_growth_scenario="regular",
+        future_annual_gross=money("75208.71"),
+        future_work_percentage=100,
+        planned_unemployment_months=0,
+        notes="59 trimestres hors bulletins saisis ; carrière commencée avant 21 ans",
     )
     session.add(pension)
     await session.flush()

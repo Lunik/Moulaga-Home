@@ -35,7 +35,7 @@ from .models import Base
 
 logger = logging.getLogger("moulaga.migrations")
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 25
 OBSOLETE_TABLES = frozenset(
     {
         "categorization_rules",
@@ -104,6 +104,13 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     },
     "pay_slips": {
         "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
+    },
+    "pension_profiles": {
+        "birth_month": "INTEGER DEFAULT 1 NOT NULL",
+        "income_growth_scenario": "VARCHAR(24) DEFAULT 'regular' NOT NULL",
+        "future_annual_gross": "NUMERIC(12, 2)",
+        "future_work_percentage": "INTEGER DEFAULT 100 NOT NULL",
+        "planned_unemployment_months": "INTEGER DEFAULT 0 NOT NULL",
     },
     "holding_operations": {
         "occurred_on": "DATE",

@@ -22,6 +22,8 @@ from ..models import (
     WorkContract,
     WorkContractAttachment,
 )
+from ..pension_projection import calculate_pension_projection
+from ..pension_quarters import calculate_payslip_quarters
 from ..schemas import (
     PaySlipAttachmentRead,
     PaySlipCreate,
@@ -29,6 +31,8 @@ from ..schemas import (
     PaySlipUpdate,
     PensionProfileCreateOrUpdate,
     PensionProfileRead,
+    PensionProjectionRead,
+    PensionQuarterYearRead,
     WorkContractAttachmentRead,
     WorkContractCreate,
     WorkContractRead,
@@ -39,6 +43,50 @@ from ..schemas import (
 router = APIRouter(prefix="/work", tags=["work"])
 
 ZERO = Decimal("0.00")
+
+
+def _pension_read(
+    profile: PensionProfile,
+    slips: list[PaySlip],
+) -> PensionProfileRead:
+    calculation, unsupported_years = calculate_payslip_quarters(slips)
+    payslip_quarters = sum(item.validated_quarters for item in calculation)
+    projection = calculate_pension_projection(
+        slips,
+        birth_year=profile.birth_year,
+        birth_month=profile.birth_month,
+        target_retirement_age=profile.target_retirement_age,
+        current_quarters=profile.validated_quarters + payslip_quarters,
+        required_quarters=profile.required_quarters,
+        today=local_today(),
+        income_growth_scenario=profile.income_growth_scenario,
+        future_annual_gross=profile.future_annual_gross,
+        future_work_percentage=profile.future_work_percentage,
+        planned_unemployment_months=profile.planned_unemployment_months,
+    )
+    return PensionProfileRead.model_validate(profile).model_copy(
+        update={
+            "payslip_quarters": payslip_quarters,
+            "estimated_total_quarters": profile.validated_quarters
+            + payslip_quarters,
+            "quarter_calculation": [
+                PensionQuarterYearRead(
+                    year=item.year,
+                    gross_salary=item.gross_salary,
+                    quarter_threshold=item.quarter_threshold,
+                    validated_quarters=item.validated_quarters,
+                    next_quarter_remaining=item.next_quarter_remaining,
+                )
+                for item in calculation
+            ],
+            "unsupported_payslip_years": unsupported_years,
+            "projection": (
+                PensionProjectionRead.model_validate(projection)
+                if projection
+                else None
+            ),
+        }
+    )
 
 
 @router.get("/summary", response_model=WorkSummary)
@@ -81,9 +129,40 @@ async def get_work_summary(
     res_pension = await session.execute(select(PensionProfile).limit(1))
     pension = res_pension.scalar_one_or_none()
 
-    est_pension = pension.estimated_monthly_pension if pension else ZERO
-    val_q = pension.validated_quarters if pension else 0
+    declared_val_q = pension.validated_quarters if pension else 0
+    quarter_calculation, _ = calculate_payslip_quarters(slips)
+    payslip_quarters = sum(item.validated_quarters for item in quarter_calculation)
     req_q = pension.required_quarters if pension else 172
+    projection = (
+        calculate_pension_projection(
+            slips,
+            birth_year=pension.birth_year,
+            birth_month=pension.birth_month,
+            target_retirement_age=pension.target_retirement_age,
+            current_quarters=declared_val_q + payslip_quarters,
+            required_quarters=req_q,
+            today=today,
+            income_growth_scenario=pension.income_growth_scenario,
+            future_annual_gross=pension.future_annual_gross,
+            future_work_percentage=pension.future_work_percentage,
+            planned_unemployment_months=pension.planned_unemployment_months,
+        )
+        if pension
+        else None
+    )
+    legal_projection = next(
+        (
+            scenario
+            for scenario in projection.scenarios
+            if scenario.kind == "legal_age"
+        ),
+        None,
+    ) if projection else None
+    est_pension = (
+        legal_projection.total_monthly_pension
+        if legal_projection
+        else ZERO
+    )
 
     return WorkSummary(
         active_contracts_count=len(active_contracts),
@@ -95,7 +174,9 @@ async def get_work_summary(
         ytd_profit_sharing=ytd_profit_sharing,
         average_pas_rate=round(avg_pas, 2),
         estimated_pension=est_pension,
-        validated_quarters=val_q,
+        declared_validated_quarters=declared_val_q,
+        payslip_quarters=payslip_quarters,
+        validated_quarters=declared_val_q + payslip_quarters,
         required_quarters=req_q,
     )
 
@@ -559,7 +640,7 @@ async def delete_payslip_attachment(
 @router.get("/pension", response_model=PensionProfileRead)
 async def get_pension_profile(
     session: AsyncSession = Depends(get_session),
-) -> PensionProfile:
+) -> PensionProfileRead:
     res = await session.execute(select(PensionProfile).limit(1))
     profile = res.scalar_one_or_none()
     if not profile:
@@ -567,14 +648,15 @@ async def get_pension_profile(
         session.add(profile)
         await session.commit()
         await session.refresh(profile)
-    return profile
+    res_slips = await session.execute(select(PaySlip))
+    return _pension_read(profile, list(res_slips.scalars().all()))
 
 
 @router.put("/pension", response_model=PensionProfileRead)
 async def update_pension_profile(
     data: PensionProfileCreateOrUpdate,
     session: AsyncSession = Depends(get_session),
-) -> PensionProfile:
+) -> PensionProfileRead:
     res = await session.execute(select(PensionProfile).limit(1))
     profile = res.scalar_one_or_none()
     if not profile:
@@ -587,4 +669,5 @@ async def update_pension_profile(
     profile.updated_at = datetime.now()
     await session.commit()
     await session.refresh(profile)
-    return profile
+    res_slips = await session.execute(select(PaySlip))
+    return _pension_read(profile, list(res_slips.scalars().all()))
