@@ -1080,6 +1080,23 @@ async def _seed(
             notes=None,
         )
         payslips.append(sl)
+    payslips.append(
+        PaySlip(
+            contract_id=previous_contract.id,
+            period="2021-08",
+            gross_salary=money("3500.00"),
+            taxable_net=money("2860.00"),
+            net_before_tax=money("2740.00"),
+            pas_rate=Decimal("6.00"),
+            pas_amount=money("164.40"),
+            net_after_tax=money("2575.60"),
+            bonuses=money("0.00"),
+            employer_contributions=money("960.00"),
+            employer_profit_sharing=money("0.00"),
+            hours_worked=Decimal("151.67"),
+            notes="Dernier bulletin du CDD de démonstration",
+        )
+    )
     session.add_all(payslips)
     await session.flush()
 
