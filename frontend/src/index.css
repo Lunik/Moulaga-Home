@@ -2477,6 +2477,68 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.work-form-details {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: rgb(255 255 255 / 1.5%);
+}
+
+.work-form-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.9rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.work-form-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.work-form-details > summary::after {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.work-form-details[open] > summary::after {
+  transform: rotate(225deg);
+}
+
+.work-form-details > summary:hover,
+.work-form-details > summary:focus-visible {
+  background: rgb(255 255 255 / 3%);
+}
+
+.work-form-details > summary > span {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.work-form-details > summary strong {
+  font-size: 0.82rem;
+}
+
+.work-form-details > summary small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.work-form-details-content {
+  display: grid;
+  gap: 1rem;
+  padding: 0.2rem 0.9rem 0.9rem;
+}
+
 .work-modal-wide {
   grid-column: 1 / -1;
 }

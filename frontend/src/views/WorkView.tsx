@@ -896,48 +896,59 @@ function PaySlipFormModal({
             <FormInput type="number" step="0.01" name="gross_salary" defaultValue={payslip?.gross_salary ?? '0.00'} />
           </Field>
 
-          <Field label="Net imposable (€)">
-            <FormInput type="number" step="0.01" name="taxable_net" defaultValue={payslip?.taxable_net ?? '0.00'} />
-          </Field>
-        </div>
-
-        <div className="work-form-grid">
-          <Field label="Net avant impôt (€)">
-            <FormInput type="number" step="0.01" name="net_before_tax" defaultValue={payslip?.net_before_tax ?? '0.00'} />
-          </Field>
-
-          <Field label="Taux PAS (%)">
-            <FormInput type="number" step="0.01" name="pas_rate" defaultValue={payslip?.pas_rate ?? '0.00'} />
-          </Field>
-        </div>
-
-        <div className="work-form-grid">
-          <Field label="Montant PAS retenu (€)">
-            <FormInput type="number" step="0.01" name="pas_amount" defaultValue={payslip?.pas_amount ?? '0.00'} />
-          </Field>
-
-          <Field label="Net après impôt perçu (€)">
+          <Field label="Net versé (€)">
             <FormInput type="number" step="0.01" name="net_after_tax" defaultValue={payslip?.net_after_tax ?? '0.00'} required />
           </Field>
         </div>
 
-        <div className="work-form-grid work-form-grid-three">
-          <Field label="Primes & Variables (€)">
-            <FormInput type="number" step="0.01" name="bonuses" defaultValue={payslip?.bonuses ?? '0.00'} />
-          </Field>
+        <details className="work-form-details">
+          <summary>
+            <span>
+              <strong>Détails du bulletin</strong>
+              <small>Fiscalité, primes et informations complémentaires</small>
+            </span>
+          </summary>
 
-          <Field label="Cotisations patronales (€)">
-            <FormInput type="number" step="0.01" name="employer_contributions" defaultValue={payslip?.employer_contributions ?? '0.00'} />
-          </Field>
+          <div className="work-form-details-content">
+            <div className="work-form-grid">
+              <Field label="Net imposable (€)">
+                <FormInput type="number" step="0.01" name="taxable_net" defaultValue={payslip?.taxable_net ?? '0.00'} />
+              </Field>
 
-          <Field label="Intéressement (€)">
-            <FormInput type="number" step="0.01" name="employer_profit_sharing" defaultValue={payslip?.employer_profit_sharing ?? '0.00'} />
-          </Field>
-        </div>
+              <Field label="Net avant impôt (€)">
+                <FormInput type="number" step="0.01" name="net_before_tax" defaultValue={payslip?.net_before_tax ?? '0.00'} />
+              </Field>
+            </div>
 
-        <Field label="Remarques">
-          <FormTextarea name="notes" defaultValue={payslip?.notes ?? ''} placeholder="Notes ou faits marquants du mois…" rows={3} />
-        </Field>
+            <div className="work-form-grid">
+              <Field label="Taux PAS (%)">
+                <FormInput type="number" step="0.01" name="pas_rate" defaultValue={payslip?.pas_rate ?? '0.00'} />
+              </Field>
+
+              <Field label="Montant PAS retenu (€)">
+                <FormInput type="number" step="0.01" name="pas_amount" defaultValue={payslip?.pas_amount ?? '0.00'} />
+              </Field>
+            </div>
+
+            <div className="work-form-grid work-form-grid-three">
+              <Field label="Primes & variables (€)">
+                <FormInput type="number" step="0.01" name="bonuses" defaultValue={payslip?.bonuses ?? '0.00'} />
+              </Field>
+
+              <Field label="Cotisations patronales (€)">
+                <FormInput type="number" step="0.01" name="employer_contributions" defaultValue={payslip?.employer_contributions ?? '0.00'} />
+              </Field>
+
+              <Field label="Intéressement (€)">
+                <FormInput type="number" step="0.01" name="employer_profit_sharing" defaultValue={payslip?.employer_profit_sharing ?? '0.00'} />
+              </Field>
+            </div>
+
+            <Field label="Remarques">
+              <FormTextarea name="notes" defaultValue={payslip?.notes ?? ''} placeholder="Notes ou faits marquants du mois…" rows={3} />
+            </Field>
+          </div>
+        </details>
 
         <div className="modal-attachment-field work-modal-wide">
           {payslip ? (
