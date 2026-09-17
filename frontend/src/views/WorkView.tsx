@@ -235,6 +235,10 @@ export function WorkView({
   const hasUnassociatedPayslips = payslips.data?.some(
     (payslip) => payslip.contract_id === null,
   ) ?? false
+  const contractsById = useMemo(
+    () => new Map((contracts.data ?? []).map((contract) => [contract.id, contract])),
+    [contracts.data],
+  )
 
   useEffect(() => {
     if (!contracts.data || !payslips.data || payslipContractFilter === 'all') return
@@ -568,6 +572,9 @@ export function WorkView({
                   }
 
                   const payslip = item.payslip
+                  const payslipContract = payslip.contract_id === null
+                    ? undefined
+                    : contractsById.get(payslip.contract_id)
                   return (
                     <article className="work-payslip-card" key={payslip.id}>
                     <span className="work-list-icon"><Icon name="receipt" /></span>
@@ -577,6 +584,7 @@ export function WorkView({
                         <StatusBadge>PAS {maskNumericValue(`${payslip.pas_rate}%`)}</StatusBadge>
                       </span>
                       <small>
+                        {payslipContract ? `${payslipContract.employer} · ` : ''}
                         Brut {money(payslip.gross_salary)} · Net imposable {money(payslip.taxable_net)}
                       </small>
                       <small>
