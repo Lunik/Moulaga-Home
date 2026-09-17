@@ -48,6 +48,8 @@ import {
   errorMessage,
   formatDate,
   maskNumericValue,
+  monthBoundaryDate,
+  monthInputValue,
   money,
 } from '../ui'
 
@@ -683,8 +685,10 @@ function ContractFormModal({
       employer: String(fd.get('employer') || ''),
       position: String(fd.get('position') || ''),
       contract_type: String(fd.get('contract_type') || 'CDI'),
-      start_date: String(fd.get('start_date') || ''),
-      end_date: fd.get('end_date') ? String(fd.get('end_date')) : null,
+      start_date: monthBoundaryDate(String(fd.get('start_date') || '')),
+      end_date: fd.get('end_date')
+        ? monthBoundaryDate(String(fd.get('end_date')), 'end')
+        : null,
       gross_annual_salary: String(fd.get('gross_annual_salary') || '0.00'),
       work_percentage: Number(fd.get('work_percentage') || 100),
       payment_period_months: Number(fd.get('payment_period_months') || 12),
@@ -738,12 +742,16 @@ function ContractFormModal({
         </div>
 
         <div className="work-form-grid">
-          <Field label="Date de début">
-            <DatePicker name="start_date" defaultValue={contract?.start_date ?? ''} required />
+          <Field label="Mois de début">
+            <DatePicker
+              name="start_date"
+              defaultValue={monthInputValue(contract?.start_date)}
+              required
+            />
           </Field>
 
-          <Field label="Date de fin (facultatif)">
-            <DatePicker name="end_date" defaultValue={contract?.end_date ?? ''} />
+          <Field label="Mois de fin (facultatif)">
+            <DatePicker name="end_date" defaultValue={monthInputValue(contract?.end_date)} />
           </Field>
         </div>
 
@@ -876,7 +884,7 @@ function PaySlipFormModal({
 
         <div className="work-form-grid">
           <Field label="Période">
-            <DatePicker type="month" name="period" defaultValue={payslip?.period ?? ''} required />
+            <DatePicker name="period" defaultValue={payslip?.period ?? ''} required />
           </Field>
 
           <Field label="Contrat associé">

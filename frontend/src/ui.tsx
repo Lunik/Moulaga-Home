@@ -1,4 +1,4 @@
-import { forwardRef, useEffect } from 'react'
+import { forwardRef, useEffect, useState } from 'react'
 import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from 'react'
 
 export type IconName =
@@ -379,18 +379,42 @@ export const FormInput = forwardRef<HTMLInputElement, ComponentPropsWithoutRef<'
   },
 )
 
+type DatePickerProps = Omit<
+  ComponentPropsWithoutRef<'input'>,
+  'defaultValue' | 'type' | 'value'
+> & {
+  defaultValue?: string
+  value?: string
+}
+
 export function DatePicker({
-  type = 'date',
+  defaultValue,
+  onChange,
+  value,
   ...props
-}: Omit<ComponentPropsWithoutRef<'input'>, 'type'> & { type?: 'date' | 'month' }) {
+}: DatePickerProps) {
+  const [uncontrolledValue, setUncontrolledValue] = useState(defaultValue ?? '')
+  const currentValue = value ?? uncontrolledValue
+
   return (
     <span className="date-picker-control">
       <input
         {...props}
         {...passwordManagerIgnoreAttributes}
         className={props.className ? `date-picker-input ${props.className}` : 'date-picker-input'}
-        type={type}
+        onChange={(event) => {
+          if (value === undefined) setUncontrolledValue(event.target.value)
+          onChange?.(event)
+        }}
+        type="month"
+        value={currentValue}
       />
+      <span
+        aria-hidden="true"
+        className={`date-picker-value${currentValue ? '' : ' date-picker-placeholder'}`}
+      >
+        {currentValue || 'YYYY-MM'}
+      </span>
       <Icon className="date-picker-icon" name="calendar" />
     </span>
   )
@@ -687,6 +711,21 @@ export function localDateInputValue(): string {
   const now = new Date()
   const localTime = new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
   return localTime.toISOString().slice(0, 10)
+}
+
+export function monthInputValue(value: string | null | undefined): string {
+  return value?.slice(0, 7) ?? ''
+}
+
+export function monthBoundaryDate(value: string, boundary: 'start' | 'end' = 'start'): string {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
+    throw new Error(`Période invalide : ${value}`)
+  }
+  if (boundary === 'start') return `${value}-01`
+
+  const [year, month] = value.split('-').map(Number)
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  return `${value}-${String(lastDay).padStart(2, '0')}`
 }
 
 export function longToday(): string {
