@@ -2493,6 +2493,35 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   font-size: 0.68rem;
 }
 
+.work-payslip-card.missing-payslip-card {
+  margin-block: 0.3rem;
+  padding-inline: 0.75rem;
+  border: 1px solid rgba(247, 181, 0, 0.24);
+  border-radius: 0.75rem;
+  background: rgba(247, 181, 0, 0.07);
+  color: var(--warning);
+}
+
+.missing-payslip-card .work-list-icon {
+  border-color: rgba(247, 181, 0, 0.32);
+  background: rgba(247, 181, 0, 0.08);
+  color: var(--warning);
+}
+
+.missing-payslip-card .work-list-copy > small {
+  color: var(--warning);
+  opacity: 0.78;
+}
+
+.missing-payslip-create {
+  border-color: rgba(247, 181, 0, 0.42);
+  color: var(--warning);
+}
+
+.missing-payslip-create:hover {
+  background: rgba(247, 181, 0, 0.12);
+}
+
 .modal-card:has(.work-modal-form) {
   width: min(44rem, 100%);
 }

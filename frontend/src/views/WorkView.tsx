@@ -47,11 +47,16 @@ import {
   compactMoney,
   errorMessage,
   formatDate,
+  localDateInputValue,
   maskNumericValue,
   monthBoundaryDate,
   monthInputValue,
   money,
 } from '../ui'
+
+type PaySlipListItem =
+  | { kind: 'payslip'; payslip: PaySlip }
+  | { kind: 'missing'; contract: WorkContract; period: string }
 
 export function WorkView({
   tab,
@@ -102,6 +107,8 @@ export function WorkView({
   const [payslipModal, setPayslipModal] = useState<{
     open: boolean
     payslip?: PaySlip
+    contractId?: number
+    period?: string
   }>({ open: false })
   const [expandedPayslipAttachments, setExpandedPayslipAttachments] = useState<number | null>(null)
   const [payslipContractFilter, setPayslipContractFilter] = useState('all')
@@ -169,15 +176,58 @@ export function WorkView({
     ]
   }, [payslips.data])
 
-  const filteredPayslips = useMemo(() => {
-    if (payslipContractFilter === 'all') return payslips.data ?? []
-    if (payslipContractFilter === 'none') {
-      return (payslips.data ?? []).filter((payslip) => payslip.contract_id === null)
-    }
-    return (payslips.data ?? []).filter(
-      (payslip) => payslip.contract_id === Number(payslipContractFilter),
+  const payslipItems = useMemo(() => {
+    const allPayslips = payslips.data ?? []
+    const visiblePayslips = payslipContractFilter === 'all'
+      ? allPayslips
+      : payslipContractFilter === 'none'
+        ? allPayslips.filter((payslip) => payslip.contract_id === null)
+        : allPayslips.filter(
+          (payslip) => payslip.contract_id === Number(payslipContractFilter),
+        )
+    const visibleContracts = payslipContractFilter === 'all'
+      ? contracts.data ?? []
+      : payslipContractFilter === 'none'
+        ? []
+        : (contracts.data ?? []).filter(
+          (contract) => contract.id === Number(payslipContractFilter),
+        )
+    const existingContractPeriods = new Set(
+      allPayslips
+        .filter((payslip) => payslip.contract_id !== null)
+        .map((payslip) => `${payslip.contract_id}:${payslip.period}`),
     )
-  }, [payslipContractFilter, payslips.data])
+    const items: PaySlipListItem[] = [
+      ...visiblePayslips.map((payslip): PaySlipListItem => ({
+        kind: 'payslip',
+        payslip,
+      })),
+      ...visibleContracts.flatMap((contract) => (
+        expectedPayslipPeriods(contract)
+          .filter((period) => !existingContractPeriods.has(`${contract.id}:${period}`))
+          .map((period): PaySlipListItem => ({
+            kind: 'missing',
+            contract,
+            period,
+          }))
+      )),
+    ]
+
+    return items.sort((left, right) => {
+      const leftPeriod = left.kind === 'payslip' ? left.payslip.period : left.period
+      const rightPeriod = right.kind === 'payslip' ? right.payslip.period : right.period
+      const periodOrder = rightPeriod.localeCompare(leftPeriod)
+      if (periodOrder !== 0) return periodOrder
+      if (left.kind !== right.kind) return left.kind === 'payslip' ? -1 : 1
+      if (left.kind === 'payslip' && right.kind === 'payslip') {
+        return right.payslip.id - left.payslip.id
+      }
+      if (left.kind === 'missing' && right.kind === 'missing') {
+        return left.contract.id - right.contract.id
+      }
+      return 0
+    })
+  }, [contracts.data, payslipContractFilter, payslips.data])
 
   const selectedPayslipContract = contracts.data?.find(
     (contract) => contract.id === Number(payslipContractFilter),
@@ -480,10 +530,46 @@ export function WorkView({
               </div>
             }
           >
-            {filteredPayslips.length > 0 ? (
+            {payslipItems.length > 0 ? (
               <div className="work-payslip-list">
-                {filteredPayslips.map((payslip) => (
-                  <article className="work-payslip-card" key={payslip.id}>
+                {payslipItems.map((item) => {
+                  if (item.kind === 'missing') {
+                    return (
+                      <article
+                        className="work-payslip-card missing-payslip-card"
+                        key={`missing-${item.contract.id}-${item.period}`}
+                      >
+                        <span className="work-list-icon"><Icon name="alert" /></span>
+                        <span className="work-list-copy">
+                          <span className="work-list-heading">
+                            <strong>{item.period}</strong>
+                          </span>
+                          <small>{item.contract.employer} · {item.contract.position}</small>
+                        </span>
+                        <span className="work-list-value">
+                          <strong>Fiche manquante</strong>
+                        </span>
+                        <span className="row-actions">
+                          <button
+                            className="secondary-button small-button missing-payslip-create"
+                            type="button"
+                            aria-label={`Créer la fiche de paie ${item.period} pour ${item.contract.employer}`}
+                            onClick={() => setPayslipModal({
+                              open: true,
+                              contractId: item.contract.id,
+                              period: item.period,
+                            })}
+                          >
+                            <Icon name="plus" /> Créer
+                          </button>
+                        </span>
+                      </article>
+                    )
+                  }
+
+                  const payslip = item.payslip
+                  return (
+                    <article className="work-payslip-card" key={payslip.id}>
                     <span className="work-list-icon"><Icon name="receipt" /></span>
                     <span className="work-list-copy">
                       <span className="work-list-heading">
@@ -549,8 +635,9 @@ export function WorkView({
                         />
                       </div>
                     )}
-                  </article>
-                ))}
+                    </article>
+                  )
+                })}
               </div>
             ) : (
               <EmptyState
@@ -677,6 +764,8 @@ export function WorkView({
       {payslipModal.open && (
         <PaySlipFormModal
           payslip={payslipModal.payslip}
+          initialContractId={payslipModal.contractId}
+          initialPeriod={payslipModal.period}
           contracts={contracts.data ?? []}
           onClose={() => setPayslipModal({ open: false })}
           onSuccess={() => {
@@ -875,11 +964,15 @@ function ContractFormModal({
 
 function PaySlipFormModal({
   payslip,
+  initialContractId,
+  initialPeriod,
   contracts,
   onClose,
   onSuccess,
 }: {
   payslip?: PaySlip
+  initialContractId?: number
+  initialPeriod?: string
   contracts: WorkContract[]
   onClose: () => void
   onSuccess: () => void
@@ -947,11 +1040,11 @@ function PaySlipFormModal({
 
         <div className="work-form-grid">
           <Field label="Période">
-            <DatePicker name="period" defaultValue={payslip?.period ?? ''} required />
+            <DatePicker name="period" defaultValue={payslip?.period ?? initialPeriod ?? ''} required />
           </Field>
 
           <Field label="Contrat associé">
-            <FormSelect name="contract_id" defaultValue={payslip?.contract_id ?? ''}>
+            <FormSelect name="contract_id" defaultValue={payslip?.contract_id ?? initialContractId ?? ''}>
               <option value="">-- Aucun --</option>
               {contracts.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -1135,4 +1228,36 @@ function frequencyLabel(frequency: RecurringSeries['frequency']): string {
     quarterly: 'trimestriel',
     yearly: 'annuel',
   }[frequency]
+}
+
+function expectedPayslipPeriods(contract: WorkContract): string[] {
+  const startPeriod = monthInputValue(contract.start_date)
+  const contractEndPeriod = monthInputValue(contract.end_date)
+  const currentPeriod = localDateInputValue().slice(0, 7)
+  const lastExpectedPeriod = previousPeriod(currentPeriod)
+  const endPeriod = contractEndPeriod && contractEndPeriod < lastExpectedPeriod
+    ? contractEndPeriod
+    : lastExpectedPeriod
+
+  if (startPeriod > endPeriod) return []
+
+  const startIndex = periodIndex(startPeriod)
+  const endIndex = periodIndex(endPeriod)
+  return Array.from(
+    { length: endIndex - startIndex + 1 },
+    (_, offset) => periodFromIndex(startIndex + offset),
+  )
+}
+
+function previousPeriod(period: string): string {
+  return periodFromIndex(periodIndex(period) - 1)
+}
+
+function periodIndex(period: string): number {
+  const [year, month] = period.split('-').map(Number)
+  return year * 12 + month - 1
+}
+
+function periodFromIndex(index: number): string {
+  return `${Math.floor(index / 12).toString().padStart(4, '0')}-${String(index % 12 + 1).padStart(2, '0')}`
 }

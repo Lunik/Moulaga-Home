@@ -1033,11 +1033,6 @@ async def _seed(
             money("1200.00"), money("0.00")
         ),
         (
-            "2026-08", money("4333.33"), money("3550.00"), money("3380.00"),
-            Decimal("7.50"), money("253.50"), money("3126.50"), money("0.00"),
-            money("1200.00"), money("0.00")
-        ),
-        (
             "2026-07", money("4333.33"), money("3550.00"), money("3380.00"),
             Decimal("7.50"), money("253.50"), money("3126.50"), money("0.00"),
             money("1200.00"), money("0.00")

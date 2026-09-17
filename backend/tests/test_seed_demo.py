@@ -45,7 +45,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.real_estate_attachments == 1
     assert result.contracts == 4
     assert result.contract_attachments == 1
-    assert result.payslips == 7
+    assert result.payslips == 6
     assert result.payslip_attachments == 1
 
     with TestClient(main.create_app()) as client:
@@ -111,10 +111,15 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert internship_contract["status"] == "ended"
 
         payslips = client.get("/api/work/payslips").json()
-        assert len(payslips) == 7
+        assert len(payslips) == 6
         assert payslips[0]["period"] == "2026-09"
         assert payslips[0]["net_after_tax"] == salary["amount"]
         assert len(payslips[0]["attachments"]) == 1
+        assert "2026-08" not in {
+            item["period"]
+            for item in payslips
+            if item["contract_id"] == current_contract["id"]
+        }
         assert {item["contract_id"] for item in payslips} == {
             current_contract["id"],
             previous_contract["id"],
