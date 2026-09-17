@@ -373,9 +373,55 @@ const passwordManagerIgnoreAttributes = {
   'data-protonpass-ignore': 'true',
 } as const
 
+function normalizeNumericPaste(value: string): string | null {
+  const compactValue = value.trim().replace(/\s/gu, '').replace(/^€|€$/gu, '')
+  if (!compactValue) return null
+
+  const commaIndex = compactValue.lastIndexOf(',')
+  const dotIndex = compactValue.lastIndexOf('.')
+  const decimalSeparatorIndex = Math.max(commaIndex, dotIndex)
+  const decimalSeparator = commaIndex > dotIndex ? ',' : '.'
+  const normalizedValue = commaIndex >= 0 && dotIndex >= 0
+    ? [...compactValue]
+      .filter((character, index) => (
+        (character !== ',' && character !== '.') || index === decimalSeparatorIndex
+      ))
+      .join('')
+      .replace(decimalSeparator, '.')
+    : compactValue.replace(',', '.')
+
+  return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalizedValue)
+    ? normalizedValue
+    : null
+}
+
 export const FormInput = forwardRef<HTMLInputElement, ComponentPropsWithoutRef<'input'>>(
-  function FormInput(props, ref) {
-    return <input {...props} {...passwordManagerIgnoreAttributes} ref={ref} />
+  function FormInput({ onPaste, type, ...props }, ref) {
+    return (
+      <input
+        {...props}
+        {...passwordManagerIgnoreAttributes}
+        ref={ref}
+        type={type}
+        onPaste={(event) => {
+          onPaste?.(event)
+          if (event.defaultPrevented || type !== 'number') return
+
+          const pastedValue = event.clipboardData.getData('text')
+          const normalizedValue = normalizeNumericPaste(pastedValue)
+          if (normalizedValue === null || normalizedValue === pastedValue) return
+
+          event.preventDefault()
+          const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+          if (valueSetter) {
+            valueSetter.call(event.currentTarget, normalizedValue)
+          } else {
+            event.currentTarget.value = normalizedValue
+          }
+          event.currentTarget.dispatchEvent(new Event('input', { bubbles: true }))
+        }}
+      />
+    )
   },
 )
 
