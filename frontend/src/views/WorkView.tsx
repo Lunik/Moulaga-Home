@@ -745,6 +745,8 @@ function ContractFormModal({
             <FormSelect name="contract_type" defaultValue={contract?.contract_type ?? 'CDI'}>
               <option value="CDI">CDI</option>
               <option value="CDD">CDD</option>
+              <option value="Stage">Stage</option>
+              <option value="Alternance">Alternance</option>
               <option value="Freelance">Freelance / Indépendant</option>
               <option value="Fonctionnaire">Fonctionnaire</option>
               <option value="Autre">Autre</option>
