@@ -2412,6 +2412,180 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   line-height: 1.5;
 }
 
+.work-quarter-calculation {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+}
+
+.work-quarter-calculation-header,
+.work-quarter-calculation-row {
+  display: grid;
+  grid-template-columns: 0.6fr 1fr 1fr 1fr;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.8rem 1rem;
+}
+
+.work-quarter-calculation-header {
+  background: #141416;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.work-quarter-calculation-row {
+  border-top: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+
+.work-quarter-calculation-row > span:last-child {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.work-quarter-calculation-row small,
+.work-quarter-method {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.work-quarter-method {
+  margin: 0.8rem 0 0;
+  line-height: 1.5;
+}
+
+.work-pension-scenarios {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.work-pension-scenario {
+  display: grid;
+  grid-template-columns: 0.7fr 0.85fr 1.5fr 0.65fr;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-left: 0.35rem solid #0f727b;
+  border-radius: 0.85rem;
+}
+
+.work-pension-scenario > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.work-pension-scenario small,
+.work-pension-assumptions {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.work-pension-scenario-amount {
+  text-align: right;
+}
+
+.work-pension-scenario-amount > strong {
+  font-size: 1.2rem;
+}
+
+.work-pension-assumptions {
+  display: grid;
+  gap: 0.3rem;
+  margin-top: 0.8rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  line-height: 1.45;
+}
+
+.work-long-career-status {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.8rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.work-long-career-status.eligible {
+  border-color: rgb(22 199 154 / 45%);
+  background: rgb(22 199 154 / 8%);
+}
+
+.work-long-career-status > strong {
+  color: var(--text);
+}
+
+.work-simulation-options {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+}
+
+.work-simulation-options > div:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.work-simulation-options > div:first-child small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.work-growth-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.work-growth-option {
+  display: grid;
+  min-height: 6.5rem;
+  place-items: center;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface-soft);
+  color: var(--muted);
+  text-align: center;
+  cursor: pointer;
+}
+
+.work-growth-option:has(input:checked) {
+  border-color: #0f727b;
+  background: rgb(15 114 123 / 18%);
+  color: var(--text);
+}
+
+.work-growth-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.work-growth-option > span {
+  color: #20a4b0;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.work-growth-option > strong {
+  font-size: 0.74rem;
+}
+
+.work-pension-assumptions > strong {
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
 .work-contract-list,
 .work-payslip-list {
   display: flex;
@@ -4925,6 +5099,26 @@ html[data-theme="light"] .status-badge {
 }
 
 @media (max-width: 680px) {
+  .work-pension-scenario {
+    grid-template-columns: 1fr;
+  }
+
+  .work-pension-scenario-amount {
+    text-align: left;
+  }
+
+  .work-growth-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .work-quarter-calculation-header {
+    display: none;
+  }
+
+  .work-quarter-calculation-row {
+    grid-template-columns: 0.5fr 1fr;
+  }
+
   .work-contract-card,
   .work-payslip-card {
     grid-template-columns: auto minmax(0, 1fr) auto;

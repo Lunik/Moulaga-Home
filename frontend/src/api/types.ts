@@ -500,12 +500,65 @@ export interface PaySlip {
 export interface PensionProfile {
   id: number
   birth_year: number
+  birth_month: number
   target_retirement_age: number
   validated_quarters: number
   required_quarters: number
   estimated_monthly_pension: Money
   target_monthly_income: Money
+  income_growth_scenario: 'none' | 'regular' | 'strong_early' | 'strong_late'
+  future_annual_gross: Money | null
+  future_work_percentage: number
+  planned_unemployment_months: number
   notes: string | null
+  payslip_quarters: number
+  estimated_total_quarters: number
+  quarter_calculation: PensionQuarterYear[]
+  unsupported_payslip_years: number[]
+  projection: PensionProjection | null
+}
+
+export interface PensionProjection {
+  reference_annual_gross: Money
+  payslip_count: number
+  covered_years: number[]
+  annual_social_security_ceiling: Money
+  simulated_end_annual_gross: Money
+  income_evolution: PensionIncomePoint[]
+  scenarios: PensionProjectionScenario[]
+  long_career: LongCareerAssessment
+}
+
+export interface PensionIncomePoint {
+  age_years: number
+  annual_gross: Money
+}
+
+export interface PensionProjectionScenario {
+  kind: 'long_career' | 'target' | 'legal_age' | 'full_rate_automatic'
+  age_years: number
+  age_months: number
+  projected_quarters: number
+  base_monthly_pension: Money
+  complementary_monthly_pension: Money
+  total_monthly_pension: Money
+}
+
+export interface LongCareerAssessment {
+  status: 'eligible' | 'insufficient_early_records' | 'insufficient_projected_quarters'
+  cutoff_year: number
+  required_early_quarters: number
+  entered_early_quarters: number
+  projected_quarters_at_63: number
+  required_total_quarters: number
+}
+
+export interface PensionQuarterYear {
+  year: number
+  gross_salary: Money
+  quarter_threshold: Money
+  validated_quarters: number
+  next_quarter_remaining: Money | null
 }
 
 export interface WorkSummary {
@@ -518,6 +571,8 @@ export interface WorkSummary {
   ytd_profit_sharing: Money
   average_pas_rate: string
   estimated_pension: Money
+  declared_validated_quarters: number
+  payslip_quarters: number
   validated_quarters: number
   required_quarters: number
 }
