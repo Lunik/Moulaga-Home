@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { useState } from 'react'
 
 import { apiGet, queryString } from '../api/client'
 import type {
@@ -24,7 +25,11 @@ import type {
   RecurringForecastItem,
 } from '../api/types'
 import { accountInstitutionLabel } from '../institutions'
-import { RecurringCashflowSankey } from '../RecurringCashflowSankey'
+import {
+  CashflowPeriodSelector,
+  RecurringCashflowSankey,
+  type CashflowPeriodMonths,
+} from '../RecurringCashflowSankey'
 import type { Route } from '../routing'
 import {
   EmptyState,
@@ -59,6 +64,7 @@ export function DashboardView({
   navigate: (route: Route) => void
 }) {
   const today = localDateInputValue()
+  const [cashflowMonths, setCashflowMonths] = useState<CashflowPeriodMonths>(1)
   const accounts = useQuery({
     queryKey: ['dashboard-accounts', today],
     queryFn: () => apiGet<Account[]>(`/accounts${queryString({ include_archived: true, as_of: today })}`),
@@ -70,16 +76,16 @@ export function DashboardView({
     networkMode: 'always',
   })
   const sourceFlows = useQuery({
-    queryKey: ['budget-cashflow', today, 'cycle', 'source'],
+    queryKey: ['budget-cashflow', 'projection', cashflowMonths, 'source'],
     queryFn: () => apiGet<CashflowFlow[]>(
-      `/budget/cashflow${queryString({ on: today, period: 'cycle', by: 'source' })}`,
+      `/budget/cashflow${queryString({ months: cashflowMonths, by: 'source' })}`,
     ),
     networkMode: 'always',
   })
   const categoryFlows = useQuery({
-    queryKey: ['budget-cashflow', today, 'cycle', 'category'],
+    queryKey: ['budget-cashflow', 'projection', cashflowMonths, 'category'],
     queryFn: () => apiGet<CashflowFlow[]>(
-      `/budget/cashflow${queryString({ on: today, period: 'cycle', by: 'category' })}`,
+      `/budget/cashflow${queryString({ months: cashflowMonths, by: 'category' })}`,
     ),
     networkMode: 'always',
   })
@@ -264,10 +270,14 @@ export function DashboardView({
       <Panel
         title="Flux récurrents"
         subtitle={`Entrées ${money(recurringIncome)} · Sorties ${money(recurringExpenses)} · Solde ${signedMoney(recurringIncome - recurringExpenses)}`}
+        className="cashflow-panel"
         action={(
-          <button className="secondary-button small-button" type="button" onClick={() => navigate({ name: 'budget', tab: 'cashflow' })}>
-            Ouvrir le cashflow <Icon name="arrow" />
-          </button>
+          <div className="cashflow-panel-actions">
+            <CashflowPeriodSelector value={cashflowMonths} onChange={setCashflowMonths} />
+            <button className="secondary-button small-button" type="button" onClick={() => navigate({ name: 'budget', tab: 'cashflow' })}>
+              Ouvrir le cashflow <Icon name="arrow" />
+            </button>
+          </div>
         )}
       >
         <RecurringCashflowSankey

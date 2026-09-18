@@ -7,7 +7,11 @@ import {
   AttachmentPicker,
   uploadOwnerAttachment,
 } from '../AttachmentManager'
-import { RecurringCashflowSankey } from '../RecurringCashflowSankey'
+import {
+  CashflowPeriodSelector,
+  RecurringCashflowSankey,
+  type CashflowPeriodMonths,
+} from '../RecurringCashflowSankey'
 import type {
   Account,
   BudgetOverview,
@@ -229,16 +233,17 @@ function BudgetOverviewPanel({ navigate }: { navigate: (route: Route) => void })
 function RecurringFlowPanel({ categories }: { categories: Category[] }) {
   const [anchorDate, setAnchorDate] = useState(localDateInputValue)
   const [period, setPeriod] = useState<'cycle' | 'year'>('cycle')
+  const [cashflowMonths, setCashflowMonths] = useState<CashflowPeriodMonths>(1)
   const sourceFlows = useQuery({
-    queryKey: ['budget-cashflow', anchorDate, period, 'source'],
+    queryKey: ['budget-cashflow', 'projection', cashflowMonths, 'source'],
     queryFn: () => apiGet<CashflowFlow[]>(
-      `/budget/cashflow${queryString({ on: anchorDate, period, by: 'source' })}`,
+      `/budget/cashflow${queryString({ months: cashflowMonths, by: 'source' })}`,
     ),
   })
   const categoryFlows = useQuery({
-    queryKey: ['budget-cashflow', anchorDate, period, 'category'],
+    queryKey: ['budget-cashflow', 'projection', cashflowMonths, 'category'],
     queryFn: () => apiGet<CashflowFlow[]>(
-      `/budget/cashflow${queryString({ on: anchorDate, period, by: 'category' })}`,
+      `/budget/cashflow${queryString({ months: cashflowMonths, by: 'category' })}`,
     ),
   })
   const spending = useQuery({
@@ -258,8 +263,25 @@ function RecurringFlowPanel({ categories }: { categories: Category[] }) {
 
   return (
     <>
+      {(sourceFlows.error || categoryFlows.error || spending.error) && (
+        <div className="error-banner">
+          {errorMessage(sourceFlows.error ?? categoryFlows.error ?? spending.error)}
+        </div>
+      )}
+      <Panel
+        title="Flux récurrents"
+        subtitle={`Entrées ${money(income)} · Sorties ${money(expenses)} · Solde ${signedMoney(income - expenses)}`}
+        className="cashflow-panel"
+        action={<CashflowPeriodSelector value={cashflowMonths} onChange={setCashflowMonths} />}
+      >
+        <RecurringCashflowSankey
+          categories={categories}
+          categoryFlows={categoryFlows.data ?? []}
+          sourceFlows={sourceFlows.data ?? []}
+        />
+      </Panel>
       <section className="period-toolbar">
-        <p>Visualisez les flux prévus par vos séries récurrentes.</p>
+        <p>Affinez la répartition calendaire des dépenses récurrentes.</p>
         <div className="period-actions">
           <PeriodPicker mode={period} value={anchorDate} onChange={setAnchorDate} />
           <div className="segmented-control compact-segments">
@@ -280,21 +302,6 @@ function RecurringFlowPanel({ categories }: { categories: Category[] }) {
           </div>
         </div>
       </section>
-      {(sourceFlows.error || categoryFlows.error || spending.error) && (
-        <div className="error-banner">
-          {errorMessage(sourceFlows.error ?? categoryFlows.error ?? spending.error)}
-        </div>
-      )}
-      <Panel
-        title="Flux récurrents"
-        subtitle={`Entrées ${money(income)} · Sorties ${money(expenses)} · Solde ${signedMoney(income - expenses)}`}
-      >
-        <RecurringCashflowSankey
-          categories={categories}
-          categoryFlows={categoryFlows.data ?? []}
-          sourceFlows={sourceFlows.data ?? []}
-        />
-      </Panel>
       <Panel title="Dépenses récurrentes" subtitle="Répartition prévisionnelle par catégorie">
         <SpendingTree categories={categories} nodes={spending.data ?? []} />
       </Panel>

@@ -2210,6 +2210,21 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   gap: 1rem;
 }
 
+.cashflow-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.cashflow-period-selector {
+  min-width: 15rem;
+}
+
+.cashflow-period-selector button {
+  min-height: 2.25rem;
+  padding: 0.45rem 0.7rem;
+}
+
 .header-actions,
 .period-actions,
 .detail-heading,
@@ -5099,6 +5114,22 @@ html[data-theme="light"] .status-badge {
 }
 
 @media (max-width: 680px) {
+  .cashflow-panel .panel-header,
+  .cashflow-panel-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cashflow-period-selector {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .cashflow-panel-actions > .secondary-button {
+    width: 100%;
+  }
+
   .work-pension-scenario {
     grid-template-columns: 1fr;
   }

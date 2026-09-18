@@ -17,12 +17,26 @@ _FREQUENCY_MONTHS = {
     "quarterly": 3,
     "yearly": 12,
 }
+_MONTHLY_FREQUENCY_MULTIPLIERS = {
+    "weekly": Decimal("4"),
+    "monthly": Decimal("1"),
+    "quarterly": Decimal("1") / Decimal("3"),
+    "yearly": Decimal("1") / Decimal("12"),
+}
 
 
 @dataclass(frozen=True)
 class RecurringOccurrence:
     series_id: int
     due_date: date
+    amount: Decimal
+    account_id: int
+    category_id: int | None
+
+
+@dataclass(frozen=True)
+class RecurringProjection:
+    series_id: int
     amount: Decimal
     account_id: int
     category_id: int | None
@@ -69,25 +83,33 @@ def recurrence_dates(
     return dates
 
 
+async def _active_budget_series(session: AsyncSession) -> list[RecurringSeries]:
+    return list(
+        (
+            await session.execute(
+                select(RecurringSeries)
+                .join(Account, RecurringSeries.account_id == Account.id)
+                .where(
+                    RecurringSeries.status == "active",
+                    RecurringSeries.amount.is_not(None),
+                    RecurringSeries.recurring_type != "transfer",
+                    Account.archived.is_(False),
+                )
+                .order_by(RecurringSeries.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 async def recurring_budget_occurrences(
     session: AsyncSession,
     start: date,
     end: date,
 ) -> list[RecurringOccurrence]:
     """Return active, non-transfer occurrences for active accounts."""
-    series = (
-        await session.execute(
-            select(RecurringSeries)
-            .join(Account, RecurringSeries.account_id == Account.id)
-            .where(
-                RecurringSeries.status == "active",
-                RecurringSeries.amount.is_not(None),
-                RecurringSeries.recurring_type != "transfer",
-                Account.archived.is_(False),
-            )
-            .order_by(RecurringSeries.id)
-        )
-    ).scalars().all()
+    series = await _active_budget_series(session)
 
     occurrences = [
         RecurringOccurrence(
@@ -101,3 +123,28 @@ async def recurring_budget_occurrences(
         for due_date in recurrence_dates(item.next_due, item.frequency, start, end)
     ]
     return sorted(occurrences, key=lambda item: (item.due_date, item.series_id))
+
+
+async def recurring_budget_projection(
+    session: AsyncSession,
+    months: int,
+) -> list[RecurringProjection]:
+    """Normalize active series to monthly amounts and scale them to a period."""
+    if months <= 0:
+        raise ValueError("La projection doit couvrir au moins un mois")
+
+    series = await _active_budget_series(session)
+    projections: list[RecurringProjection] = []
+    for item in series:
+        multiplier = _MONTHLY_FREQUENCY_MULTIPLIERS.get(item.frequency)
+        if multiplier is None:
+            raise ValueError(f"Frequence recurrente inconnue: {item.frequency}")
+        projections.append(
+            RecurringProjection(
+                series_id=item.id,
+                amount=Decimal(item.amount) * multiplier * Decimal(months),
+                account_id=item.account_id,
+                category_id=item.category_id,
+            )
+        )
+    return projections

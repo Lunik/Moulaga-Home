@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +21,7 @@ from ..models import (
     Category,
     Contribution,
 )
-from ..recurring_budget import recurring_budget_occurrences
+from ..recurring_budget import recurring_budget_occurrences, recurring_budget_projection
 from ..schemas import (
     BudgetCycleOverview,
     CashflowFlow,
@@ -210,10 +210,19 @@ async def cashflow(
     on: date | None = None,
     by: str = Query(default="category", pattern="^(category|source)$"),
     period: str = Query(default="cycle", pattern="^(cycle|year)$"),
+    months: int | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> list[CashflowFlow]:
-    start, end, _ = await _period_bounds(session, on, period)
-    occurrences = await recurring_budget_occurrences(session, start, end)
+    if months is not None and months not in {1, 3, 6, 12}:
+        raise HTTPException(
+            status_code=422,
+            detail="La projection doit couvrir 1, 3, 6 ou 12 mois",
+        )
+    if months is None:
+        start, end, _ = await _period_bounds(session, on, period)
+        entries = await recurring_budget_occurrences(session, start, end)
+    else:
+        entries = await recurring_budget_projection(session, months)
 
     if by == "source":
         accounts = {
@@ -221,7 +230,7 @@ async def cashflow(
             for account in (await session.execute(select(Account))).scalars().all()
         }
         totals: dict[int, tuple[Decimal, Decimal]] = {}
-        for occurrence in occurrences:
+        for occurrence in entries:
             income, expenses = totals.get(
                 occurrence.account_id,
                 (Decimal("0"), Decimal("0")),
@@ -250,7 +259,7 @@ async def cashflow(
         for category in (await session.execute(select(Category))).scalars().all()
     }
     totals_by_category: dict[int | None, tuple[Decimal, Decimal]] = {}
-    for occurrence in occurrences:
+    for occurrence in entries:
         income, expenses = totals_by_category.get(
             occurrence.category_id,
             (Decimal("0"), Decimal("0")),
