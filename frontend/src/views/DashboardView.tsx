@@ -165,18 +165,15 @@ export function DashboardView({
   const gainPercent = portfolioCostBasis > 0
     ? (portfolioGain / portfolioCostBasis) * 100
     : 0
-  const historyData = (history.data ?? []).map((point) => ({
-    ...point,
-    net_worth: Number(point.net_worth),
-  }))
-  const positiveHistoryData = historyData.map((point) => ({
-    ...point,
-    net_worth: Number(point.net_worth) > 0 ? Number(point.net_worth) : null,
-  }))
-  const negativeHistoryData = historyData.map((point) => ({
-    ...point,
-    net_worth: Number(point.net_worth) < 0 ? Number(point.net_worth) : null,
-  }))
+  const historyData = (history.data ?? []).map((point) => {
+    const netWorthValue = Number(point.net_worth)
+    return {
+      ...point,
+      net_worth: netWorthValue,
+      positive_net_worth: netWorthValue > 0 ? netWorthValue : null,
+      negative_net_worth: netWorthValue < 0 ? netWorthValue : null,
+    }
+  })
   const recurringIncome = (sourceFlows.data ?? []).reduce(
     (total, flow) => total + Number(flow.inflow),
     0,
@@ -310,8 +307,8 @@ export function DashboardView({
                     formatter={(value) => money(Number(value))}
                     labelFormatter={(value) => formatMonth(String(value))}
                   />
-                  <Area data={positiveHistoryData} dataKey="net_worth" name="Patrimoine" type="monotone" stroke="#16c79a" strokeWidth={2.5} fill="url(#dashboard-net-fill-positive)" connectNulls={false} />
-                  <Area data={negativeHistoryData} dataKey="net_worth" name="Patrimoine" type="monotone" stroke="#e11d48" strokeWidth={2.5} fill="url(#dashboard-net-fill-negative)" connectNulls={false} />
+                  <Area dataKey="positive_net_worth" name="Patrimoine" type="monotone" stroke="#16c79a" strokeWidth={2.5} fill="url(#dashboard-net-fill-positive)" connectNulls={false} />
+                  <Area dataKey="negative_net_worth" name="Patrimoine" type="monotone" stroke="#e11d48" strokeWidth={2.5} fill="url(#dashboard-net-fill-negative)" connectNulls={false} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
