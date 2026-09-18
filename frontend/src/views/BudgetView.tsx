@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useRef, useState } from 'react'
+import { FormEvent, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiDelete, apiGet, apiPatch, apiPost, queryString } from '../api/client'
@@ -8,18 +8,13 @@ import {
   uploadOwnerAttachment,
 } from '../AttachmentManager'
 import {
-  CashflowPeriodSelector,
   RecurringCashflowSankey,
-  type CashflowPeriodMonths,
 } from '../RecurringCashflowSankey'
-import { effectiveCategoryParentIds } from '../categoryHierarchy'
 import type {
   Account,
   BudgetOverview,
   CashflowFlow,
   Category,
-  CategoryRemovalResult,
-  Envelope,
   RecurringForecastItem,
   RecurringSeries,
   RecurringType,
@@ -45,7 +40,6 @@ import {
   formatMonth,
   linkedEntityTargetId,
   localDateInputValue,
-  maskNumericValue,
   monthBoundaryDate,
   monthInputValue,
   money,
@@ -62,7 +56,6 @@ const budgetTabs: Array<{
   { id: 'overview', label: 'Aperçu', icon: 'grid' },
   { id: 'cashflow', label: 'Flux récurrents', icon: 'trend' },
   { id: 'recurring', label: 'Récurrents', icon: 'recurring' },
-  { id: 'envelopes', label: 'Enveloppes', icon: 'budget' },
 ]
 
 export function BudgetView({
@@ -97,7 +90,9 @@ export function BudgetView({
         ))}
       </nav>
 
-      {tab === 'overview' && <BudgetOverviewPanel navigate={navigate} />}
+      {tab === 'overview' && (
+        <BudgetOverviewPanel categories={categories} navigate={navigate} />
+      )}
       {tab === 'cashflow' && <RecurringFlowPanel categories={categories} />}
       {tab === 'recurring' && (
         <RecurringPanel
@@ -107,14 +102,17 @@ export function BudgetView({
           onRefresh={onRefresh}
         />
       )}
-      {tab === 'envelopes' && (
-        <EnvelopesPanel categories={categories} onRefresh={onRefresh} />
-      )}
     </div>
   )
 }
 
-function BudgetOverviewPanel({ navigate }: { navigate: (route: Route) => void }) {
+function BudgetOverviewPanel({
+  categories,
+  navigate,
+}: {
+  categories: Category[]
+  navigate: (route: Route) => void
+}) {
   const [anchorDate, setAnchorDate] = useState(localDateInputValue)
   const overview = useQuery({
     queryKey: ['budget-overview', anchorDate],
@@ -124,14 +122,18 @@ function BudgetOverviewPanel({ navigate }: { navigate: (route: Route) => void })
     queryKey: ['recurring-forecast', 2],
     queryFn: () => apiGet<RecurringForecastItem[]>('/recurring/forecast?months=2'),
   })
-  const envelopes = useQuery({
-    queryKey: ['budget-envelopes', anchorDate],
-    queryFn: () => apiGet<Envelope[]>(`/budget/envelopes${queryString({ on: anchorDate })}`),
+  const spending = useQuery({
+    queryKey: ['budget-spending', anchorDate, 'cycle'],
+    queryFn: () => apiGet<SpendingNode[]>(
+      `/budget/spending${queryString({ on: anchorDate, period: 'cycle' })}`,
+    ),
   })
-  const topEnvelopes = [...(envelopes.data ?? [])]
-    .filter((envelope) => envelope.budget !== null && Number(envelope.planned) > 0)
-    .sort((left, right) => envelopeRatio(right) - envelopeRatio(left))
-    .slice(0, 5)
+  const recurringExpenses = (spending.data ?? [])
+    .filter((node) => node.category_id !== null && Number(node.amount) > 0)
+  const maximumRecurringExpense = Math.max(
+    ...recurringExpenses.map((node) => Number(node.amount)),
+    0,
+  )
 
   return (
     <>
@@ -139,9 +141,9 @@ function BudgetOverviewPanel({ navigate }: { navigate: (route: Route) => void })
         <p>Votre budget est calculé à partir des séries récurrentes actives.</p>
         <PeriodPicker value={anchorDate} onChange={setAnchorDate} />
       </section>
-      {(overview.error || forecast.error || envelopes.error) && (
+      {(overview.error || forecast.error || spending.error) && (
         <div className="error-banner">
-          {errorMessage(overview.error ?? forecast.error ?? envelopes.error)}
+          {errorMessage(overview.error ?? forecast.error ?? spending.error)}
         </div>
       )}
       <section className="metric-grid">
@@ -153,9 +155,9 @@ function BudgetOverviewPanel({ navigate }: { navigate: (route: Route) => void })
           icon="trend"
         />
         <MetricCard
-          label="Enveloppes prévues"
-          value={money(overview.data?.envelope_planned)}
-          detail={`sur ${money(overview.data?.budget_total)}`}
+          label="Dépenses prévues"
+          value={money(overview.data?.expenses)}
+          detail="Dépenses récurrentes du cycle"
           icon="budget"
         />
         <MetricCard
@@ -174,40 +176,40 @@ function BudgetOverviewPanel({ navigate }: { navigate: (route: Route) => void })
 
       <section className="dashboard-grid">
         <Panel
-          title="Enveloppes les plus engagées"
-          subtitle="Prévision du cycle"
+          title="Dépenses récurrentes"
+          subtitle="Répartition prévisionnelle par catégorie"
           action={(
             <button
               className="secondary-button small-button"
               type="button"
-              onClick={() => navigate({ name: 'budget', tab: 'envelopes' })}
+              onClick={() => navigate({ name: 'budget', tab: 'cashflow' })}
             >
-              Voir les enveloppes <Icon name="arrow" />
+              Voir les flux récurrents <Icon name="arrow" />
             </button>
           )}
         >
-          {topEnvelopes.length > 0 ? (
-            <div className="envelope-summary-list">
-              {topEnvelopes.map((envelope) => {
-                const ratio = envelopeRatio(envelope)
-                return (
-                  <div key={envelope.category_id}>
-                    <div>
-                      <span>
-                        <i style={{ background: envelope.color }} />
-                        {envelope.category_name}
-                      </span>
-                      <strong>{maskNumericValue(`${Math.round(ratio)}%`)}</strong>
-                    </div>
-                    <ProgressBar value={ratio} color={envelope.color} danger={ratio > 100} />
+          {recurringExpenses.length > 0 ? (
+            <div className="recurring-expense-summary-list">
+              {recurringExpenses.map((node) => (
+                <div key={`${node.category_id}-${node.category_name}`}>
+                  <div>
+                    <span>
+                      <i style={{ background: categoryColor(node.category_id, categories) }} />
+                      {node.category_name}
+                    </span>
+                    <strong>{money(node.amount)}</strong>
                   </div>
-                )
-              })}
+                  <ProgressBar
+                    value={(Number(node.amount) / maximumRecurringExpense) * 100}
+                    color={categoryColor(node.category_id, categories)}
+                  />
+                </div>
+              ))}
             </div>
           ) : (
             <EmptyState
               icon="budget"
-              text="Configurez des plafonds et des séries récurrentes pour suivre les enveloppes."
+              text="Ajoutez des dépenses récurrentes pour afficher leur répartition par catégorie."
             />
           )}
         </Panel>
@@ -234,7 +236,7 @@ function BudgetOverviewPanel({ navigate }: { navigate: (route: Route) => void })
 function RecurringFlowPanel({ categories }: { categories: Category[] }) {
   const [anchorDate, setAnchorDate] = useState(localDateInputValue)
   const [period, setPeriod] = useState<'cycle' | 'year'>('cycle')
-  const [cashflowMonths, setCashflowMonths] = useState<CashflowPeriodMonths>(1)
+  const cashflowMonths = 1
   const sourceFlows = useQuery({
     queryKey: ['budget-cashflow', 'projection', cashflowMonths, 'source'],
     queryFn: () => apiGet<CashflowFlow[]>(
@@ -273,7 +275,7 @@ function RecurringFlowPanel({ categories }: { categories: Category[] }) {
         title="Flux récurrents"
         subtitle={`Entrées ${money(income)} · Sorties ${money(expenses)} · Solde ${signedMoney(income - expenses)}`}
         className="cashflow-panel"
-        action={<CashflowPeriodSelector value={cashflowMonths} onChange={setCashflowMonths} />}
+        action={<StatusBadge tone="primary">1 mois</StatusBadge>}
       >
         <RecurringCashflowSankey
           categories={categories}
@@ -323,8 +325,12 @@ function RecurringPanel({
 }) {
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
+  const [showCategoryCreate, setShowCategoryCreate] = useState(false)
   const [editing, setEditing] = useState<RecurringSeries | null>(null)
   const [forecastOpen, setForecastOpen] = useState(false)
+  const [accountFilter, setAccountFilter] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const series = useQuery({
     queryKey: ['recurring-series'],
     queryFn: () => apiGet<RecurringSeries[]>('/recurring'),
@@ -333,6 +339,28 @@ function RecurringPanel({
     queryKey: ['recurring-forecast', 3],
     queryFn: () => apiGet<RecurringForecastItem[]>('/recurring/forecast?months=3'),
   })
+  const recurringSeries = series.data ?? []
+  const seriesAccountIds = new Set(recurringSeries.map((item) => item.account_id))
+  const seriesCategoryIds = new Set(recurringSeries.map((item) => item.category_id))
+  const filterAccounts = accounts
+    .filter((account) => seriesAccountIds.has(account.id))
+    .sort((left, right) => left.name.localeCompare(right.name, 'fr'))
+  const filterCategories = categories
+    .filter((category) => seriesCategoryIds.has(category.id))
+    .sort((left, right) => left.name.localeCompare(right.name, 'fr'))
+  const filterTypes = [...new Set(recurringSeries.map((item) => item.recurring_type))]
+    .sort((left, right) => (
+      recurringTypeLabel(left, null).localeCompare(recurringTypeLabel(right, null), 'fr')
+    ))
+  const visibleSeries = recurringSeries.filter((item) => (
+    (accountFilter === 'all' || item.account_id === Number(accountFilter))
+    && (typeFilter === 'all' || item.recurring_type === typeFilter)
+    && (
+      categoryFilter === 'all'
+      || (categoryFilter === 'none' ? item.category_id === null : item.category_id === Number(categoryFilter))
+    )
+  ))
+  const filtersActive = accountFilter !== 'all' || typeFilter !== 'all' || categoryFilter !== 'all'
   useLinkedEntityFocus('recurring', focusId, (series.data?.length ?? 0) > 0)
   const refresh = async () => {
     await Promise.all([
@@ -340,7 +368,6 @@ function RecurringPanel({
       queryClient.invalidateQueries({ queryKey: ['recurring-forecast'] }),
       queryClient.invalidateQueries({ queryKey: ['categories'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
-      queryClient.invalidateQueries({ queryKey: ['budget-envelopes'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-cashflow'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-spending'] }),
       queryClient.invalidateQueries({ queryKey: ['overview'] }),
@@ -354,9 +381,18 @@ function RecurringPanel({
     <>
       <section className="section-intro">
         <p>Configurez manuellement les revenus et dépenses qui composent votre budget.</p>
-        <button className="primary-button" type="button" onClick={() => setShowCreate(true)}>
-          <Icon name="plus" />Ajouter une série
-        </button>
+        <div className="section-intro-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setShowCategoryCreate(true)}
+          >
+            <Icon name="plus" />Ajouter une catégorie
+          </button>
+          <button className="primary-button" type="button" onClick={() => setShowCreate(true)}>
+            <Icon name="plus" />Ajouter une série
+          </button>
+        </div>
       </section>
       {(series.error || forecast.error) && (
         <div className="error-banner">{errorMessage(series.error ?? forecast.error)}</div>
@@ -374,6 +410,16 @@ function RecurringPanel({
             await refresh()
             setShowCreate(false)
             setEditing(null)
+          }}
+        />
+      )}
+      {showCategoryCreate && (
+        <CategoryModal
+          categories={categories}
+          onClose={() => setShowCategoryCreate(false)}
+          onSaved={async () => {
+            await refresh()
+            setShowCategoryCreate(false)
           }}
         />
       )}
@@ -402,23 +448,67 @@ function RecurringPanel({
       </Panel>
       <Panel
         title="Séries récurrentes"
-        subtitle={`${series.data?.length ?? 0} série${series.data?.length === 1 ? '' : 's'} configurée${series.data?.length === 1 ? '' : 's'}`}
+        subtitle={
+          `${recurringSeries.length} série${recurringSeries.length === 1 ? '' : 's'} configurée${recurringSeries.length === 1 ? '' : 's'}`
+          + (filtersActive ? ` · ${visibleSeries.length} affichée${visibleSeries.length === 1 ? '' : 's'}` : '')
+        }
       >
-        {(series.data ?? []).length > 0 ? (
-          <div className="recurring-list">
-            {series.data?.map((item) => (
-              <RecurringRow
-                accountArchived={
-                  accounts.find((account) => account.id === item.account_id)?.archived ?? false
-                }
-                focused={item.id === focusId}
-                item={item}
-                key={item.id}
-                onEdit={() => setEditing(item)}
-                onSaved={refresh}
-              />
-            ))}
-          </div>
+        {recurringSeries.length > 0 ? (
+          <>
+            <div className="filter-row recurring-filters">
+              <FormSelect
+                aria-label="Filtrer les séries récurrentes par compte"
+                value={accountFilter}
+                onChange={(event) => setAccountFilter(event.target.value)}
+              >
+                <option value="all">Tous les comptes</option>
+                {filterAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}{account.archived ? ' (archivé)' : ''}
+                  </option>
+                ))}
+              </FormSelect>
+              <FormSelect
+                aria-label="Filtrer les séries récurrentes par type"
+                value={typeFilter}
+                onChange={(event) => setTypeFilter(event.target.value)}
+              >
+                <option value="all">Tous les types</option>
+                {filterTypes.map((type) => (
+                  <option key={type} value={type}>{recurringTypeLabel(type, null)}</option>
+                ))}
+              </FormSelect>
+              <FormSelect
+                aria-label="Filtrer les séries récurrentes par catégorie"
+                value={categoryFilter}
+                onChange={(event) => setCategoryFilter(event.target.value)}
+              >
+                <option value="all">Toutes les catégories</option>
+                {seriesCategoryIds.has(null) && <option value="none">Sans catégorie</option>}
+                {filterCategories.map((category) => (
+                  <option key={category.id} value={category.id}>{category.name}</option>
+                ))}
+              </FormSelect>
+            </div>
+            {visibleSeries.length > 0 ? (
+              <div className="recurring-list">
+                {visibleSeries.map((item) => (
+                  <RecurringRow
+                    accountArchived={
+                      accounts.find((account) => account.id === item.account_id)?.archived ?? false
+                    }
+                    focused={item.id === focusId}
+                    item={item}
+                    key={item.id}
+                    onEdit={() => setEditing(item)}
+                    onSaved={refresh}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyState icon="recurring" text="Aucune série ne correspond à ces filtres." />
+            )}
+          </>
         ) : (
           <EmptyState icon="recurring" text="Ajoutez une série pour construire votre budget." />
         )}
@@ -742,290 +832,46 @@ function RecurringSeriesModal({
   )
 }
 
-function EnvelopesPanel({
-  categories,
-  onRefresh,
-}: {
-  categories: Category[]
-  onRefresh: () => Promise<void>
-}) {
-  const queryClient = useQueryClient()
-  const [editing, setEditing] = useState<Category | null | undefined>(undefined)
-  const envelopes = useQuery({
-    queryKey: ['budget-envelopes', 'current'],
-    queryFn: () => apiGet<Envelope[]>('/budget/envelopes'),
-  })
-  const envelopeByCategory = useMemo(
-    () => new Map((envelopes.data ?? []).map((envelope) => [envelope.category_id, envelope])),
-    [envelopes.data],
-  )
-  const activeExpenses = useMemo(
-    () => categories
-      .filter((category) => category.kind === 'expense' && !category.archived)
-      .sort((left, right) => left.name.localeCompare(right.name, 'fr')),
-    [categories],
-  )
-  const effectiveParentByCategory = useMemo(
-    () => effectiveCategoryParentIds(categories),
-    [categories],
-  )
-  const childrenByParent = useMemo(() => {
-    const result = new Map<number | null, Category[]>()
-    for (const category of activeExpenses) {
-      const parentId = effectiveParentByCategory.get(category.id) ?? null
-      result.set(parentId, [...(result.get(parentId) ?? []), category])
-    }
-    return result
-  }, [activeExpenses, effectiveParentByCategory])
-  const roots = childrenByParent.get(null) ?? []
-  const archived = categories.filter((category) => category.archived)
-  const totalBudget = roots
-    .reduce((sum, category) => sum + Number(category.monthly_budget ?? 0), 0)
-  const totalPlanned = roots
-    .reduce((sum, category) => sum + Number(envelopeByCategory.get(category.id)?.planned ?? 0), 0)
-  const refresh = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['categories'] }),
-      queryClient.invalidateQueries({ queryKey: ['budget-envelopes'] }),
-      queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
-      onRefresh(),
-    ])
-  }
-
-  return (
-    <>
-      <section className="section-intro">
-        <p>Comparez vos plafonds aux dépenses récurrentes prévues.</p>
-        <button className="primary-button" type="button" onClick={() => setEditing(null)}>
-          <Icon name="plus" />Ajouter une catégorie
-        </button>
-      </section>
-      {envelopes.error && <div className="error-banner">{errorMessage(envelopes.error)}</div>}
-      <section className="budget-summary" aria-label="Résumé du budget récurrent">
-        <div><span>Budget</span><strong>{money(totalBudget)}</strong></div>
-        <div><span>Prévu</span><strong>{money(totalPlanned)}</strong></div>
-        <div>
-          <span>Disponible</span>
-          <strong className={totalBudget >= totalPlanned ? 'positive' : 'negative'}>
-            {money(totalBudget - totalPlanned)}
-          </strong>
-        </div>
-      </section>
-      {editing !== undefined && (
-        <CategoryModal
-          categories={categories}
-          category={editing ?? undefined}
-          onClose={() => setEditing(undefined)}
-          onSaved={async () => {
-            await refresh()
-            setEditing(undefined)
-          }}
-        />
-      )}
-      <Panel
-        title="Catégories"
-        subtitle="Les montants prévus proviennent des séries récurrentes actives."
-      >
-        {roots.length > 0 ? (
-          <div className="category-tree-list">
-            {roots.map((category) => (
-              <CategoryEnvelopeRow
-                category={category}
-                childrenByParent={childrenByParent}
-                depth={0}
-                envelopeByCategory={envelopeByCategory}
-                key={category.id}
-                onEdit={setEditing}
-              />
-            ))}
-          </div>
-        ) : (
-          <EmptyState icon="budget" text="Ajoutez une catégorie pour structurer votre budget." />
-        )}
-      </Panel>
-      {archived.length > 0 && (
-        <Panel title="Catégories archivées" subtitle="Ces catégories restent restaurables.">
-          <div className="category-tree-list">
-            {archived.map((category) => (
-              <ArchivedCategoryRow category={category} key={category.id} onSaved={refresh} />
-            ))}
-          </div>
-        </Panel>
-      )}
-    </>
-  )
-}
-
-function CategoryEnvelopeRow({
-  category,
-  childrenByParent,
-  depth,
-  envelopeByCategory,
-  onEdit,
-}: {
-  category: Category
-  childrenByParent: Map<number | null, Category[]>
-  depth: number
-  envelopeByCategory: Map<number, Envelope>
-  onEdit: (category: Category) => void
-}) {
-  const children = childrenByParent.get(category.id) ?? []
-  const envelope = envelopeByCategory.get(category.id)
-  const planned = Number(envelope?.planned ?? 0)
-  const budget = envelope?.budget === null || envelope?.budget === undefined
-    ? null
-    : Number(envelope.budget)
-  const available = budget === null ? null : budget - planned
-  const ratio = budget !== null && budget > 0 ? (planned / budget) * 100 : 0
-
-  return (
-    <div className="category-tree-group">
-      <div className={`category-tree-row${depth > 0 ? ' child' : ''}`}>
-        {depth > 0 && <Icon name="arrow" />}
-        <i style={{ background: category.color }} />
-        <strong>{category.name}</strong>
-        {children.length > 0 && (
-          <small>{children.length} sous-catégorie{children.length === 1 ? '' : 's'}</small>
-        )}
-        <div className="row-actions">
-          <button
-            className="icon-action"
-            type="button"
-            aria-label={`Modifier ${category.name}`}
-            onClick={() => onEdit(category)}
-          >
-            <Icon name="edit" />
-          </button>
-        </div>
-        <div className={`category-tree-budget${budget === null ? ' no-limit' : ''}`}>
-          <div className="category-budget-copy">
-            <span>{money(planned)} prévus</span>
-            <strong className={available !== null && available < 0 ? 'negative' : ''}>
-              {available === null
-                ? 'Sans plafond'
-                : available >= 0
-                  ? `${money(available)} disponibles`
-                  : `${money(-available)} dépassés`}
-            </strong>
-          </div>
-          {budget !== null && (
-            <ProgressBar value={ratio} color={category.color} danger={ratio > 100} />
-          )}
-        </div>
-      </div>
-      {children.length > 0 && (
-        <div className="category-tree-children">
-          {children.map((child) => (
-            <CategoryEnvelopeRow
-              category={child}
-              childrenByParent={childrenByParent}
-              depth={depth + 1}
-              envelopeByCategory={envelopeByCategory}
-              key={child.id}
-              onEdit={onEdit}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ArchivedCategoryRow({
-  category,
-  onSaved,
-}: {
-  category: Category
-  onSaved: () => Promise<void>
-}) {
-  const restore = useMutation({
-    mutationFn: () => apiPost<Category>(
-      `/categories/${category.id}/archive${queryString({ archived: false })}`,
-    ),
-    onSuccess: onSaved,
-  })
-  return (
-    <div className="category-tree-row archived">
-      <i style={{ background: category.color }} />
-      <strong>{category.name}</strong>
-      <StatusBadge tone="warning">Archivée</StatusBadge>
-      <div className="row-actions">
-        <button
-          className="icon-action positive"
-          type="button"
-          aria-label={`Restaurer ${category.name}`}
-          disabled={restore.isPending}
-          onClick={() => restore.mutate()}
-        >
-          <Icon name="refresh" />
-        </button>
-      </div>
-      {restore.error && <span className="form-error">{errorMessage(restore.error)}</span>}
-    </div>
-  )
-}
-
 function CategoryModal({
   categories,
-  category,
   onClose,
   onSaved,
 }: {
   categories: Category[]
-  category?: Category
   onClose: () => void
   onSaved: () => Promise<void>
 }) {
-  const [name, setName] = useState(category?.name ?? '')
-  const [kind, setKind] = useState<Category['kind']>(category?.kind ?? 'expense')
-  const [color, setColor] = useState(category?.color ?? '#615fff')
-  const [budget, setBudget] = useState(category?.monthly_budget ?? '')
-  const [parentId, setParentId] = useState(String(category?.parent_id ?? ''))
+  const [name, setName] = useState('')
+  const [kind, setKind] = useState<Category['kind']>('expense')
+  const [color, setColor] = useState('#615fff')
+  const [budget, setBudget] = useState('')
+  const [parentId, setParentId] = useState('')
   const mutation = useMutation({
-    mutationFn: () => {
-      const payload = {
-        name,
-        color,
-        monthly_budget: kind === 'expense' && budget !== '' ? budget : null,
-        parent_id: parentId ? Number(parentId) : null,
-      }
-      return category
-        ? apiPatch<Category>(`/categories/${category.id}`, payload)
-        : apiPost<Category>('/categories', { ...payload, kind })
-    },
-    onSuccess: onSaved,
-  })
-  const remove = useMutation({
-    mutationFn: () => apiPost<CategoryRemovalResult>(`/categories/${category?.id}/remove`),
+    mutationFn: () => apiPost<Category>('/categories', {
+      name,
+      kind,
+      color,
+      monthly_budget: kind === 'expense' && budget !== '' ? budget : null,
+      parent_id: parentId ? Number(parentId) : null,
+    }),
     onSuccess: onSaved,
   })
   const parents = categories.filter(
     (candidate) =>
       !candidate.archived
       && candidate.kind === kind
-      && candidate.id !== category?.id
       && candidate.parent_id === null,
   )
-  const formId = category ? `category-edit-${category.id}` : 'category-create'
+  const formId = 'category-create'
 
   return (
     <Modal
-      title={category ? `Modifier « ${category.name} »` : 'Nouvelle catégorie'}
-      description="Le plafond est comparé aux séries récurrentes rattachées à cette catégorie."
+      title="Nouvelle catégorie"
+      description="Cette catégorie permet d’organiser les séries récurrentes."
       onClose={onClose}
       actions={(
         <>
           <button className="text-button" type="button" onClick={onClose}>Annuler</button>
-          {category && (
-            <button
-              className="secondary-button destructive-button"
-              type="button"
-              disabled={remove.isPending}
-              onClick={() => remove.mutate()}
-            >
-              Archiver ou supprimer
-            </button>
-          )}
           <button className="primary-button" type="submit" form={formId} disabled={mutation.isPending}>
             Enregistrer
           </button>
@@ -1043,14 +889,12 @@ function CategoryModal({
         <Field label="Nom">
           <FormInput value={name} onChange={(event) => setName(event.target.value)} required />
         </Field>
-        {!category && (
-          <Field label="Type">
-            <FormSelect value={kind} onChange={(event) => setKind(event.target.value as Category['kind'])}>
-              <option value="expense">Dépense</option>
-              <option value="income">Revenu</option>
-            </FormSelect>
-          </Field>
-        )}
+        <Field label="Type">
+          <FormSelect value={kind} onChange={(event) => setKind(event.target.value as Category['kind'])}>
+            <option value="expense">Dépense</option>
+            <option value="income">Revenu</option>
+          </FormSelect>
+        </Field>
         <Field label="Couleur">
           <FormInput type="color" value={color} onChange={(event) => setColor(event.target.value)} />
         </Field>
@@ -1074,9 +918,7 @@ function CategoryModal({
             />
           </Field>
         )}
-        {(mutation.error || remove.error) && (
-          <p className="form-error">{errorMessage(mutation.error ?? remove.error)}</p>
-        )}
+        {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
       </form>
     </Modal>
   )
@@ -1096,21 +938,53 @@ function SpendingTree({
   }
   return (
     <div className="spending-tree">
-      {flattened.filter((node) => Number(node.amount) > 0).map((node) => (
-        <div className="spending-node" key={`${node.category_id}-${node.category_name}`}>
-          <div className="spending-label">
-            <span>
-              <strong>{node.category_name}</strong>
-              <small>{node.occurrence_count} échéance{node.occurrence_count === 1 ? '' : 's'}</small>
-            </span>
-            <strong>{money(node.amount)}</strong>
-          </div>
-          <ProgressBar
-            value={(Number(node.amount) / maximum) * 100}
-            color={categoryColor(node.category_id, categories)}
-          />
-        </div>
+      {nodes.filter((node) => Number(node.amount) > 0).map((node) => (
+        <SpendingNodeRow
+          categories={categories}
+          key={`${node.category_id}-${node.category_name}`}
+          maximum={maximum}
+          node={node}
+        />
       ))}
+    </div>
+  )
+}
+
+function SpendingNodeRow({
+  categories,
+  maximum,
+  node,
+}: {
+  categories: Category[]
+  maximum: number
+  node: SpendingNode
+}) {
+  const children = (node.children ?? []).filter((child) => Number(child.amount) > 0)
+  return (
+    <div className="spending-node">
+      <div className="spending-label">
+        <span>
+          <strong>{node.category_name}</strong>
+          <small>{node.occurrence_count} échéance{node.occurrence_count === 1 ? '' : 's'}</small>
+        </span>
+        <strong>{money(node.amount)}</strong>
+      </div>
+      <ProgressBar
+        value={(Number(node.amount) / maximum) * 100}
+        color={categoryColor(node.category_id, categories)}
+      />
+      {children.length > 0 && (
+        <div className="spending-children">
+          {children.map((child) => (
+            <SpendingNodeRow
+              categories={categories}
+              key={`${child.category_id}-${child.category_name}`}
+              maximum={maximum}
+              node={child}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -1209,12 +1083,6 @@ function shiftPeriodDate(value: string, delta: number, mode: PeriodPickerMode): 
 
 function categoryColor(categoryId: number | null, categories: Category[]): string {
   return categories.find((category) => category.id === categoryId)?.color ?? '#85858c'
-}
-
-function envelopeRatio(envelope: Envelope): number {
-  return Number(envelope.budget) > 0
-    ? (Number(envelope.planned) / Number(envelope.budget)) * 100
-    : 0
 }
 
 function statusTone(status: RecurringSeries['status']): 'neutral' | 'positive' | 'warning' {

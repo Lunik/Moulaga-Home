@@ -34,7 +34,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.accounts == 10
     assert result.snapshots == 309
     assert result.categories == 12
-    assert result.recurring == 16
+    assert result.recurring == 17
     assert result.debts == 4
     assert result.real_estate_assets == 2
     assert result.holdings == 7
@@ -76,9 +76,18 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         ] == ["900.00", "600.00", "250.00", "0.00"]
 
         recurring = client.get("/api/recurring").json()
-        assert len(recurring) == 16
+        assert len(recurring) == 17
         assert any(item["amount_type"] == "variable" for item in recurring)
         assert sum(item["recurring_type"] == "salary" for item in recurring) == 1
+        assert len({item["account_id"] for item in recurring}) > 1
+        assert len({item["recurring_type"] for item in recurring}) > 1
+        assert len({item["category_id"] for item in recurring}) > 1
+        assert any(
+            item["recurring_type"] == "uncategorized"
+            and item["category_id"] is None
+            and item["status"] == "paused"
+            for item in recurring
+        )
         assert {item["frequency"] for item in recurring} == {
             "weekly",
             "monthly",
@@ -270,7 +279,20 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert sum(Decimal(flow["inflow"]) for flow in yearly_source_flows) == (
             12 * sum(Decimal(flow["inflow"]) for flow in monthly_source_flows)
         )
-        assert client.get("/api/budget/spending").json()
+        spending = client.get("/api/budget/spending").json()
+        logement_spending = next(
+            item for item in spending if item["category_name"] == "Logement"
+        )
+        assert logement_spending["amount"] != "0.00"
+        charges_spending = next(
+            child
+            for child in logement_spending["children"]
+            if child["category_name"] == "Charges du logement"
+        )
+        assert {child["category_name"] for child in charges_spending["children"]} == {
+            "Electricite",
+            "Internet",
+        }
 
         net_worth = client.get("/api/networth/overview").json()
         assert net_worth["net_worth"] != "0.00"

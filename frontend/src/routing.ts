@@ -4,7 +4,6 @@ export type BudgetTab =
   | 'overview'
   | 'cashflow'
   | 'recurring'
-  | 'envelopes'
 
 export type WealthTab = 'overview' | 'holdings' | 'real-estate' | 'debts'
 export type HoldingsTab = 'positions' | 'operations'
@@ -27,11 +26,11 @@ const budgetTabs = new Set<BudgetTab>([
   'overview',
   'cashflow',
   'recurring',
-  'envelopes',
 ])
-// Categories used to have their own "Configuration" tab; envelopes now cover both.
+// Keep old bookmarks working after category creation moved to recurring series.
 const legacyBudgetTabs: Record<string, BudgetTab> = {
-  manage: 'envelopes',
+  envelopes: 'recurring',
+  manage: 'recurring',
 }
 const wealthTabs = new Set<WealthTab>(['overview', 'holdings', 'real-estate', 'debts'])
 const holdingsTabs = new Set<HoldingsTab>(['positions', 'operations'])
