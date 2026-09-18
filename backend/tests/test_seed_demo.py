@@ -279,7 +279,20 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert sum(Decimal(flow["inflow"]) for flow in yearly_source_flows) == (
             12 * sum(Decimal(flow["inflow"]) for flow in monthly_source_flows)
         )
-        assert client.get("/api/budget/spending").json()
+        spending = client.get("/api/budget/spending").json()
+        logement_spending = next(
+            item for item in spending if item["category_name"] == "Logement"
+        )
+        assert logement_spending["amount"] != "0.00"
+        charges_spending = next(
+            child
+            for child in logement_spending["children"]
+            if child["category_name"] == "Charges du logement"
+        )
+        assert {child["category_name"] for child in charges_spending["children"]} == {
+            "Electricite",
+            "Internet",
+        }
 
         net_worth = client.get("/api/networth/overview").json()
         assert net_worth["net_worth"] != "0.00"

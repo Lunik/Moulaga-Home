@@ -17,7 +17,6 @@ export function SettingsView() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['settings'] }),
         queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
-        queryClient.invalidateQueries({ queryKey: ['budget-envelopes'] }),
         queryClient.invalidateQueries({ queryKey: ['budget-cashflow'] }),
         queryClient.invalidateQueries({ queryKey: ['budget-spending'] }),
       ])

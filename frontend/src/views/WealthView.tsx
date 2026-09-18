@@ -1868,7 +1868,6 @@ function DebtsPanel({
       queryClient.invalidateQueries({ queryKey: ['recurring-forecast'] }),
       queryClient.invalidateQueries({ queryKey: ['categories'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-overview'] }),
-      queryClient.invalidateQueries({ queryKey: ['budget-envelopes'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-cashflow'] }),
       queryClient.invalidateQueries({ queryKey: ['budget-spending'] }),
       queryClient.invalidateQueries({ queryKey: ['overview'] }),

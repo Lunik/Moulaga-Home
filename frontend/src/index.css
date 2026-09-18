@@ -1344,10 +1344,6 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   font-size: 1rem;
 }
 
-.envelope-limit-choice {
-  width: 100%;
-}
-
 .field {
   display: flex;
   min-width: 0;
@@ -4219,15 +4215,16 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   color: var(--text);
 }
 
-.envelope-summary-list,
+.recurring-expense-summary-list,
 .spending-tree,
+.spending-children,
 .forecast-groups {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
-.envelope-summary-list > div > div:first-child,
+.recurring-expense-summary-list > div > div:first-child,
 .spending-label {
   display: flex;
   align-items: center;
@@ -4237,14 +4234,14 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   font-size: 0.78rem;
 }
 
-.envelope-summary-list span,
+.recurring-expense-summary-list span,
 .spending-label span {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-.envelope-summary-list i,
+.recurring-expense-summary-list i,
 .spending-label i {
   width: 0.55rem;
   height: 0.55rem;
@@ -4255,10 +4252,16 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   color: var(--muted);
 }
 
-.spending-child {
+.spending-children {
   margin: 0.75rem 0 0 1rem;
   padding-left: 1rem;
   border-left: 1px solid var(--line);
+}
+
+.section-intro-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .sankey-container {
@@ -5286,6 +5289,16 @@ html[data-theme="light"] .status-badge {
 
   .balance-hero .secondary-button,
   .section-intro .primary-button {
+    width: 100%;
+  }
+
+  .section-intro-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .section-intro-actions > button {
     width: 100%;
   }
 
