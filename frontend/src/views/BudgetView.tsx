@@ -8,9 +8,7 @@ import {
   uploadOwnerAttachment,
 } from '../AttachmentManager'
 import {
-  CashflowPeriodSelector,
   RecurringCashflowSankey,
-  type CashflowPeriodMonths,
 } from '../RecurringCashflowSankey'
 import { effectiveCategoryParentIds } from '../categoryHierarchy'
 import type {
@@ -234,7 +232,7 @@ function BudgetOverviewPanel({ navigate }: { navigate: (route: Route) => void })
 function RecurringFlowPanel({ categories }: { categories: Category[] }) {
   const [anchorDate, setAnchorDate] = useState(localDateInputValue)
   const [period, setPeriod] = useState<'cycle' | 'year'>('cycle')
-  const [cashflowMonths, setCashflowMonths] = useState<CashflowPeriodMonths>(1)
+  const cashflowMonths = 1
   const sourceFlows = useQuery({
     queryKey: ['budget-cashflow', 'projection', cashflowMonths, 'source'],
     queryFn: () => apiGet<CashflowFlow[]>(
@@ -273,7 +271,7 @@ function RecurringFlowPanel({ categories }: { categories: Category[] }) {
         title="Flux récurrents"
         subtitle={`Entrées ${money(income)} · Sorties ${money(expenses)} · Solde ${signedMoney(income - expenses)}`}
         className="cashflow-panel"
-        action={<CashflowPeriodSelector value={cashflowMonths} onChange={setCashflowMonths} />}
+        action={<StatusBadge tone="primary">1 mois</StatusBadge>}
       >
         <RecurringCashflowSankey
           categories={categories}
