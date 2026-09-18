@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import sqlite3
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -33,7 +34,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.accounts == 10
     assert result.snapshots == 309
     assert result.categories == 11
-    assert result.recurring == 14
+    assert result.recurring == 16
     assert result.debts == 4
     assert result.real_estate_assets == 2
     assert result.holdings == 7
@@ -75,9 +76,15 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         ] == ["900.00", "600.00", "250.00", "0.00"]
 
         recurring = client.get("/api/recurring").json()
-        assert len(recurring) == 14
+        assert len(recurring) == 16
         assert any(item["amount_type"] == "variable" for item in recurring)
         assert sum(item["recurring_type"] == "salary" for item in recurring) == 1
+        assert {item["frequency"] for item in recurring} == {
+            "weekly",
+            "monthly",
+            "quarterly",
+            "yearly",
+        }
         salary = next(item for item in recurring if item["label"] == "Salaire mensuel")
         assert salary["amount"] == "3126.50"
 
@@ -236,6 +243,17 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         ).json()
         assert any(float(flow["inflow"]) > 0 for flow in source_flows)
         assert any(float(flow["outflow"]) > 0 for flow in category_flows)
+        monthly_source_flows = client.get(
+            "/api/budget/cashflow",
+            params={"by": "source", "months": 1},
+        ).json()
+        yearly_source_flows = client.get(
+            "/api/budget/cashflow",
+            params={"by": "source", "months": 12},
+        ).json()
+        assert sum(Decimal(flow["inflow"]) for flow in yearly_source_flows) == (
+            12 * sum(Decimal(flow["inflow"]) for flow in monthly_source_flows)
+        )
         assert client.get("/api/budget/spending").json()
 
         net_worth = client.get("/api/networth/overview").json()

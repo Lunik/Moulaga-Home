@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from conftest import load_app
@@ -301,6 +302,55 @@ def test_recurring_budget_drives_overview_monthly_stats_and_cashflow(client):
     ]
     assert {flow["label"] for flow in category_flows} == {"Courses", "Salaire"}
     assert all(flow["label"] != "Sans categorie" for flow in category_flows)
+
+
+def test_cashflow_projection_normalizes_recurring_frequencies(client):
+    account_id = _account_id(client)
+    income_category = _category(client, "Salaire")
+    expense_category = _category(client, "Courses")
+    next_due = (date.today() + timedelta(days=366)).isoformat()
+    for label, amount, frequency, category_id in (
+        ("Mission hebdomadaire", "100.00", "weekly", income_category["id"]),
+        ("Prime trimestrielle", "300.00", "quarterly", income_category["id"]),
+        ("Abonnement mensuel", "-90.00", "monthly", expense_category["id"]),
+        ("Assurance annuelle", "-100.00", "yearly", expense_category["id"]),
+    ):
+        response = client.post(
+            "/api/recurring",
+            json={
+                "label": label,
+                "account_id": account_id,
+                "category_id": category_id,
+                "frequency": frequency,
+                "next_due": next_due,
+                "amount": amount,
+            },
+        )
+        assert response.status_code == 201
+
+    expected = {
+        1: ("500.00", "98.33"),
+        3: ("1500.00", "295.00"),
+        6: ("3000.00", "590.00"),
+        12: ("6000.00", "1180.00"),
+    }
+    for months, (inflow, outflow) in expected.items():
+        response = client.get(
+            "/api/budget/cashflow",
+            params={"by": "source", "months": months},
+        )
+        assert response.status_code == 200
+        assert response.json() == [
+            {
+                "key": f"account:{account_id}",
+                "label": "Compte courant",
+                "inflow": inflow,
+                "outflow": outflow,
+                "net": f"{Decimal(inflow) - Decimal(outflow):.2f}",
+            }
+        ]
+
+    assert client.get("/api/budget/cashflow", params={"months": 2}).status_code == 422
 
 
 def test_budget_cycle_and_envelopes_use_recurring_occurrences(client):

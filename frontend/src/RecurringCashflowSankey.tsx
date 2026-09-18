@@ -3,6 +3,39 @@ import { ResponsiveContainer, Sankey, Tooltip } from 'recharts'
 import type { CashflowFlow, Category } from './api/types'
 import { EmptyState, Icon, money } from './ui'
 
+export type CashflowPeriodMonths = 1 | 3 | 6 | 12
+
+const cashflowPeriods: Array<{ value: CashflowPeriodMonths; label: string }> = [
+  { value: 1, label: '1mo' },
+  { value: 3, label: '3mo' },
+  { value: 6, label: '6mo' },
+  { value: 12, label: '1an' },
+]
+
+export function CashflowPeriodSelector({
+  value,
+  onChange,
+}: {
+  value: CashflowPeriodMonths
+  onChange: (value: CashflowPeriodMonths) => void
+}) {
+  return (
+    <div className="segmented-control cashflow-period-selector" role="group" aria-label="Période du cashflow">
+      {cashflowPeriods.map((period) => (
+        <button
+          className={value === period.value ? 'active' : ''}
+          type="button"
+          key={period.value}
+          aria-pressed={value === period.value}
+          onClick={() => onChange(period.value)}
+        >
+          {period.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function RecurringCashflowSankey({
   categories,
   categoryFlows,

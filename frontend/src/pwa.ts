@@ -109,11 +109,13 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
     '/debts',
     '/real-estate',
     '/documents',
-    ...(['cycle', 'year'] as const).flatMap((period) => [
-      `/budget/cashflow${queryString({ on: anchorDate, period, by: 'source' })}`,
-      `/budget/cashflow${queryString({ on: anchorDate, period, by: 'category' })}`,
-      `/budget/spending${queryString({ on: anchorDate, period })}`,
+    ...([1, 3, 6, 12] as const).flatMap((months) => [
+      `/budget/cashflow${queryString({ months, by: 'source' })}`,
+      `/budget/cashflow${queryString({ months, by: 'category' })}`,
     ]),
+    ...(['cycle', 'year'] as const).map(
+      (period) => `/budget/spending${queryString({ on: anchorDate, period })}`,
+    ),
   ])
 
   const goalResults = await Promise.allSettled(

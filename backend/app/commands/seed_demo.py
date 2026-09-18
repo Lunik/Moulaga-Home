@@ -525,6 +525,30 @@ async def _seed(
         recurring_type="other",
         custom_type="Courses",
     )
+    weekly_expense_series = RecurringSeries(
+        label="Courses hebdomadaires demo",
+        account_id=checking.id,
+        category_id=courses.id,
+        frequency="weekly",
+        next_due=anchor,
+        amount=money("-80.00"),
+        amount_type="variable",
+        status="active",
+        recurring_type="other",
+        custom_type="Courses hebdomadaires",
+    )
+    quarterly_income_series = RecurringSeries(
+        label="Prime trimestrielle demo",
+        account_id=checking.id,
+        category_id=salaire.id,
+        frequency="quarterly",
+        next_due=add_month(anchor, 1),
+        amount=money("300.00"),
+        amount_type="variable",
+        status="active",
+        recurring_type="other",
+        custom_type="Prime",
+    )
     session.add_all(
         [
             loan_series,
@@ -533,6 +557,8 @@ async def _seed(
             fuel_series,
             extra_income_series,
             boursobank_expense_series,
+            weekly_expense_series,
+            quarterly_income_series,
         ]
     )
     await session.flush()
