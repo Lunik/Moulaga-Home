@@ -91,8 +91,6 @@ async function warmOfflineVisualDataInternal(): Promise<void> {
     `/overview${queryString({ as_of: anchorDate })}`,
     `/stats/monthly${queryString({ as_of: anchorDate })}`,
     `/budget/overview${queryString({ on: anchorDate })}`,
-    `/budget/envelopes${queryString({ on: anchorDate })}`,
-    '/budget/envelopes',
     '/recurring',
     '/recurring/forecast?months=1',
     '/recurring/forecast?months=3',

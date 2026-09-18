@@ -173,26 +173,10 @@ export interface BudgetOverview {
   income: Money
   expenses: Money
   net: Money
-  budget_total: Money
   budget_remaining: Money
-  envelope_planned: Money
-  envelope_available: Money
   upcoming_recurring_amount: Money
   upcoming_recurring_count: number
   savings_contributions: Money
-}
-
-export interface Envelope {
-  category_id: number
-  category_name: string
-  color: string
-  parent_id: number | null
-  budget: Money | null
-  direct_planned: Money
-  planned: Money
-  available: Money | null
-  children_budget: Money
-  remainder_budget: Money | null
 }
 
 export interface CashflowFlow {

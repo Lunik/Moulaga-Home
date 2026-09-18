@@ -203,7 +203,7 @@ async def _seed(
         for category in (await session.execute(select(Category))).scalars().all()
     }
 
-    # --- Category hierarchy + budgets ------------------------------------- #
+    # --- Category hierarchy for recurring expense views ------------------ #
     logement = categories[("Logement", "expense")]
     courses = categories[("Courses", "expense")]
     courses.monthly_budget = money("450.00")
