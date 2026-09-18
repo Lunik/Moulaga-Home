@@ -324,6 +324,9 @@ function RecurringPanel({
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState<RecurringSeries | null>(null)
   const [forecastOpen, setForecastOpen] = useState(false)
+  const [accountFilter, setAccountFilter] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const series = useQuery({
     queryKey: ['recurring-series'],
     queryFn: () => apiGet<RecurringSeries[]>('/recurring'),
@@ -332,6 +335,28 @@ function RecurringPanel({
     queryKey: ['recurring-forecast', 3],
     queryFn: () => apiGet<RecurringForecastItem[]>('/recurring/forecast?months=3'),
   })
+  const recurringSeries = series.data ?? []
+  const seriesAccountIds = new Set(recurringSeries.map((item) => item.account_id))
+  const seriesCategoryIds = new Set(recurringSeries.map((item) => item.category_id))
+  const filterAccounts = accounts
+    .filter((account) => seriesAccountIds.has(account.id))
+    .sort((left, right) => left.name.localeCompare(right.name, 'fr'))
+  const filterCategories = categories
+    .filter((category) => seriesCategoryIds.has(category.id))
+    .sort((left, right) => left.name.localeCompare(right.name, 'fr'))
+  const filterTypes = [...new Set(recurringSeries.map((item) => item.recurring_type))]
+    .sort((left, right) => (
+      recurringTypeLabel(left, null).localeCompare(recurringTypeLabel(right, null), 'fr')
+    ))
+  const visibleSeries = recurringSeries.filter((item) => (
+    (accountFilter === 'all' || item.account_id === Number(accountFilter))
+    && (typeFilter === 'all' || item.recurring_type === typeFilter)
+    && (
+      categoryFilter === 'all'
+      || (categoryFilter === 'none' ? item.category_id === null : item.category_id === Number(categoryFilter))
+    )
+  ))
+  const filtersActive = accountFilter !== 'all' || typeFilter !== 'all' || categoryFilter !== 'all'
   useLinkedEntityFocus('recurring', focusId, (series.data?.length ?? 0) > 0)
   const refresh = async () => {
     await Promise.all([
@@ -401,23 +426,67 @@ function RecurringPanel({
       </Panel>
       <Panel
         title="Séries récurrentes"
-        subtitle={`${series.data?.length ?? 0} série${series.data?.length === 1 ? '' : 's'} configurée${series.data?.length === 1 ? '' : 's'}`}
+        subtitle={
+          `${recurringSeries.length} série${recurringSeries.length === 1 ? '' : 's'} configurée${recurringSeries.length === 1 ? '' : 's'}`
+          + (filtersActive ? ` · ${visibleSeries.length} affichée${visibleSeries.length === 1 ? '' : 's'}` : '')
+        }
       >
-        {(series.data ?? []).length > 0 ? (
-          <div className="recurring-list">
-            {series.data?.map((item) => (
-              <RecurringRow
-                accountArchived={
-                  accounts.find((account) => account.id === item.account_id)?.archived ?? false
-                }
-                focused={item.id === focusId}
-                item={item}
-                key={item.id}
-                onEdit={() => setEditing(item)}
-                onSaved={refresh}
-              />
-            ))}
-          </div>
+        {recurringSeries.length > 0 ? (
+          <>
+            <div className="filter-row recurring-filters">
+              <FormSelect
+                aria-label="Filtrer les séries récurrentes par compte"
+                value={accountFilter}
+                onChange={(event) => setAccountFilter(event.target.value)}
+              >
+                <option value="all">Tous les comptes</option>
+                {filterAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}{account.archived ? ' (archivé)' : ''}
+                  </option>
+                ))}
+              </FormSelect>
+              <FormSelect
+                aria-label="Filtrer les séries récurrentes par type"
+                value={typeFilter}
+                onChange={(event) => setTypeFilter(event.target.value)}
+              >
+                <option value="all">Tous les types</option>
+                {filterTypes.map((type) => (
+                  <option key={type} value={type}>{recurringTypeLabel(type, null)}</option>
+                ))}
+              </FormSelect>
+              <FormSelect
+                aria-label="Filtrer les séries récurrentes par catégorie"
+                value={categoryFilter}
+                onChange={(event) => setCategoryFilter(event.target.value)}
+              >
+                <option value="all">Toutes les catégories</option>
+                {seriesCategoryIds.has(null) && <option value="none">Sans catégorie</option>}
+                {filterCategories.map((category) => (
+                  <option key={category.id} value={category.id}>{category.name}</option>
+                ))}
+              </FormSelect>
+            </div>
+            {visibleSeries.length > 0 ? (
+              <div className="recurring-list">
+                {visibleSeries.map((item) => (
+                  <RecurringRow
+                    accountArchived={
+                      accounts.find((account) => account.id === item.account_id)?.archived ?? false
+                    }
+                    focused={item.id === focusId}
+                    item={item}
+                    key={item.id}
+                    onEdit={() => setEditing(item)}
+                    onSaved={refresh}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyState icon="recurring" text="Aucune série ne correspond à ces filtres." />
+            )}
+          </>
         ) : (
           <EmptyState icon="recurring" text="Ajoutez une série pour construire votre budget." />
         )}

@@ -549,6 +549,17 @@ async def _seed(
         recurring_type="other",
         custom_type="Prime",
     )
+    uncategorized_series = RecurringSeries(
+        label="Dépense à catégoriser demo",
+        account_id=boursobank_checking.id,
+        category_id=None,
+        frequency="monthly",
+        next_due=add_month(anchor, 1).replace(day=10),
+        amount=money("-12.34"),
+        amount_type="fixed",
+        status="paused",
+        recurring_type="uncategorized",
+    )
     session.add_all(
         [
             loan_series,
@@ -559,6 +570,7 @@ async def _seed(
             boursobank_expense_series,
             weekly_expense_series,
             quarterly_income_series,
+            uncategorized_series,
         ]
     )
     await session.flush()

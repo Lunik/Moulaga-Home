@@ -3314,6 +3314,10 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   grid-template-columns: minmax(14rem, 1fr) repeat(4, minmax(10rem, 15rem));
 }
 
+.filter-row.recurring-filters {
+  grid-template-columns: repeat(3, minmax(10rem, 1fr));
+}
+
 .holding-list {
   display: flex;
   flex-direction: column;
@@ -5341,6 +5345,10 @@ html[data-theme="light"] .status-badge {
   }
 
   .filter-row.asset-position-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .filter-row.recurring-filters {
     grid-template-columns: minmax(0, 1fr);
   }
 
