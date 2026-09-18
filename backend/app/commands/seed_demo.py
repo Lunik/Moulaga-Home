@@ -207,17 +207,32 @@ async def _seed(
     logement = categories[("Logement", "expense")]
     courses = categories[("Courses", "expense")]
     courses.monthly_budget = money("450.00")
+    charges_logement = Category(
+        name="Charges du logement",
+        kind="expense",
+        color="#7c3aed",
+        parent_id=logement.id,
+        monthly_budget=money("160.00"),
+    )
+    session.add(charges_logement)
+    await session.flush()
     electricite = Category(
-        name="Electricite", kind="expense", color="#f59e0b", parent_id=logement.id,
+        name="Electricite",
+        kind="expense",
+        color="#f59e0b",
+        parent_id=charges_logement.id,
         monthly_budget=money("120.00"),
     )
     internet = Category(
-        name="Internet", kind="expense", color="#38bdf8", parent_id=logement.id,
+        name="Internet",
+        kind="expense",
+        color="#38bdf8",
+        parent_id=charges_logement.id,
         monthly_budget=money("40.00"),
     )
     logement_remainder = money("740.00")
     logement.monthly_budget = money(
-        electricite.monthly_budget + internet.monthly_budget + logement_remainder
+        charges_logement.monthly_budget + logement_remainder
     )
     archived_category = Category(
         name="Ancienne categorie demo",
@@ -432,7 +447,7 @@ async def _seed(
         RecurringSeries(
             label="Abonnement internet",
             account_id=checking.id,
-            category_id=loisirs.id,
+            category_id=internet.id,
             frequency="monthly",
             next_due=anchor.replace(day=25),
             amount=money("-14.90"),
