@@ -49,6 +49,10 @@ export function RecurringCashflowSankey({
 }) {
   const compact = useNarrowViewport()
   const data = buildSankey(sourceFlows, categoryFlows, categories, compact)
+  const chartHeight = Math.max(
+    compact ? 400 : 432,
+    data.maxColumnNodes * 34 + 54,
+  )
   return (
     <>
       <div className="sankey-mobile-summary">
@@ -64,7 +68,7 @@ export function RecurringCashflowSankey({
       <small className="sankey-scroll-hint">
         Faites glisser le graphique pour suivre les sous-catégories.
       </small>
-      <div className="sankey-container">
+      <div className="sankey-container" style={{ height: chartHeight }}>
         {data.links.length > 0 ? (
           <div className="sankey-chart">
             <ResponsiveContainer width="100%" height="100%">
@@ -138,7 +142,7 @@ function buildSankey(
   )
   const remainingAvailable = Math.round((totalIncome - totalExpenses) * 100) / 100
   if (sources.length === 0 || (destinations.length === 0 && remainingAvailable <= 0)) {
-    return { nodes: [], links: [] }
+    return { nodes: [], links: [], maxColumnNodes: 0 }
   }
 
   const categoryById = new Map(
@@ -184,9 +188,7 @@ function buildSankey(
     }
   }
 
-  const orderedCategoryNodes = [...categoryNodes.values()].sort(
-    (left, right) => left.depth - right.depth || right.amount - left.amount,
-  )
+  const orderedCategoryNodes = orderCategoryNodes(categoryNodes, categoryLinks)
   const nodes: CashflowNode[] = [
     ...(!compact
       ? sources.map((node) => ({
@@ -280,7 +282,77 @@ function buildSankey(
       })
     }
   }
-  return { nodes, links }
+  return {
+    nodes,
+    links,
+    maxColumnNodes: maxSankeyColumnNodes(nodes.length, links),
+  }
+}
+
+function orderCategoryNodes(
+  categoryNodes: Map<string, CashflowNode>,
+  categoryLinks: Map<string, CashflowLink>,
+): CashflowNode[] {
+  const childrenByParent = new Map<string, CashflowNode[]>()
+  for (const link of categoryLinks.values()) {
+    const target = categoryNodes.get(link.targetKey)
+    if (!target) continue
+    childrenByParent.set(link.sourceKey, [
+      ...(childrenByParent.get(link.sourceKey) ?? []),
+      target,
+    ])
+  }
+  for (const children of childrenByParent.values()) {
+    children.sort(
+      (left, right) =>
+        right.amount - left.amount || left.name.localeCompare(right.name, 'fr'),
+    )
+  }
+
+  const ordered: CashflowNode[] = []
+  const visited = new Set<string>()
+  const visitChildren = (parentKey: string) => {
+    for (const child of childrenByParent.get(parentKey) ?? []) {
+      if (visited.has(child.key)) continue
+      visited.add(child.key)
+      ordered.push(child)
+      visitChildren(child.key)
+    }
+  }
+  visitChildren('hub')
+
+  for (const node of categoryNodes.values()) {
+    if (!visited.has(node.key)) ordered.push(node)
+  }
+  return ordered
+}
+
+function maxSankeyColumnNodes(nodeCount: number, links: SankeyLink[]): number {
+  const depths = Array<number>(nodeCount).fill(0)
+  const outgoingCounts = Array<number>(nodeCount).fill(0)
+
+  for (const link of links) {
+    outgoingCounts[link.source] += 1
+  }
+  for (let pass = 0; pass < nodeCount; pass += 1) {
+    let changed = false
+    for (const link of links) {
+      const targetDepth = depths[link.source] + 1
+      if (targetDepth > depths[link.target]) {
+        depths[link.target] = targetDepth
+        changed = true
+      }
+    }
+    if (!changed) break
+  }
+
+  const maxDepth = Math.max(0, ...depths)
+  const columnCounts = new Map<number, number>()
+  for (let nodeIndex = 0; nodeIndex < nodeCount; nodeIndex += 1) {
+    const depth = outgoingCounts[nodeIndex] === 0 ? maxDepth : depths[nodeIndex]
+    columnCounts.set(depth, (columnCounts.get(depth) ?? 0) + 1)
+  }
+  return Math.max(0, ...columnCounts.values())
 }
 
 interface CashflowNode {
