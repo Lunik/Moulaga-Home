@@ -33,7 +33,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     result = asyncio.run(seed.seed_demo())
     assert result.accounts == 10
     assert result.snapshots == 309
-    assert result.categories == 11
+    assert result.categories == 12
     assert result.recurring == 17
     assert result.debts == 4
     assert result.real_estate_assets == 2
@@ -96,6 +96,22 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         }
         salary = next(item for item in recurring if item["label"] == "Salaire mensuel")
         assert salary["amount"] == "3126.50"
+        internet_series = next(
+            item for item in recurring if item["label"] == "Abonnement internet"
+        )
+        categories = {
+            item["name"]: item for item in client.get("/api/categories").json()
+        }
+        assert categories["Charges du logement"]["parent_id"] == categories["Logement"][
+            "id"
+        ]
+        assert categories["Electricite"]["parent_id"] == categories[
+            "Charges du logement"
+        ]["id"]
+        assert categories["Internet"]["parent_id"] == categories[
+            "Charges du logement"
+        ]["id"]
+        assert internet_series["category_id"] == categories["Internet"]["id"]
 
         contracts = client.get("/api/work/contracts").json()
         assert len(contracts) == 4

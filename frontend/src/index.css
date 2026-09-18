@@ -4265,12 +4265,29 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   height: 27rem;
 }
 
+.sankey-chart {
+  width: 100%;
+  height: 100%;
+}
+
+.sankey-scroll-hint {
+  display: none;
+}
+
 .cashflow-sankey-link {
+  stroke-opacity: 0.42;
   transition: stroke-opacity 150ms ease;
 }
 
 .cashflow-sankey-link:hover {
-  stroke-opacity: 0.72;
+  stroke-opacity: 0.68;
+}
+
+.sankey-node-label {
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-linejoin: round;
+  stroke-width: 4px;
 }
 
 .cashflow-tooltip {
@@ -5596,7 +5613,20 @@ html[data-theme="light"] .status-badge {
   }
 
   .sankey-container {
-    height: 22rem;
+    height: 25rem;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+
+  .sankey-chart {
+    min-width: 40rem;
+  }
+
+  .sankey-scroll-hint {
+    display: block;
+    margin: 0.55rem 0 0;
+    color: var(--muted);
+    font-size: 0.68rem;
   }
 
   .sankey-mobile-summary {
