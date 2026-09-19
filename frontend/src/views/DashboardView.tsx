@@ -188,7 +188,7 @@ export function DashboardView({
     (total, flow) => total + Number(flow.outflow),
     0,
   )
-  const budgetRemaining = Number(overviewData.budget_remaining)
+  const budgetRemaining = Number(overviewData.net_current_month)
 
   return (
     <div className="view-stack">
@@ -244,7 +244,7 @@ export function DashboardView({
         <MetricCard
           label="Revenus récurrents"
           value={money(overviewData.income_current_month)}
-          detail={`Solde prévisionnel : ${signedMoney(overviewData.net_current_month)}`}
+          detail="Budget mensuel · hors virements"
           icon="trend"
           tone="positive"
         />
@@ -257,8 +257,8 @@ export function DashboardView({
         />
         <MetricCard
           label="Budget disponible"
-          value={signedMoney(overviewData.budget_remaining)}
-          detail={`après récurrents · sur ${money(overviewData.budget_current_month)}`}
+          value={signedMoney(overviewData.net_current_month)}
+          detail="revenus moins dépenses récurrentes"
           icon="budget"
           tone={budgetRemaining < 0 ? 'negative' : 'positive'}
         />
