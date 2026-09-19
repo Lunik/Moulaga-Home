@@ -193,13 +193,13 @@ def _growth_progress(scenario: IncomeGrowthScenario, ratio: float) -> float:
 def _simulated_end_gross(
     annual_gross: Decimal,
     scenario: IncomeGrowthScenario,
-    future_annual_gross: Decimal | None,
+    target_monthly_income: Decimal,
     years_to_target: Decimal,
 ) -> Decimal:
     if scenario == "none":
         return annual_gross
-    if future_annual_gross is not None:
-        return future_annual_gross
+    if target_monthly_income > ZERO:
+        return _money(target_monthly_income * MONTHS_PER_YEAR)
     factor = (1 + float(DEFAULT_ANNUAL_GROWTH_RATE)) ** float(years_to_target)
     return _money(annual_gross * Decimal(str(factor)))
 
@@ -284,7 +284,7 @@ def calculate_pension_projection(
     required_quarters: int,
     today: date,
     income_growth_scenario: IncomeGrowthScenario = "regular",
-    future_annual_gross: Decimal | None = None,
+    target_monthly_income: Decimal = ZERO,
     future_work_percentage: int = 100,
     planned_unemployment_months: int = 0,
 ) -> PensionProjection | None:
@@ -299,7 +299,7 @@ def calculate_pension_projection(
     end_annual_gross = _simulated_end_gross(
         annual_gross,
         income_growth_scenario,
-        future_annual_gross,
+        target_monthly_income,
         Decimal(months_to_target) / MONTHS_PER_YEAR,
     )
     work_ratio = Decimal(future_work_percentage) / HUNDRED

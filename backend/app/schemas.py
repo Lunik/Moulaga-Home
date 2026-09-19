@@ -1255,7 +1255,6 @@ class PensionProfileCreateOrUpdate(BaseModel):
     income_growth_scenario: Literal[
         "none", "regular", "strong_early", "strong_late"
     ] = "regular"
-    future_annual_gross: Decimal | None = Field(default=None, ge=0, **_MONEY)
     future_work_percentage: int = Field(default=100, ge=1, le=100)
     planned_unemployment_months: int = Field(default=0, ge=0, le=600)
     notes: str | None = Field(default=None, max_length=500)
@@ -1330,7 +1329,6 @@ class PensionProfileRead(BaseModel):
     income_growth_scenario: Literal[
         "none", "regular", "strong_early", "strong_late"
     ]
-    future_annual_gross: Decimal | None
     future_work_percentage: int
     planned_unemployment_months: int
     notes: str | None

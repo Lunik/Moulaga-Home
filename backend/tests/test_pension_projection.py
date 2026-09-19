@@ -176,7 +176,7 @@ def test_simulation_options_change_income_curve_and_pension():
         required_quarters=172,
         today=date(2026, 9, 17),
         income_growth_scenario="regular",
-        future_annual_gross=Decimal("72000.00"),
+        target_monthly_income=Decimal("6000.00"),
     )
     reduced = calculate_pension_projection(
         payslips,
@@ -187,7 +187,7 @@ def test_simulation_options_change_income_curve_and_pension():
         required_quarters=172,
         today=date(2026, 9, 17),
         income_growth_scenario="strong_late",
-        future_annual_gross=Decimal("72000.00"),
+        target_monthly_income=Decimal("6000.00"),
         future_work_percentage=80,
         planned_unemployment_months=12,
     )
@@ -222,7 +222,7 @@ def test_income_growth_presets_change_curve_shape():
             required_quarters=172,
             today=date(2026, 9, 17),
             income_growth_scenario=scenario,
-            future_annual_gross=Decimal("72000.00"),
+            target_monthly_income=Decimal("6000.00"),
         )
         for scenario in ("regular", "strong_early", "strong_late")
     }

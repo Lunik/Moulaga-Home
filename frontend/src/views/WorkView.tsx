@@ -708,9 +708,9 @@ export function WorkView({
                 icon="trend"
               />
               <MetricCard
-                label="Revenu mensuel cible"
+                label="Revenu brut mensuel cible"
                 value={money(pension.data?.target_monthly_income ?? '0.00')}
-                detail="Objectif souhaité"
+                detail="À temps plein en fin de carrière"
                 icon="wealth"
               />
             </section>
@@ -1314,7 +1314,6 @@ function PensionFormModal({
       estimated_monthly_pension: profile?.estimated_monthly_pension ?? '0.00',
       target_monthly_income: String(fd.get('target_monthly_income') || '0.00'),
       income_growth_scenario: profile?.income_growth_scenario ?? 'regular',
-      future_annual_gross: profile?.future_annual_gross ?? null,
       future_work_percentage: profile?.future_work_percentage ?? 100,
       planned_unemployment_months: profile?.planned_unemployment_months ?? 0,
       notes: fd.get('notes') ? String(fd.get('notes')) : null,
@@ -1373,8 +1372,11 @@ function PensionFormModal({
         </div>
 
         <div className="work-form-grid">
-          <Field label="Revenu mensuel cible (€)">
-            <FormInput type="number" step="0.01" name="target_monthly_income" defaultValue={profile?.target_monthly_income ?? '0.00'} />
+          <Field
+            label="Revenu brut mensuel cible à temps plein (€)"
+            hint="La simulation fera évoluer vos revenus vers ce montant à l’âge de départ cible."
+          >
+            <FormInput type="number" min="0" step="0.01" name="target_monthly_income" defaultValue={profile?.target_monthly_income ?? '0.00'} />
           </Field>
         </div>
 
@@ -1397,11 +1399,6 @@ function IncomeSimulationFormModal({
   onSuccess: () => void
 }) {
   const [error, setError] = useState<string | null>(null)
-  const [futureMonthlyGross, setFutureMonthlyGross] = useState(
-    profile?.future_annual_gross
-      ? (Number(profile.future_annual_gross) / 12).toFixed(2)
-      : '',
-  )
   const formId = 'work-income-simulation'
   const mutation = useMutation({
     mutationFn: (data: Partial<PensionProfile>) => apiPut('/work/pension', data),
@@ -1424,9 +1421,6 @@ function IncomeSimulationFormModal({
       income_growth_scenario: String(
         fd.get('income_growth_scenario') || 'regular',
       ) as PensionProfile['income_growth_scenario'],
-      future_annual_gross: futureMonthlyGross
-        ? (Number(futureMonthlyGross) * 12).toFixed(2)
-        : null,
       future_work_percentage: Number(fd.get('future_work_percentage') || 100),
       planned_unemployment_months: Number(fd.get('planned_unemployment_months') || 0),
       notes: profile?.notes ?? null,
@@ -1475,38 +1469,19 @@ function IncomeSimulationFormModal({
             ))}
           </div>
 
-          <div className="work-form-grid">
-            <Field
-              label="Revenu brut mensuel visé à temps plein (€)"
-              hint={`Laissez vide pour utiliser la progression automatique. Équivalent annuel : ${money(futureMonthlyGross ? Number(futureMonthlyGross) * 12 : Number(profile?.projection?.simulated_end_annual_gross || 0))}.`}
-            >
-              <FormInput
-                type="number"
-                min="0"
-                step="0.01"
-                value={futureMonthlyGross}
-                placeholder={
-                  profile?.projection?.simulated_end_annual_gross
-                    ? (Number(profile.projection.simulated_end_annual_gross) / 12).toFixed(2)
-                    : '0.00'
-                }
-                onChange={(event) => setFutureMonthlyGross(event.target.value)}
-              />
-            </Field>
-            <Field
-              label="Taux d’activité futur (%)"
-              hint="100 % pour un temps plein ; réduisez ce taux pour simuler un temps partiel."
-            >
-              <FormInput
-                type="number"
-                min="1"
-                max="100"
-                name="future_work_percentage"
-                defaultValue={profile?.future_work_percentage ?? 100}
-                required
-              />
-            </Field>
-          </div>
+          <Field
+            label="Taux d’activité futur (%)"
+            hint="100 % pour un temps plein ; réduisez ce taux pour simuler un temps partiel."
+          >
+            <FormInput
+              type="number"
+              min="1"
+              max="100"
+              name="future_work_percentage"
+              defaultValue={profile?.future_work_percentage ?? 100}
+              required
+            />
+          </Field>
 
           <Field
             label="Périodes de chômage prévues (mois)"
