@@ -381,6 +381,10 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         overview = client.get("/api/overview").json()
         assert float(overview["income_current_month"]) > 0
         assert float(overview["expenses_current_month"]) > 0
+        assert Decimal(overview["net_current_month"]) == (
+            Decimal(overview["income_current_month"])
+            - Decimal(overview["expenses_current_month"])
+        )
         assert client.get("/api/budget/overview").status_code == 200
         assert len(client.get("/api/stats/monthly").json()) == 12
 
