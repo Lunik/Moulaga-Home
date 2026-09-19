@@ -23,6 +23,7 @@ export type IconName =
   | 'grid'
   | 'home'
   | 'holdings'
+  | 'lock'
   | 'plus'
   | 'receipt'
   | 'recurring'
@@ -141,6 +142,12 @@ export function Icon({ name, className }: { name: IconName; className?: string }
       <>
         <path d="M4 19V9M10 19V5M16 19v-7M22 19V3" />
         <path d="M2 19h22" />
+      </>
+    ),
+    lock: (
+      <>
+        <rect x="4" y="10" width="16" height="11" rx="2" />
+        <path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" />
       </>
     ),
     plus: <path d="M12 5v14M5 12h14" />,

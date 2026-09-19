@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -11,6 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .common import add_month, local_today, money
 from .models import Account, BalanceSnapshot
+
+
+@dataclass(frozen=True)
+class AccountBalanceShare:
+    """The whole account balance and one profile's deterministic share."""
+
+    total: Decimal
+    profile_share: Decimal
+    owner_ids: tuple[int, ...]
 
 
 def missing_snapshot_periods(
@@ -125,3 +135,29 @@ async def account_balance(
         account_ids={account.id},
     )
     return balances.get(account.id, money(account.initial_balance))
+
+
+async def account_balance_shares(
+    session: AsyncSession,
+    profile_id: int,
+    *,
+    through: date | None = None,
+    account_ids: Collection[int] | None = None,
+) -> dict[int, AccountBalanceShare]:
+    """Return total balances and the active profile's shares for owned accounts."""
+    # Imported here to keep the low-level balance calculation independent from
+    # request/session authentication.
+    from .account_access import account_owner_ids, allocate_equal_shares, visible_account_ids
+
+    visible_ids = await visible_account_ids(session, profile_id)
+    ids = visible_ids if account_ids is None else visible_ids.intersection(account_ids)
+    totals = await account_balances(session, through=through, account_ids=ids)
+    result: dict[int, AccountBalanceShare] = {}
+    for account_id, total in totals.items():
+        owner_ids = tuple(await account_owner_ids(session, account_id))
+        result[account_id] = AccountBalanceShare(
+            total=total,
+            profile_share=allocate_equal_shares(total, owner_ids)[profile_id],
+            owner_ids=owner_ids,
+        )
+    return result

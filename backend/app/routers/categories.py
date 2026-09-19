@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_access import require_active_profile
 from ..category_budgeting import (
     ParentBudgetTooSmall,
     ensure_ancestor_budgets,
@@ -18,7 +19,7 @@ from ..category_budgeting import (
 )
 from ..common import add_month, local_today, money
 from ..db import get_session
-from ..models import Category, RecurringSeries
+from ..models import Category, HouseholdMember, RecurringSeries
 from ..recurring_budget import recurring_budget_occurrences
 from ..schemas import CategoryRead, CategoryRemovalResult, CategoryUpdate
 
@@ -67,7 +68,9 @@ async def _would_create_cycle(
 
 @router.get("/categories/{category_id}", response_model=CategoryRead)
 async def get_category(
-    category_id: int, session: AsyncSession = Depends(get_session)
+    category_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> CategoryRead:
     category = await session.get(Category, category_id)
     if category is None:
@@ -81,6 +84,7 @@ async def get_category(
 async def update_category(
     category_id: int,
     payload: CategoryUpdate,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> CategoryRead:
     category = await session.get(Category, category_id)
@@ -128,6 +132,7 @@ async def update_category(
 async def archive_category(
     category_id: int,
     archived: bool = True,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> CategoryRead:
     """Archive a category while preserving its recurring and child links."""
@@ -148,6 +153,7 @@ async def archive_category(
 @router.post("/categories/{category_id}/remove", response_model=CategoryRemovalResult)
 async def remove_category(
     category_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> CategoryRemovalResult:
     category = await session.get(Category, category_id)
@@ -177,6 +183,7 @@ async def remove_category(
 async def delete_category(
     category_id: int,
     replacement_category_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     category = await session.get(Category, category_id)

@@ -35,7 +35,9 @@ import type {
   PortfolioSummary,
   RealEstateAsset,
   RecurringSeries,
+  UserProfile,
 } from '../api/types'
+import { ProfileOwnership } from '../ProfileOwnership'
 import { supportsHoldings } from '../accountCapabilities'
 import { routeHash, type HoldingsTab, type Route, type WealthTab } from '../routing'
 import {
@@ -81,12 +83,16 @@ export function WealthView({
   holdingsTab = 'positions',
   focusId,
   accounts,
+  activeProfile,
+  profiles,
   navigate,
 }: {
   tab: WealthTab
   holdingsTab?: HoldingsTab
   focusId?: number
   accounts: Account[]
+  activeProfile: UserProfile
+  profiles: UserProfile[]
   navigate: (route: Route) => void
 }) {
   const tabsRef = useRef<HTMLElement>(null)
@@ -196,6 +202,8 @@ export function WealthView({
           assets={realEstate.data ?? []}
           debts={debts.data ?? []}
           focusId={focusId}
+          activeProfile={activeProfile}
+          profiles={profiles}
         />
       )}
       {tab === 'debts' && (
@@ -205,6 +213,8 @@ export function WealthView({
           assets={realEstate.data ?? []}
           focusId={focusId}
           recurringSeries={recurringSeries.data ?? []}
+          activeProfile={activeProfile}
+          profiles={profiles}
         />
       )}
     </div>
@@ -587,8 +597,8 @@ function HoldingsPanel({
           || (holding.symbol ?? '').toLocaleLowerCase('fr-FR').includes(normalized)
         const matchesAccount = accountId === 'all' || holding.account_id === Number(accountId)
         const matchesStatus = status === 'all'
-          || (status === 'open' && Number(holding.quantity) > 0)
-          || (status === 'closed' && Number(holding.quantity) === 0)
+          || (status === 'open' && Number(holding.active_profile_quantity ?? holding.quantity) > 0)
+          || (status === 'closed' && Number(holding.active_profile_quantity ?? holding.quantity) === 0)
         return matchesSearch
           && matchesAccount
           && matchesStatus
@@ -695,6 +705,13 @@ function HoldingRow({
   onEdit: () => void
   onShowOperations: () => void
 }) {
+  const account = accounts.find((candidate) => candidate.id === holding.account_id)
+  const quantity = holding.active_profile_quantity ?? holding.quantity
+  const marketValue = holding.active_profile_market_value ?? holding.market_value
+  const totalGain = holding.active_profile_total_gain ?? holding.total_gain
+  const realizedGain = holding.active_profile_realized_gain ?? holding.realized_gain
+  const unrealizedGain = holding.active_profile_unrealized_gain ?? holding.unrealized_gain
+  const shared = (account?.owner_profile_ids?.length ?? 0) > 1
   const remove = useMutation({
     mutationFn: () => apiDelete(`/holdings/${holding.id}`),
     onSuccess: onChanged,
@@ -705,28 +722,30 @@ function HoldingRow({
       <span className="holding-copy">
         <strong>{holding.name}</strong>
         <small>
-          {formatQuantity(holding.quantity, holding.asset_class)} unité{Number(holding.quantity) === 1 ? '' : 's'} ·{' '}
-          {accounts.find((account) => account.id === holding.account_id)?.name ?? `Compte ${holding.account_id}`}
+          {formatQuantity(quantity, holding.asset_class)} unité{Number(quantity) === 1 ? '' : 's'} ·{' '}
+          {account?.name ?? `Compte ${holding.account_id}`}
         </small>
+        {shared && <small>Position totale : {formatQuantity(holding.quantity, holding.asset_class)} unités</small>}
         <button className="holding-operation-count" type="button" onClick={onShowOperations}>
           {holding.operation_count} opération{holding.operation_count === 1 ? '' : 's'}
         </button>
       </span>
       <span className="holding-badges">
         <StatusBadge>{assetLabel(holding.asset_class)}</StatusBadge>
-        {Number(holding.quantity) === 0 && <StatusBadge tone="warning">Clôturée</StatusBadge>}
+        {Number(quantity) === 0 && <StatusBadge tone="warning">Clôturée</StatusBadge>}
       </span>
       <span className="holding-value">
-        <strong>{money(holding.market_value)}</strong>
+        <strong>{money(marketValue)}</strong>
+        {shared && <small>Valeur totale : {money(holding.market_value)}</small>}
         <small>Prix actuel : {money(holding.current_price)} / unité</small>
-        <small className={Number(holding.total_gain) >= 0 ? 'positive' : 'negative'}>
-          Total : {signedMoney(holding.total_gain, true)} · {holdingTotalGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+        <small className={Number(totalGain) >= 0 ? 'positive' : 'negative'}>
+          Total : {signedMoney(totalGain, true)} · {holdingTotalGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
         </small>
-        <small className={Number(holding.realized_gain) >= 0 ? 'positive' : 'negative'}>
-          Réalisé : {signedMoney(holding.realized_gain, true)} · {holdingRealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+        <small className={Number(realizedGain) >= 0 ? 'positive' : 'negative'}>
+          Réalisé : {signedMoney(realizedGain, true)} · {holdingRealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
         </small>
-        <small className={Number(holding.unrealized_gain) >= 0 ? 'positive' : 'negative'}>
-          Latent : {signedMoney(holding.unrealized_gain, true)} · {holdingUnrealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+        <small className={Number(unrealizedGain) >= 0 ? 'positive' : 'negative'}>
+          Latent : {signedMoney(unrealizedGain, true)} · {holdingUnrealizedGainPercent(holding).toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
         </small>
       </span>
       <span className="row-actions">
@@ -1400,10 +1419,14 @@ function RealEstatePanel({
   assets,
   debts,
   focusId,
+  activeProfile,
+  profiles,
 }: {
   assets: RealEstateAsset[]
   debts: Debt[]
   focusId?: number
+  activeProfile: UserProfile
+  profiles: UserProfile[]
 }) {
   const queryClient = useQueryClient()
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -1420,9 +1443,18 @@ function RealEstatePanel({
       return matchesSearch && (propertyType === 'all' || asset.property_type === propertyType)
     })
   }, [assets, propertyType, search])
-  const totalOwned = assets.reduce((sum, asset) => sum + Number(asset.owned_value), 0)
-  const totalDebt = assets.reduce((sum, asset) => sum + Number(asset.debt_balance), 0)
-  const totalEquity = totalOwned - totalDebt
+  const totalOwned = assets.reduce(
+    (sum, asset) => sum + Number(asset.active_profile_owned_value ?? asset.owned_value),
+    0,
+  )
+  const totalDebt = assets.reduce(
+    (sum, asset) => sum + Number(asset.active_profile_debt_balance ?? asset.debt_balance),
+    0,
+  )
+  const totalEquity = assets.reduce(
+    (sum, asset) => sum + Number(asset.active_profile_net_equity ?? asset.net_equity),
+    0,
+  )
   useLinkedEntityFocus('real-estate', focusId, assets.length > 0)
   const availableDebts = debts.filter(
     (debt) => !assets.some(
@@ -1463,6 +1495,8 @@ function RealEstatePanel({
         <RealEstateModal
           asset={editingAsset ?? undefined}
           debts={availableDebts}
+          activeProfile={activeProfile}
+          profiles={profiles}
           key={editingAsset?.id ?? 'new-property'}
           onClose={closeModal}
           onSaved={async () => {
@@ -1513,6 +1547,7 @@ function RealEstatePanel({
             {filtered.map((asset) => (
               <RealEstateRow
                 asset={asset}
+                activeProfile={activeProfile}
                 debts={asset.debts}
                 focused={focusId === asset.id}
                 key={asset.id}
@@ -1537,12 +1572,14 @@ function RealEstatePanel({
 
 function RealEstateRow({
   asset,
+  activeProfile,
   debts,
   focused,
   onChanged,
   onEdit,
 }: {
   asset: RealEstateAsset
+  activeProfile: UserProfile
   debts: RealEstateAsset['debts']
   focused: boolean
   onChanged: () => Promise<void>
@@ -1562,8 +1599,10 @@ function RealEstateRow({
     mutationFn: () => apiDelete(`/real-estate/${asset.id}`),
     onSuccess: onChanged,
   })
-  const gainPercent = Number(asset.owned_purchase_price) > 0
-    ? (Number(asset.gain) / Number(asset.owned_purchase_price)) * 100
+  const profilePurchasePrice = asset.active_profile_purchase_price ?? asset.owned_purchase_price
+  const profileGain = asset.active_profile_gain ?? asset.gain
+  const gainPercent = Number(profilePurchasePrice) > 0
+    ? (Number(profileGain) / Number(profilePurchasePrice)) * 100
     : 0
 
   return (
@@ -1601,18 +1640,22 @@ function RealEstateRow({
       </span>
       <span className="property-value">
         <small>{asset.current_value === null ? 'Valeur détenue au prix d’achat' : 'Valeur détenue'}</small>
-        <strong>{money(asset.owned_value)}</strong>
+        <strong>{money(asset.active_profile_owned_value ?? asset.owned_value)}</strong>
+        {asset.owners && asset.owners.length > 1 && (
+          <small>Valeur totale : {money(asset.total_owned_value ?? asset.owned_value)} · partagé avec {asset.owners.filter((owner) => owner.id !== activeProfile.id).map((owner) => owner.name).join(', ')}</small>
+        )}
         {asset.current_value === null ? (
           <small>Valeur actuelle non renseignée</small>
         ) : (
-          <small className={Number(asset.gain) >= 0 ? 'positive' : 'negative'}>
-            {signedMoney(asset.gain, true)} · {gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
+          <small className={Number(profileGain) >= 0 ? 'positive' : 'negative'}>
+            {signedMoney(profileGain, true)} · {gainPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}%
           </small>
         )}
       </span>
       <span className="property-equity">
         <small>Valeur nette</small>
-        <strong className={Number(asset.net_equity) >= 0 ? 'positive' : 'negative'}>{money(asset.net_equity)}</strong>
+        <strong className={Number(asset.active_profile_net_equity ?? asset.net_equity) >= 0 ? 'positive' : 'negative'}>{money(asset.active_profile_net_equity ?? asset.net_equity)}</strong>
+        {asset.owners && asset.owners.length > 1 && <small>Total : {money(asset.total_net_equity ?? asset.net_equity)}</small>}
         {debts.length > 0 && (
           <span className="linked-entities property-links">
             {debts.map((debt) => (
@@ -1703,11 +1746,15 @@ function RealEstateRow({
 function RealEstateModal({
   asset,
   debts,
+  activeProfile,
+  profiles,
   onClose,
   onSaved,
 }: {
   asset?: RealEstateAsset
   debts: Debt[]
+  activeProfile: UserProfile
+  profiles: UserProfile[]
   onClose: () => void
   onSaved: () => Promise<void>
 }) {
@@ -1719,6 +1766,7 @@ function RealEstateModal({
   const [currentValue, setCurrentValue] = useState(asset?.current_value ?? '')
   const [ownershipShare, setOwnershipShare] = useState(asset?.ownership_share ?? '100')
   const [debtIds, setDebtIds] = useState<number[]>(asset?.debt_ids ?? [])
+  const [ownerProfileIds, setOwnerProfileIds] = useState(asset?.owners?.map((owner) => owner.id) ?? [activeProfile.id])
   const [attachment, setAttachment] = useState<File | null>(null)
   const createdAssetId = useRef<number | null>(null)
   const mutation = useMutation({
@@ -1732,6 +1780,7 @@ function RealEstateModal({
         current_value: currentValue || null,
         ownership_share: ownershipShare,
         debt_ids: debtIds,
+        owner_profile_ids: ownerProfileIds,
       }
       const existingId = asset?.id ?? createdAssetId.current
       const savedAsset = await (existingId
@@ -1793,6 +1842,7 @@ function RealEstateModal({
         <Field label="Quote-part (%)">
           <FormInput type="number" min="0.01" max="100" step="0.01" value={ownershipShare} onChange={(event) => setOwnershipShare(event.target.value)} required />
         </Field>
+        <ProfileOwnership activeProfileId={activeProfile.id} onChange={setOwnerProfileIds} profiles={profiles} selectedIds={ownerProfileIds} />
         <div className="field real-estate-debt-field">
           <span>Emprunts associés</span>
           {debts.length > 0 ? (
@@ -1845,18 +1895,30 @@ function DebtsPanel({
   assets,
   focusId,
   recurringSeries,
+  activeProfile,
+  profiles,
 }: {
   accounts: Account[]
   debts: Debt[]
   assets: RealEstateAsset[]
   focusId?: number
   recurringSeries: RecurringSeries[]
+  activeProfile: UserProfile
+  profiles: UserProfile[]
 }) {
   const queryClient = useQueryClient()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [debtToEdit, setDebtToEdit] = useState<Debt | null>(null)
-  const total = debts.reduce((sum, debt) => sum + Number(debt.balance), 0)
-  const monthly = debts.reduce((sum, debt) => sum + Number(debt.minimum_payment ?? 0), 0)
+  const total = debts.reduce(
+    (sum, debt) => sum + Number(debt.active_profile_balance ?? debt.balance),
+    0,
+  )
+  const monthly = debts.reduce(
+    (sum, debt) => sum + Number(
+      debt.active_profile_minimum_payment ?? debt.minimum_payment ?? 0,
+    ),
+    0,
+  )
   useLinkedEntityFocus('debt', focusId, debts.length > 0)
   const refresh = async () => {
     await Promise.all([
@@ -1887,6 +1949,8 @@ function DebtsPanel({
       {showCreateModal && (
         <DebtModal
           accounts={accounts}
+          activeProfile={activeProfile}
+          profiles={profiles}
           recurringSeries={recurringSeries}
           onClose={() => setShowCreateModal(false)}
           onSaved={async () => {
@@ -1898,6 +1962,8 @@ function DebtsPanel({
       {debtToEdit && (
         <DebtModal
           accounts={accounts}
+          activeProfile={activeProfile}
+          profiles={profiles}
           debt={debtToEdit}
           key={debtToEdit.id}
           recurringSeries={recurringSeries}
@@ -1915,6 +1981,7 @@ function DebtsPanel({
               <DebtRow
                 asset={assets.find((asset) => asset.debt_ids.includes(debt.id))}
                 debt={debt}
+                activeProfile={activeProfile}
                 focused={focusId === debt.id}
                 key={debt.id}
                 onEdit={() => setDebtToEdit(debt)}
@@ -1934,6 +2001,7 @@ function DebtsPanel({
 function DebtRow({
   asset,
   debt,
+  activeProfile,
   focused,
   onEdit,
   onSaved,
@@ -1941,6 +2009,7 @@ function DebtRow({
 }: {
   asset?: RealEstateAsset
   debt: Debt
+  activeProfile: UserProfile
   focused: boolean
   onEdit: () => void
   onSaved: () => Promise<void>
@@ -1964,14 +2033,19 @@ function DebtRow({
           <StatusBadge>{debtTypeLabel(debt.debt_type)}</StatusBadge>
           {debt.archived && <StatusBadge tone="warning">Archivée</StatusBadge>}
         </span>
-        <strong className="negative">{money(debt.balance)}</strong>
+        <strong className="negative">{money(debt.active_profile_balance ?? debt.balance)}</strong>
       </div>
       <ProgressBar value={Number(debt.progress) * 100} color={debt.color ?? '#ff6b70'} />
       <div className="debt-meta">
         <span>{maskNumericValue(`${(Number(debt.progress) * 100).toLocaleString('fr-FR', { maximumFractionDigits: 0 })}%`)} remboursé</span>
-        {debt.minimum_payment !== null && <span>{money(debt.minimum_payment)} / mois</span>}
+        {debt.minimum_payment !== null && (
+          <span>{money(debt.active_profile_minimum_payment ?? debt.minimum_payment)} / mois</span>
+        )}
         {debt.interest_rate !== null && <span>Taux {maskNumericValue(`${Number(debt.interest_rate).toLocaleString('fr-FR')}%`)}</span>}
         {debt.due_date && <span>Fin prévue {formatDate(debt.due_date)}</span>}
+        {debt.owners && debt.owners.length > 1 && (
+          <span>Capital total : {money(debt.total_balance ?? debt.balance)} · partagé avec {debt.owners.filter((owner) => owner.id !== activeProfile.id).map((owner) => owner.name).join(', ')}</span>
+        )}
         {(asset || (debt.recurring_series_repayment_id || debt.recurring_series_insurance_id)) && (
           <span className="linked-entities debt-links">
             {asset && (
@@ -2050,12 +2124,16 @@ function DebtModal({
   accounts,
   debt,
   recurringSeries,
+  activeProfile,
+  profiles,
   onClose,
   onSaved,
 }: {
   accounts: Account[]
   debt?: Debt
   recurringSeries: RecurringSeries[]
+  activeProfile: UserProfile
+  profiles: UserProfile[]
   onClose: () => void
   onSaved: () => Promise<void>
 }) {
@@ -2072,6 +2150,7 @@ function DebtModal({
   const [color, setColor] = useState(debt?.color ?? '#ff6b70')
   const [archived, setArchived] = useState(debt?.archived ?? false)
   const [attachment, setAttachment] = useState<File | null>(null)
+  const [ownerProfileIds, setOwnerProfileIds] = useState(debt?.owners?.map((owner) => owner.id) ?? [activeProfile.id])
   const createdDebtId = useRef<number | null>(null)
   const mutation = useMutation({
     mutationFn: async () => {
@@ -2086,6 +2165,7 @@ function DebtModal({
         recurring_series_insurance_id: recurringSeriesInsuranceId ? Number(recurringSeriesInsuranceId) : null,
         due_date: dueDate ? monthBoundaryDate(dueDate, 'end') : null,
         color,
+        owner_profile_ids: ownerProfileIds,
         ...(debt ? { archived } : {}),
       }
       const existingId = debt?.id ?? createdDebtId.current
@@ -2186,6 +2266,9 @@ function DebtModal({
         <Field label="Couleur">
           <FormInput type="color" value={color} onChange={(event) => setColor(event.target.value)} />
         </Field>
+        <div className="debt-modal-wide">
+          <ProfileOwnership activeProfileId={activeProfile.id} onChange={setOwnerProfileIds} profiles={profiles} selectedIds={ownerProfileIds} />
+        </div>
         {debt && (
           <label className="toggle-row debt-modal-wide">
             <span>
@@ -2257,22 +2340,31 @@ function gainPercent(gain: string | number, costBasis: string | number): number 
 }
 
 function holdingTotalGainPercent(holding: Holding): number {
-  return gainPercent(holding.total_gain, holding.total_cost_basis)
+  return gainPercent(
+    holding.active_profile_total_gain ?? holding.total_gain,
+    holding.active_profile_total_cost_basis ?? holding.total_cost_basis,
+  )
 }
 
 function holdingRealizedGainPercent(holding: Holding): number {
-  return gainPercent(holding.realized_gain, holding.realized_cost_basis)
+  return gainPercent(
+    holding.active_profile_realized_gain ?? holding.realized_gain,
+    holding.active_profile_realized_cost_basis ?? holding.realized_cost_basis,
+  )
 }
 
 function holdingUnrealizedGainPercent(holding: Holding): number {
-  return gainPercent(holding.unrealized_gain, holding.unrealized_cost_basis)
+  return gainPercent(
+    holding.active_profile_unrealized_gain ?? holding.unrealized_gain,
+    holding.active_profile_unrealized_cost_basis ?? holding.unrealized_cost_basis,
+  )
 }
 
 function compareHoldings(left: Holding, right: Holding, sort: HoldingSort): number {
-  if (sort === 'market-value-desc') return Number(right.market_value) - Number(left.market_value)
-  if (sort === 'market-value-asc') return Number(left.market_value) - Number(right.market_value)
-  if (sort === 'gain-desc') return Number(right.total_gain) - Number(left.total_gain)
-  if (sort === 'gain-asc') return Number(left.total_gain) - Number(right.total_gain)
+  if (sort === 'market-value-desc') return Number(right.active_profile_market_value ?? right.market_value) - Number(left.active_profile_market_value ?? left.market_value)
+  if (sort === 'market-value-asc') return Number(left.active_profile_market_value ?? left.market_value) - Number(right.active_profile_market_value ?? right.market_value)
+  if (sort === 'gain-desc') return Number(right.active_profile_total_gain ?? right.total_gain) - Number(left.active_profile_total_gain ?? left.total_gain)
+  if (sort === 'gain-asc') return Number(left.active_profile_total_gain ?? left.total_gain) - Number(right.active_profile_total_gain ?? right.total_gain)
   if (sort === 'gain-percent-desc') return holdingTotalGainPercent(right) - holdingTotalGainPercent(left)
   if (sort === 'gain-percent-asc') return holdingTotalGainPercent(left) - holdingTotalGainPercent(right)
   return 0

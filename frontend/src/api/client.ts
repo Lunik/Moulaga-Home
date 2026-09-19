@@ -1,4 +1,12 @@
 const API_BASE = '/api'
+let profileSessionGeneration = 0
+
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
 
 export function apiGet<T>(path: string): Promise<T> {
   return apiRequest<T>(path)
@@ -24,6 +32,10 @@ export function apiUpload<T>(path: string, body: FormData): Promise<T> {
   return apiRequest<T>(path, { method: 'POST', body })
 }
 
+export function advanceProfileSessionGeneration(): void {
+  profileSessionGeneration += 1
+}
+
 export function queryString(values: Record<string, string | number | boolean | null | undefined>): string {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(values)) {
@@ -34,6 +46,7 @@ export function queryString(values: Record<string, string | number | boolean | n
 }
 
 async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const requestSessionGeneration = profileSessionGeneration
   const headers = new Headers(init.headers)
   if (init.body !== undefined && !(init.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json')
@@ -58,9 +71,25 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
         throw new Error(message, { cause: error })
       }
     }
-    throw new Error(message)
+    const isSessionBootstrap = path === '/profiles/session' || path === '/profile-session'
+    if (
+      response.status === 401
+      && !isSessionBootstrap
+      && requestSessionGeneration === profileSessionGeneration
+      && typeof window !== 'undefined'
+    ) {
+      advanceProfileSessionGeneration()
+      window.dispatchEvent(new Event('moulaga:profile-session-ended'))
+    }
+    throw new ApiError(message, response.status)
   }
 
+  const changesProfileSession = init.method === 'POST' && (
+    path === '/profiles/lock'
+    || path === '/profile-session/lock'
+    || /^\/profiles\/\d+\/select$/.test(path)
+  )
+  if (changesProfileSession) advanceProfileSessionGeneration()
   if (!text) return undefined as T
   try {
     return JSON.parse(text) as T

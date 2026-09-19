@@ -11,10 +11,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ..account_access import require_account, require_active_profile
 from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import local_today
 from ..db import get_session
 from ..models import (
+    HouseholdMember,
     PaySlip,
     PaySlipAttachment,
     PensionProfile,
@@ -89,8 +91,20 @@ def _pension_read(
     )
 
 
+async def _require_visible_recurring_series(
+    session: AsyncSession,
+    recurring_series_id: int,
+    profile_id: int,
+) -> None:
+    series = await session.get(RecurringSeries, recurring_series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="Récurrence budgetaire non trouvee")
+    await require_account(session, series.account_id, profile_id=profile_id)
+
+
 @router.get("/summary", response_model=WorkSummary)
 async def get_work_summary(
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> WorkSummary:
     today = local_today()
@@ -98,13 +112,18 @@ async def get_work_summary(
 
     # Active contracts
     res_contracts = await session.execute(
-        select(WorkContract).where(WorkContract.status == "active")
+        select(WorkContract).where(
+            WorkContract.profile_id == profile.id,
+            WorkContract.status == "active",
+        )
     )
     active_contracts = res_contracts.scalars().all()
 
     # Payslips
     res_slips = await session.execute(
-        select(PaySlip).order_by(PaySlip.period.desc())
+        select(PaySlip)
+        .where(PaySlip.profile_id == profile.id)
+        .order_by(PaySlip.period.desc())
     )
     slips = res_slips.scalars().all()
 
@@ -126,7 +145,9 @@ async def get_work_summary(
         avg_pas = ZERO
 
     # Pension
-    res_pension = await session.execute(select(PensionProfile).limit(1))
+    res_pension = await session.execute(
+        select(PensionProfile).where(PensionProfile.profile_id == profile.id)
+    )
     pension = res_pension.scalar_one_or_none()
 
     declared_val_q = pension.validated_quarters if pension else 0
@@ -192,11 +213,13 @@ def _contract_read(contract: WorkContract) -> WorkContractRead:
 
 @router.get("/contracts", response_model=list[WorkContractRead])
 async def list_contracts(
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[WorkContractRead]:
     res = await session.execute(
         select(WorkContract)
         .options(selectinload(WorkContract.attachments))
+        .where(WorkContract.profile_id == profile.id)
         .order_by(WorkContract.status.asc(), WorkContract.start_date.desc())
     )
     return [_contract_read(contract) for contract in res.scalars().all()]
@@ -205,19 +228,27 @@ async def list_contracts(
 @router.post("/contracts", response_model=WorkContractRead, status_code=201)
 async def create_contract(
     data: WorkContractCreate,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> WorkContractRead:
     payload = data.model_dump()
     recurring_series_id = payload.get("recurring_series_id")
-    if recurring_series_id is not None and not await session.get(RecurringSeries, recurring_series_id):
-        raise HTTPException(status_code=404, detail="Récurrence budgetaire non trouvee")
-    contract = WorkContract(**payload)
+    if recurring_series_id is not None:
+        await _require_visible_recurring_series(
+            session,
+            recurring_series_id,
+            profile.id,
+        )
+    contract = WorkContract(profile_id=profile.id, **payload)
     session.add(contract)
     await session.commit()
     res = await session.execute(
         select(WorkContract)
         .options(selectinload(WorkContract.attachments))
-        .where(WorkContract.id == contract.id)
+        .where(
+            WorkContract.id == contract.id,
+            WorkContract.profile_id == profile.id,
+        )
     )
     return _contract_read(res.scalar_one())
 
@@ -225,13 +256,17 @@ async def create_contract(
 @router.get("/contracts/{contract_id}", response_model=WorkContractRead)
 async def get_contract(
     contract_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> WorkContractRead:
     contract = (
         await session.execute(
             select(WorkContract)
             .options(selectinload(WorkContract.attachments))
-            .where(WorkContract.id == contract_id)
+            .where(
+                WorkContract.id == contract_id,
+                WorkContract.profile_id == profile.id,
+            )
         )
     ).scalar_one_or_none()
     if not contract:
@@ -243,13 +278,17 @@ async def get_contract(
 async def update_contract(
     contract_id: int,
     data: WorkContractUpdate,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> WorkContractRead:
     contract = (
         await session.execute(
             select(WorkContract)
             .options(selectinload(WorkContract.attachments))
-            .where(WorkContract.id == contract_id)
+            .where(
+                WorkContract.id == contract_id,
+                WorkContract.profile_id == profile.id,
+            )
         )
     ).scalar_one_or_none()
     if not contract:
@@ -259,9 +298,12 @@ async def update_contract(
     if (
         "recurring_series_id" in payload
         and payload["recurring_series_id"] is not None
-        and not await session.get(RecurringSeries, payload["recurring_series_id"])
     ):
-        raise HTTPException(status_code=404, detail="Récurrence budgetaire non trouvee")
+        await _require_visible_recurring_series(
+            session,
+            payload["recurring_series_id"],
+            profile.id,
+        )
     for key, value in payload.items():
         setattr(contract, key, value)
 
@@ -273,13 +315,17 @@ async def update_contract(
 @router.delete("/contracts/{contract_id}", status_code=204)
 async def delete_contract(
     contract_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     contract = (
         await session.execute(
             select(WorkContract)
             .options(selectinload(WorkContract.attachments))
-            .where(WorkContract.id == contract_id)
+            .where(
+                WorkContract.id == contract_id,
+                WorkContract.profile_id == profile.id,
+            )
         )
     ).scalar_one_or_none()
     if not contract:
@@ -298,9 +344,15 @@ async def delete_contract(
 async def upload_contract_attachment(
     contract_id: int,
     file: UploadFile = File(...),
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> WorkContractAttachment:
-    contract = await session.get(WorkContract, contract_id)
+    contract = await session.scalar(
+        select(WorkContract).where(
+            WorkContract.id == contract_id,
+            WorkContract.profile_id == profile.id,
+        )
+    )
     if not contract:
         raise HTTPException(status_code=404, detail="Contrat non trouve")
 
@@ -324,9 +376,16 @@ async def upload_contract_attachment(
 )
 async def list_contract_attachments(
     contract_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[WorkContractAttachment]:
-    if await session.get(WorkContract, contract_id) is None:
+    contract = await session.scalar(
+        select(WorkContract).where(
+            WorkContract.id == contract_id,
+            WorkContract.profile_id == profile.id,
+        )
+    )
+    if contract is None:
         raise HTTPException(status_code=404, detail="Contrat non trouve")
     return list(
         (
@@ -346,12 +405,16 @@ async def _require_contract_attachment(
     session: AsyncSession,
     contract_id: int,
     attachment_id: int,
+    profile_id: int,
 ) -> WorkContractAttachment:
     attachment = (
         await session.execute(
-            select(WorkContractAttachment).where(
+            select(WorkContractAttachment)
+            .join(WorkContract)
+            .where(
                 WorkContractAttachment.id == attachment_id,
                 WorkContractAttachment.contract_id == contract_id,
+                WorkContract.profile_id == profile_id,
             )
         )
     ).scalar_one_or_none()
@@ -379,12 +442,14 @@ def _contract_attachment_response(
 async def download_contract_attachment(
     contract_id: int,
     attachment_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
     attachment = await _require_contract_attachment(
         session,
         contract_id,
         attachment_id,
+        profile.id,
     )
     return _contract_attachment_response(attachment)
 
@@ -396,12 +461,14 @@ async def download_contract_attachment(
 async def delete_contract_attachment(
     contract_id: int,
     attachment_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     attachment = await _require_contract_attachment(
         session,
         contract_id,
         attachment_id,
+        profile.id,
     )
     remove_attachment(attachment.stored_path)
     await session.delete(attachment)
@@ -413,10 +480,14 @@ async def delete_contract_attachment(
 # --------------------------------------------------------------------------- #
 @router.get("/payslips", response_model=list[PaySlipRead])
 async def list_payslips(
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[PaySlip]:
     res = await session.execute(
-        select(PaySlip).options(selectinload(PaySlip.attachments)).order_by(PaySlip.period.desc())
+        select(PaySlip)
+        .options(selectinload(PaySlip.attachments))
+        .where(PaySlip.profile_id == profile.id)
+        .order_by(PaySlip.period.desc())
     )
     return list(res.scalars().all())
 
@@ -424,18 +495,26 @@ async def list_payslips(
 @router.post("/payslips", response_model=PaySlipRead, status_code=201)
 async def create_payslip(
     data: PaySlipCreate,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> PaySlip:
     if data.contract_id:
-        contract = await session.get(WorkContract, data.contract_id)
+        contract = await session.scalar(
+            select(WorkContract).where(
+                WorkContract.id == data.contract_id,
+                WorkContract.profile_id == profile.id,
+            )
+        )
         if not contract:
             raise HTTPException(status_code=404, detail="Contrat non trouve")
 
-    payslip = PaySlip(**data.model_dump())
+    payslip = PaySlip(profile_id=profile.id, **data.model_dump())
     session.add(payslip)
     await session.commit()
     res = await session.execute(
-        select(PaySlip).options(selectinload(PaySlip.attachments)).where(PaySlip.id == payslip.id)
+        select(PaySlip)
+        .options(selectinload(PaySlip.attachments))
+        .where(PaySlip.id == payslip.id, PaySlip.profile_id == profile.id)
     )
     return res.scalar_one()
 
@@ -443,10 +522,13 @@ async def create_payslip(
 @router.get("/payslips/{payslip_id}", response_model=PaySlipRead)
 async def get_payslip(
     payslip_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> PaySlip:
     res = await session.execute(
-        select(PaySlip).options(selectinload(PaySlip.attachments)).where(PaySlip.id == payslip_id)
+        select(PaySlip)
+        .options(selectinload(PaySlip.attachments))
+        .where(PaySlip.id == payslip_id, PaySlip.profile_id == profile.id)
     )
     payslip = res.scalar_one_or_none()
     if not payslip:
@@ -458,10 +540,13 @@ async def get_payslip(
 async def update_payslip(
     payslip_id: int,
     data: PaySlipUpdate,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> PaySlip:
     res = await session.execute(
-        select(PaySlip).options(selectinload(PaySlip.attachments)).where(PaySlip.id == payslip_id)
+        select(PaySlip)
+        .options(selectinload(PaySlip.attachments))
+        .where(PaySlip.id == payslip_id, PaySlip.profile_id == profile.id)
     )
     payslip = res.scalar_one_or_none()
     if not payslip:
@@ -469,7 +554,12 @@ async def update_payslip(
 
     payload = data.model_dump(exclude_unset=True)
     if "contract_id" in payload and payload["contract_id"] is not None:
-        contract = await session.get(WorkContract, payload["contract_id"])
+        contract = await session.scalar(
+            select(WorkContract).where(
+                WorkContract.id == payload["contract_id"],
+                WorkContract.profile_id == profile.id,
+            )
+        )
         if not contract:
             raise HTTPException(status_code=404, detail="Contrat non trouve")
 
@@ -478,7 +568,9 @@ async def update_payslip(
 
     await session.commit()
     res = await session.execute(
-        select(PaySlip).options(selectinload(PaySlip.attachments)).where(PaySlip.id == payslip_id)
+        select(PaySlip)
+        .options(selectinload(PaySlip.attachments))
+        .where(PaySlip.id == payslip_id, PaySlip.profile_id == profile.id)
     )
     return res.scalar_one()
 
@@ -486,10 +578,13 @@ async def update_payslip(
 @router.delete("/payslips/{payslip_id}", status_code=204)
 async def delete_payslip(
     payslip_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     res = await session.execute(
-        select(PaySlip).options(selectinload(PaySlip.attachments)).where(PaySlip.id == payslip_id)
+        select(PaySlip)
+        .options(selectinload(PaySlip.attachments))
+        .where(PaySlip.id == payslip_id, PaySlip.profile_id == profile.id)
     )
     payslip = res.scalar_one_or_none()
     if not payslip:
@@ -506,9 +601,15 @@ async def delete_payslip(
 async def upload_payslip_attachment(
     payslip_id: int,
     file: UploadFile = File(...),
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> PaySlipAttachment:
-    payslip = await session.get(PaySlip, payslip_id)
+    payslip = await session.scalar(
+        select(PaySlip).where(
+            PaySlip.id == payslip_id,
+            PaySlip.profile_id == profile.id,
+        )
+    )
     if not payslip:
         raise HTTPException(status_code=404, detail="Fiche de paie non trouvee")
 
@@ -532,9 +633,16 @@ async def upload_payslip_attachment(
 )
 async def list_payslip_attachments(
     payslip_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[PaySlipAttachment]:
-    if await session.get(PaySlip, payslip_id) is None:
+    payslip = await session.scalar(
+        select(PaySlip).where(
+            PaySlip.id == payslip_id,
+            PaySlip.profile_id == profile.id,
+        )
+    )
+    if payslip is None:
         raise HTTPException(status_code=404, detail="Fiche de paie non trouvee")
     return list(
         (
@@ -551,12 +659,16 @@ async def _require_payslip_attachment(
     session: AsyncSession,
     payslip_id: int,
     attachment_id: int,
+    profile_id: int,
 ) -> PaySlipAttachment:
     attachment = (
         await session.execute(
-            select(PaySlipAttachment).where(
+            select(PaySlipAttachment)
+            .join(PaySlip)
+            .where(
                 PaySlipAttachment.id == attachment_id,
                 PaySlipAttachment.payslip_id == payslip_id,
+                PaySlip.profile_id == profile_id,
             )
         )
     ).scalar_one_or_none()
@@ -580,12 +692,14 @@ def _attachment_response(attachment: PaySlipAttachment) -> FileResponse:
 async def download_payslip_attachment(
     payslip_id: int,
     attachment_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
     attachment = await _require_payslip_attachment(
         session,
         payslip_id,
         attachment_id,
+        profile.id,
     )
     return _attachment_response(attachment)
 
@@ -597,12 +711,14 @@ async def download_payslip_attachment(
 async def delete_nested_payslip_attachment(
     payslip_id: int,
     attachment_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     attachment = await _require_payslip_attachment(
         session,
         payslip_id,
         attachment_id,
+        profile.id,
     )
     remove_attachment(attachment.stored_path)
     await session.delete(attachment)
@@ -612,9 +728,17 @@ async def delete_nested_payslip_attachment(
 @router.get("/attachments/{attachment_id}")
 async def get_payslip_attachment(
     attachment_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
-    att = await session.get(PaySlipAttachment, attachment_id)
+    att = await session.scalar(
+        select(PaySlipAttachment)
+        .join(PaySlip)
+        .where(
+            PaySlipAttachment.id == attachment_id,
+            PaySlip.profile_id == profile.id,
+        )
+    )
     if not att:
         raise HTTPException(status_code=404, detail="Piece jointe non trouvee")
     return _attachment_response(att)
@@ -623,9 +747,17 @@ async def get_payslip_attachment(
 @router.delete("/attachments/{attachment_id}", status_code=204)
 async def delete_payslip_attachment(
     attachment_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    att = await session.get(PaySlipAttachment, attachment_id)
+    att = await session.scalar(
+        select(PaySlipAttachment)
+        .join(PaySlip)
+        .where(
+            PaySlipAttachment.id == attachment_id,
+            PaySlip.profile_id == profile.id,
+        )
+    )
     if not att:
         raise HTTPException(status_code=404, detail="Piece jointe non trouvee")
 
@@ -639,35 +771,45 @@ async def delete_payslip_attachment(
 # --------------------------------------------------------------------------- #
 @router.get("/pension", response_model=PensionProfileRead)
 async def get_pension_profile(
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> PensionProfileRead:
-    res = await session.execute(select(PensionProfile).limit(1))
-    profile = res.scalar_one_or_none()
-    if not profile:
-        profile = PensionProfile()
-        session.add(profile)
+    res = await session.execute(
+        select(PensionProfile).where(PensionProfile.profile_id == profile.id)
+    )
+    pension_profile = res.scalar_one_or_none()
+    if not pension_profile:
+        pension_profile = PensionProfile(profile_id=profile.id)
+        session.add(pension_profile)
         await session.commit()
-        await session.refresh(profile)
-    res_slips = await session.execute(select(PaySlip))
-    return _pension_read(profile, list(res_slips.scalars().all()))
+        await session.refresh(pension_profile)
+    res_slips = await session.execute(
+        select(PaySlip).where(PaySlip.profile_id == profile.id)
+    )
+    return _pension_read(pension_profile, list(res_slips.scalars().all()))
 
 
 @router.put("/pension", response_model=PensionProfileRead)
 async def update_pension_profile(
     data: PensionProfileCreateOrUpdate,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> PensionProfileRead:
-    res = await session.execute(select(PensionProfile).limit(1))
-    profile = res.scalar_one_or_none()
-    if not profile:
-        profile = PensionProfile()
-        session.add(profile)
+    res = await session.execute(
+        select(PensionProfile).where(PensionProfile.profile_id == profile.id)
+    )
+    pension_profile = res.scalar_one_or_none()
+    if not pension_profile:
+        pension_profile = PensionProfile(profile_id=profile.id)
+        session.add(pension_profile)
 
     for key, value in data.model_dump().items():
-        setattr(profile, key, value)
+        setattr(pension_profile, key, value)
 
-    profile.updated_at = datetime.now()
+    pension_profile.updated_at = datetime.now()
     await session.commit()
-    await session.refresh(profile)
-    res_slips = await session.execute(select(PaySlip))
-    return _pension_read(profile, list(res_slips.scalars().all()))
+    await session.refresh(pension_profile)
+    res_slips = await session.execute(
+        select(PaySlip).where(PaySlip.profile_id == profile.id)
+    )
+    return _pension_read(pension_profile, list(res_slips.scalars().all()))

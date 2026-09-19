@@ -60,32 +60,34 @@ type PaySlipListItem =
 export function WorkView({
   tab,
   navigate,
+  profileId,
 }: {
   tab: WorkTab
   navigate: (route: Route) => void
+  profileId: number
 }) {
   const queryClient = useQueryClient()
   const tabsRef = useRef<HTMLElement>(null)
 
   // Queries
   const summary = useQuery({
-    queryKey: ['work-summary'],
+    queryKey: ['work-summary', profileId],
     queryFn: () => apiGet<WorkSummary>('/work/summary'),
   })
   const contracts = useQuery({
-    queryKey: ['work-contracts'],
+    queryKey: ['work-contracts', profileId],
     queryFn: () => apiGet<WorkContract[]>('/work/contracts'),
   })
   const recurringSeries = useQuery({
-    queryKey: ['recurring-series'],
+    queryKey: ['recurring-series', profileId],
     queryFn: () => apiGet<RecurringSeries[]>('/recurring'),
   })
   const payslips = useQuery({
-    queryKey: ['work-payslips'],
+    queryKey: ['work-payslips', profileId],
     queryFn: () => apiGet<PaySlip[]>('/work/payslips'),
   })
   const pension = useQuery({
-    queryKey: ['work-pension'],
+    queryKey: ['work-pension', profileId],
     queryFn: () => apiGet<PensionProfile>('/work/pension'),
   })
   const firstError = [

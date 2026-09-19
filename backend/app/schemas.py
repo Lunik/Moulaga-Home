@@ -62,6 +62,7 @@ class AccountCreate(BaseModel):
         default=None, ge=0, le=100, max_digits=6, decimal_places=3
     )
     legal_cap: Decimal | None = Field(default=None, ge=0, **_MONEY)
+    owner_profile_ids: list[int] | None = None
 
     @field_validator("name", "type", "currency")
     @classmethod
@@ -101,6 +102,9 @@ class AccountRead(AccountCreate):
     id: int
     archived: bool = False
     balance: Decimal = Decimal("0.00")
+    total_balance: Decimal = Decimal("0.00")
+    profile_share: Decimal = Decimal("0.00")
+    owner_profile_ids: list[int] = Field(default_factory=list)
     missing_snapshot_periods: list[str] = Field(default_factory=list)
 
 
@@ -120,6 +124,7 @@ class AccountUpdate(BaseModel):
         default=None, ge=0, le=100, max_digits=6, decimal_places=3
     )
     legal_cap: Decimal | None = Field(default=None, ge=0, **_MONEY)
+    owner_profile_ids: list[int] | None = None
 
     @field_validator("name", "type", "currency")
     @classmethod
@@ -488,6 +493,8 @@ class RecurringRead(BaseModel):
     account_name: str = ""
     category_name: str | None = None
     attachment_count: int = 0
+    total_amount: Decimal | None = None
+    profile_share: Decimal | None = None
 
 
 class RecurringSeriesAttachmentRead(BaseModel):
@@ -834,8 +841,17 @@ class HoldingRead(BaseModel):
     total_gain: Decimal
     gain: Decimal
     operation_count: int
+    active_profile_quantity: Decimal
+    active_profile_cost_basis: Decimal
+    active_profile_unrealized_cost_basis: Decimal
+    active_profile_realized_cost_basis: Decimal
+    active_profile_total_cost_basis: Decimal
+    active_profile_market_value: Decimal
+    active_profile_unrealized_gain: Decimal
+    active_profile_realized_gain: Decimal
+    active_profile_total_gain: Decimal
 
-    @field_serializer("quantity")
+    @field_serializer("quantity", "active_profile_quantity")
     def serialize_quantity(self, value: Decimal) -> str:
         return _serialize_quantity(value)
 
@@ -1045,6 +1061,87 @@ class MemberCreate(BaseModel):
 class MemberUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     role: str | None = Field(default=None, pattern=_ROLE)
+
+
+class ProfileRead(BaseModel):
+    """Public profile tile and active-session representation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    avatar: str | None
+    color: str
+    role: Literal["admin", "member"]
+    active: bool
+    has_pin: bool = False
+
+
+class ProfileCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    avatar: str | None = Field(default=None, max_length=512)
+    color: str = Field(default="#4f46e5", pattern=HEX_COLOR)
+    pin: str | None = Field(default=None, pattern=r"^\d{4,12}$")
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        return _strip_required(value)
+
+    @field_validator("avatar")
+    @classmethod
+    def strip_avatar(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    avatar: str | None = Field(default=None, max_length=512)
+    color: str | None = Field(default=None, pattern=HEX_COLOR)
+    pin: str | None = Field(default=None, pattern=r"^\d{4,12}$")
+    active: bool | None = None
+    role: Literal["admin", "member"] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str | None) -> str | None:
+        if value is None:
+            raise ValueError("Ce champ ne peut pas etre nul")
+        return _strip_required(value)
+
+    @field_validator("color", "active", "role")
+    @classmethod
+    def reject_null_required_profile_fields(cls, value):
+        if value is None:
+            raise ValueError("Ce champ ne peut pas etre nul")
+        return value
+
+    @field_validator("avatar")
+    @classmethod
+    def strip_avatar(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
+class ProfileSelectRequest(BaseModel):
+    pin: str | None = Field(default=None, pattern=r"^\d{4,12}$")
+
+
+class ProfileSessionRead(BaseModel):
+    profile: ProfileRead
+
+
+class ProfileOwnershipRead(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    real_estate_asset_ids: list[int] = Field(default_factory=list)
+    debt_ids: list[int] = Field(default_factory=list)
+    work_contract_ids: list[int] = Field(default_factory=list)
+    pay_slip_ids: list[int] = Field(default_factory=list)
+    pension_profile_ids: list[int] = Field(default_factory=list)
+
+
+class ProfileOwnerRead(BaseModel):
+    profile_id: int
+    weight: Decimal
 
 
 class SharedLinkCreate(BaseModel):

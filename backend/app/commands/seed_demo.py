@@ -28,10 +28,11 @@ from io import BytesIO
 from pathlib import Path
 
 from fastapi import UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import models
 from ..attachments import remove_attachment, store_attachment
 from ..common import add_month, money
 from ..config import settings
@@ -54,7 +55,6 @@ from ..models import (
     Holding,
     HoldingOperation,
     Household,
-    HouseholdMember,
     PaySlip,
     PaySlipAttachment,
     PensionProfile,
@@ -64,10 +64,10 @@ from ..models import (
     RealEstateDebtLink,
     RecurringSeries,
     RecurringSeriesAttachment,
-    SharedAccountLink,
     WorkContract,
     WorkContractAttachment,
 )
+from ..routers.profiles import hash_pin
 from ..snapshot_import import parse_snapshot_tsv
 
 DEFAULT_DATA_DIR = Path("/data")
@@ -89,6 +89,7 @@ class SeedResult:
     holding_operations: int
     contributions: int
     households: int
+    profiles: int
     goals: int
     portfolio_snapshots: int
     snapshot_attachments: int
@@ -161,6 +162,94 @@ async def _remove_attachment_files(session: AsyncSession) -> None:
 
 async def _store_demo_file(filename: str, payload: bytes) -> tuple[str, str, int]:
     return await store_attachment(UploadFile(BytesIO(payload), filename=filename))
+
+
+def _mapped_fields(model: type[object]) -> set[str]:
+    """Return mapped attribute names without coupling the seed to WIP models."""
+    mapper = getattr(model, "__mapper__", None)
+    return {attribute.key for attribute in mapper.attrs} if mapper is not None else set()
+
+
+def _model_instance(model: type[object], **values: object) -> object:
+    fields = _mapped_fields(model)
+    return model(**{key: value for key, value in values.items() if key in fields})
+
+
+def _profile_model() -> type[object]:
+    """Use HouseholdMember, the stable model name for local profiles."""
+    profile_model = getattr(models, "HouseholdMember", None) or getattr(
+        models, "Profile", None
+    )
+    if profile_model is None:
+        raise SeedError("Le modele de profil multi-utilisateur est introuvable.")
+    return profile_model
+
+
+async def _link_resource_owners(
+    session: AsyncSession,
+    resource: object,
+    profiles: Sequence[object],
+    link_model_names: Sequence[str],
+) -> None:
+    """Seed equal ownership when the multi-profile ownership links are available.
+
+    The parallel foundation work owns these models.  The explicit aliases retain
+    a runnable legacy seed while accepting the anticipated AccountOwner,
+    DebtOwner and RealEstateAssetOwner names without persisting duplicate data.
+    """
+    link_model = next(
+        (
+            getattr(models, name)
+            for name in link_model_names
+            if getattr(models, name, None) is not None
+        ),
+        None,
+    )
+    if link_model is None:
+        return
+    resource_fields = _mapped_fields(type(resource))
+    link_fields = _mapped_fields(link_model)
+    resource_id_name = next(
+        (
+            field
+            for field in ("account_id", "debt_id", "asset_id", "real_estate_asset_id")
+            if field in link_fields and "id" in resource_fields
+        ),
+        None,
+    )
+    profile_id_name = next(
+        (field for field in ("member_id", "profile_id") if field in link_fields),
+        None,
+    )
+    if resource_id_name is None or profile_id_name is None:
+        raise SeedError(
+            f"Le lien de propriete {link_model.__name__} ne respecte pas le contrat multi-utilisateur."
+        )
+    # The migration's compatibility trigger grants a newly-created resource to
+    # the first profile. Replace that temporary owner so the demo remains
+    # deterministic and can model private as well as shared resources.
+    await session.execute(
+        delete(link_model).where(
+            getattr(link_model, resource_id_name) == resource.id
+        )
+    )
+    for profile in profiles:
+        values: dict[str, object] = {
+            resource_id_name: resource.id,
+            profile_id_name: profile.id,
+        }
+        if "weight" in link_fields:
+            values["weight"] = Decimal("1")
+        session.add(_model_instance(link_model, **values))
+    await session.flush()
+
+
+def _assign_profile(resource: object, profile: object) -> None:
+    """Associate person-only records when the parallel profile field exists."""
+    for field in ("profile_id", "member_id"):
+        if field in _mapped_fields(type(resource)):
+            setattr(resource, field, profile.id)
+            return
 
 
 async def seed_demo(reset: bool = False) -> SeedResult:
@@ -248,13 +337,42 @@ async def _seed(
     transport = categories[("Transport", "expense")]
     transport.monthly_budget = None
 
+    # The technical household remains a singleton while profiles replace its
+    # former sharing role.  Names, employers and balances below are invented.
+    household = Household(name="Foyer de demonstration")
+    session.add(household)
+    await session.flush()
+    profile_model = _profile_model()
+    profile_values = (
+        ("Alice demo", "#4f46e5", "admin", None),
+        ("Bob demo", "#16a34a", "member", None),
+        ("Chloe demo", "#f59e0b", "member", hash_pin("1234")),
+    )
+    profiles = []
+    for name, color, role, pin_hash in profile_values:
+        profile = _model_instance(
+            profile_model,
+            household_id=household.id,
+            name=name,
+            color=color,
+            avatar_color=color,
+            role=role,
+            pin_hash=pin_hash,
+            archived=False,
+            active=True,
+        )
+        session.add(profile)
+        profiles.append(profile)
+    await session.flush()
+    alice, bob, chloe = profiles
+
     # Keep enough active accounts with varied balances to exercise dashboard
     # scrolling and descending balance sorting.
     # --- Accounts --------------------------------------------------------- #
     checking = await session.scalar(select(Account).where(Account.name == "Compte courant"))
     if checking is None:
         raise SeedError("Le compte local initial est introuvable.")
-    checking.name = "Compte courant demo"
+    checking.name = "Compte personnel Alice demo"
     checking.type = "checking"
     checking.currency = "EUR"
     checking.initial_balance = money("1200.00")
@@ -286,9 +404,14 @@ async def _seed(
         account_number="DEMO-PERCOL-001",
     )
     boursobank_checking = Account(
-        name="Compte courant Boursobank demo", type="checking", currency="EUR",
+        name="Compte personnel Bob demo", type="checking", currency="EUR",
         initial_balance=money("2150.00"), institution="Boursobank", color="#d9f99d",
         account_number="DEMO-BOURSO-COURANT-001",
+    )
+    joint_checking = Account(
+        name="Compte joint Alice Bob demo", type="checking", currency="EUR",
+        initial_balance=money("3400.00"), institution="Banque commune démo",
+        account_number="DEMO-JOINT-001", color="#0f766e",
     )
     life_insurance = Account(
         name="Assurance vie Boursobank demo", type="life_insurance", currency="EUR",
@@ -306,9 +429,9 @@ async def _seed(
         account_number="DEMO-ARCHIVE-001", archived=True,
     )
     sandbox = Account(
-        name="Compte bac a sable demo", type="cash", currency="EUR",
-        initial_balance=money("125.00"), color="#0ea5e9",
-        account_number="DEMO-SANDBOX-001",
+        name="Compte partage arrondi demo", type="cash", currency="EUR",
+        initial_balance=money("100.00"), color="#0ea5e9",
+        account_number="DEMO-ARRONDI-001",
     )
     session.add_all(
         [
@@ -317,6 +440,7 @@ async def _seed(
             peg,
             percol,
             boursobank_checking,
+            joint_checking,
             life_insurance,
             crypto_wallet,
             archived,
@@ -324,6 +448,45 @@ async def _seed(
         ]
     )
     await session.flush()
+    await _link_resource_owners(
+        session,
+        checking,
+        (alice,),
+        ("AccountOwner", "AccountHolder", "AccountProfile"),
+    )
+    await _link_resource_owners(
+        session,
+        boursobank_checking,
+        (bob,),
+        ("AccountOwner", "AccountHolder", "AccountProfile"),
+    )
+    await _link_resource_owners(
+        session,
+        joint_checking,
+        (alice, bob),
+        ("AccountOwner", "AccountHolder", "AccountProfile"),
+    )
+    await _link_resource_owners(
+        session,
+        sandbox,
+        (alice, bob, chloe),
+        ("AccountOwner", "AccountHolder", "AccountProfile"),
+    )
+    for account, owners in (
+        (savings, (alice,)),
+        (invest, (alice,)),
+        (peg, (alice,)),
+        (percol, (alice,)),
+        (life_insurance, (alice,)),
+        (crypto_wallet, (alice,)),
+        (archived, (alice,)),
+    ):
+        await _link_resource_owners(
+            session,
+            account,
+            owners,
+            ("AccountOwner", "AccountHolder", "AccountProfile"),
+        )
 
     # --- Monthly balance statements --------------------------------------- #
     anchor = date.today().replace(day=1)
@@ -331,6 +494,7 @@ async def _seed(
     checking_snapshot_values = ("4700.00", "5000.00", "5300.00", "5562.44")
     savings_snapshot_values = ("5250.00", "5500.00", "5750.00", "6000.00")
     boursobank_snapshot_values = ("2240.00", "2390.00", "2580.00", "2750.00")
+    joint_snapshot_values = ("2900.00", "3100.00", "3250.00", "3400.00")
     life_insurance_snapshot_values = ("16700.00", "17450.00", "18100.00", "18500.00")
     additional_snapshot_series = [
         (life_insurance, life_insurance_snapshot_values),
@@ -376,6 +540,11 @@ async def _seed(
             period=month.strftime("%Y-%m"),
             balance=money(boursobank_snapshot_values[index]),
         )
+        joint_snapshot = BalanceSnapshot(
+            account_id=joint_checking.id,
+            period=month.strftime("%Y-%m"),
+            balance=money(joint_snapshot_values[index]),
+        )
         archived_snapshot = BalanceSnapshot(
             account_id=archived.id,
             period=month.strftime("%Y-%m"),
@@ -393,6 +562,7 @@ async def _seed(
         month_snapshots = [
             checking_snapshot,
             boursobank_snapshot,
+            joint_snapshot,
             archived_snapshot,
             *additional_snapshots,
         ]
@@ -471,7 +641,7 @@ async def _seed(
     )
     loan_series = RecurringSeries(
         label="Remboursement · Pret immobilier demo",
-        account_id=checking.id,
+        account_id=joint_checking.id,
         category_id=logement.id,
         frequency="monthly",
         next_due=add_month(anchor, 1).replace(day=15),
@@ -482,7 +652,7 @@ async def _seed(
     )
     credit_insurance_series = RecurringSeries(
         label="Assurance · Pret immobilier demo",
-        account_id=checking.id,
+        account_id=joint_checking.id,
         category_id=logement.id,
         frequency="monthly",
         next_due=add_month(anchor, 1).replace(day=5),
@@ -529,8 +699,8 @@ async def _seed(
         custom_type="Revenu complémentaire",
     )
     boursobank_expense_series = RecurringSeries(
-        label="Courses compte Boursobank demo",
-        account_id=boursobank_checking.id,
+        label="Courses compte joint demo",
+        account_id=joint_checking.id,
         category_id=courses.id,
         frequency="monthly",
         next_due=anchor.replace(day=17),
@@ -564,9 +734,20 @@ async def _seed(
         recurring_type="other",
         custom_type="Prime",
     )
+    bob_salary_series = RecurringSeries(
+        label="Salaire mensuel Bob demo",
+        account_id=boursobank_checking.id,
+        category_id=salaire.id,
+        frequency="monthly",
+        next_due=add_month(anchor, 1).replace(day=1),
+        amount=money("2680.00"),
+        amount_type="fixed",
+        status="active",
+        recurring_type="salary",
+    )
     uncategorized_series = RecurringSeries(
         label="Dépense à catégoriser demo",
-        account_id=boursobank_checking.id,
+        account_id=checking.id,
         category_id=None,
         frequency="monthly",
         next_due=add_month(anchor, 1).replace(day=10),
@@ -585,6 +766,7 @@ async def _seed(
             boursobank_expense_series,
             weekly_expense_series,
             quarterly_income_series,
+            bob_salary_series,
             uncategorized_series,
         ]
     )
@@ -623,23 +805,54 @@ async def _seed(
         balance=money("1500.00"),
         interest_rate=Decimal("1.20"),
         minimum_payment=money("80.00"),
-        account_id=checking.id,
+        account_id=boursobank_checking.id,
         due_date=add_month(anchor, 2).replace(day=15),
         color="#f97316",
         archived=False,
+    )
+    retired_debt = Debt(
+        name="Ancien pret solde",
+        debt_type="other",
+        principal=money("2000.00"),
+        balance=money("0.00"),
+        interest_rate=Decimal("0.00"),
+        minimum_payment=money("0.00"),
+        color="#94a3b8",
+        archived=True,
     )
     session.add_all(
         [
             mortgage,
             auto_loan,
             student_loan,
-            Debt(name="Ancien pret solde", debt_type="other",
-                 principal=money("2000.00"), balance=money("0.00"),
-                 interest_rate=Decimal("0.00"), minimum_payment=money("0.00"),
-                 color="#94a3b8", archived=True),
+            retired_debt,
         ]
     )
     await session.flush()
+    await _link_resource_owners(
+        session,
+        mortgage,
+        (alice, bob),
+        ("DebtOwner", "DebtProfile", "DebtHolder"),
+    )
+    await _link_resource_owners(
+        session,
+        auto_loan,
+        (alice,),
+        ("DebtOwner", "DebtProfile", "DebtHolder"),
+    )
+    await _link_resource_owners(
+        session,
+        student_loan,
+        (bob,),
+        ("DebtOwner", "DebtProfile", "DebtHolder"),
+    )
+    await _link_resource_owners(
+        session,
+        retired_debt,
+        (alice,),
+        ("DebtOwner", "DebtProfile", "DebtHolder"),
+    )
     automatic_debt_series = []
     for debt in (auto_loan, student_loan):
         repayment_series = build_debt_recurring_series_repayment(debt)
@@ -658,9 +871,9 @@ async def _seed(
 
     # --- Real estate ------------------------------------------------------- #
     apartment = RealEstateAsset(
-        name="Appartement demo",
+        name="Maison commune demo",
         property_type="primary_residence",
-        address="12 rue des Exemples, 75000 Paris",
+        address="Adresse entièrement fictive, 75000 Paris",
         acquired_on=date(2021, 5, 15),
         purchase_price=money("280000.00"),
         current_value=money("310000.00"),
@@ -676,6 +889,18 @@ async def _seed(
     )
     session.add_all([apartment, land])
     await session.flush()
+    await _link_resource_owners(
+        session,
+        apartment,
+        (alice, bob),
+        ("RealEstateAssetOwner", "RealEstateOwner", "RealEstateProfile"),
+    )
+    await _link_resource_owners(
+        session,
+        land,
+        (alice,),
+        ("RealEstateAssetOwner", "RealEstateOwner", "RealEstateProfile"),
+    )
     session.add_all(
         [
             RealEstateDebtLink(asset_id=apartment.id, debt_id=mortgage.id),
@@ -864,31 +1089,25 @@ async def _seed(
         )
         portfolio_snapshot_count += 1
 
-    # --- Household + members + goals + sharing ---------------------------- #
-    household = Household(name="Foyer QA")
-    session.add(household)
-    await session.flush()
-    owner = HouseholdMember(household_id=household.id, name="Profil principal", role="owner")
-    partner = HouseholdMember(household_id=household.id, name="Profil membre", role="member")
-    session.add_all([owner, partner])
-    await session.flush()
-
+    # --- Singleton technical household + profile-attributed goal ------------ #
     goal = Goal(
         household_id=household.id, name="Fonds d'urgence", target_amount=money("3000.00"),
-        current_amount=money("0.00"), due_date=add_month(anchor, 12), account_id=savings.id,
+        current_amount=money("0.00"), due_date=add_month(anchor, 12), account_id=joint_checking.id,
     )
     session.add(goal)
     await session.flush()
     session.add(
-        GoalContribution(goal_id=goal.id, amount=money("750.00"),
-                         occurred_on=anchor.replace(day=10), member_id=owner.id,
-                         note="Mise de depart")
+        _model_instance(
+            GoalContribution,
+            goal_id=goal.id,
+            amount=money("750.00"),
+            occurred_on=anchor.replace(day=10),
+            member_id=alice.id,
+            profile_id=alice.id,
+            note="Mise de depart",
+        )
     )
     goal.current_amount = money("750.00")
-
-    session.add(
-        SharedAccountLink(household_id=household.id, account_id=checking.id, permission="edit")
-    )
 
     await session.flush()
     if latest_savings_snapshot is None or latest_archived_snapshot is None:
@@ -1014,6 +1233,7 @@ async def _seed(
         status="active",
         notes="CDI cadre avec forfait jours, participation & PEE",
     )
+    _assign_profile(current_contract, alice)
     previous_contract = WorkContract(
         employer="Studio Numérique Démo",
         position="Développeur fullstack",
@@ -1026,6 +1246,7 @@ async def _seed(
         status="ended",
         notes="Expérience professionnelle entièrement synthétique",
     )
+    _assign_profile(previous_contract, alice)
     apprenticeship_contract = WorkContract(
         employer="Atelier Logiciel Démo",
         position="Développeur en alternance",
@@ -1038,6 +1259,7 @@ async def _seed(
         status="ended",
         notes="Contrat d'alternance entièrement synthétique",
     )
+    _assign_profile(apprenticeship_contract, alice)
     internship_contract = WorkContract(
         employer="Laboratoire Numérique Démo",
         position="Stagiaire développement web",
@@ -1050,12 +1272,27 @@ async def _seed(
         status="ended",
         notes="Stage entièrement synthétique",
     )
+    _assign_profile(internship_contract, alice)
+    bob_contract = WorkContract(
+        employer="Atelier Horizon Démo",
+        position="Responsable produit",
+        contract_type="CDI",
+        start_date=date(2022, 2, 1),
+        gross_annual_salary=money("44500.00"),
+        work_percentage=90,
+        payment_period_months=12,
+        recurring_series_id=bob_salary_series.id,
+        status="active",
+        notes="Carrière de Bob entièrement synthétique",
+    )
+    _assign_profile(bob_contract, bob)
     session.add_all(
         [
             current_contract,
             previous_contract,
             apprenticeship_contract,
             internship_contract,
+            bob_contract,
         ]
     )
     await session.flush()
@@ -1167,6 +1404,41 @@ async def _seed(
             ),
         ]
     )
+    payslips.extend(
+        [
+            PaySlip(
+                contract_id=bob_contract.id,
+                period="2026-08",
+                gross_salary=money("3708.33"),
+                taxable_net=money("3000.00"),
+                net_before_tax=money("2860.00"),
+                pas_rate=Decimal("6.00"),
+                pas_amount=money("180.00"),
+                net_after_tax=money("2680.00"),
+                employer_contributions=money("980.00"),
+                hours_worked=Decimal("136.50"),
+                notes="Bulletin de paie synthétique de Bob",
+            ),
+            PaySlip(
+                contract_id=bob_contract.id,
+                period="2026-04",
+                gross_salary=money("3708.33"),
+                taxable_net=money("3000.00"),
+                net_before_tax=money("2860.00"),
+                pas_rate=Decimal("6.00"),
+                pas_amount=money("180.00"),
+                net_after_tax=money("2680.00"),
+                employer_contributions=money("980.00"),
+                hours_worked=Decimal("136.50"),
+                notes="Bulletin de paie synthétique de Bob",
+            ),
+        ]
+    )
+    for payslip in payslips:
+        _assign_profile(
+            payslip,
+            alice if payslip.contract_id != bob_contract.id else bob,
+        )
     session.add_all(payslips)
     await session.flush()
 
@@ -1202,11 +1474,27 @@ async def _seed(
         planned_unemployment_months=0,
         notes="59 trimestres hors bulletins saisis ; carrière commencée avant 21 ans",
     )
-    session.add(pension)
+    _assign_profile(pension, alice)
+    bob_pension = PensionProfile(
+        birth_year=1988,
+        birth_month=3,
+        target_retirement_age=64,
+        validated_quarters=66,
+        required_quarters=172,
+        estimated_monthly_pension=money("0.00"),
+        target_monthly_income=money("2600.00"),
+        income_growth_scenario="regular",
+        future_annual_gross=money("48000.00"),
+        future_work_percentage=90,
+        planned_unemployment_months=3,
+        notes="Projection retraite de Bob entièrement synthétique",
+    )
+    _assign_profile(bob_pension, bob)
+    session.add_all([pension, bob_pension])
     await session.flush()
 
     return SeedResult(
-        accounts=10,
+        accounts=11,
         snapshots=snapshot_count,
         categories=int(total_categories or 0),
         recurring=int(total_recurring or 0),
@@ -1216,13 +1504,14 @@ async def _seed(
         holding_operations=12,
         contributions=contribution_count,
         households=1,
+        profiles=len(profiles),
         goals=1,
         portfolio_snapshots=portfolio_snapshot_count,
         snapshot_attachments=len(snapshot_attachments),
         recurring_attachments=len(recurring_attachments),
         debt_attachments=len(debt_attachments),
         real_estate_attachments=len(real_estate_attachments),
-        contracts=4,
+        contracts=5,
         contract_attachments=1,
         payslips=len(payslips),
         payslip_attachments=1,
@@ -1265,7 +1554,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{result.holdings} actif(s), {result.holding_operations} operation(s), "
         f"{result.contributions} versement(s), "
         f"{result.portfolio_snapshots} valorisation(s), "
-        f"{result.households} foyer, {result.goals} objectif, "
+        f"{result.households} foyer, {result.profiles} profil(s), {result.goals} objectif, "
         f"{result.snapshot_attachments} releve(s) joint(s), "
         f"{result.recurring_attachments} piece(s) jointe(s) recurrente(s), "
         f"{result.debt_attachments} piece(s) jointe(s) de dette, "

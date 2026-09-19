@@ -55,12 +55,12 @@ def test_entrypoint_resets_while_demo_variable_is_enabled_then_preserves(tmp_pat
     first_start = _start_container_entrypoint(tmp_path, "true")
     database = tmp_path / "moulaga.db"
     assert "Mode demo actif" in first_start.stdout
-    assert len(_account_names(database)) == 10
+    assert len(_account_names(database)) == 11
 
     with sqlite3.connect(database) as connection:
         connection.execute(
             "UPDATE accounts SET name = ? WHERE name = ?",
-            ("Modification temporaire", "Compte courant demo"),
+            ("Modification temporaire", "Compte personnel Alice demo"),
         )
         connection.commit()
     assert "Modification temporaire" in _account_names(database)
@@ -72,7 +72,7 @@ def test_entrypoint_resets_while_demo_variable_is_enabled_then_preserves(tmp_pat
     with sqlite3.connect(database) as connection:
         connection.execute(
             "UPDATE accounts SET name = ? WHERE name = ?",
-            ("Donnees persistantes", "Compte courant demo"),
+            ("Donnees persistantes", "Compte personnel Alice demo"),
         )
         connection.commit()
 

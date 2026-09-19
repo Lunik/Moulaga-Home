@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -10,15 +11,22 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_access import require_account
+from ..account_access import (
+    account_owner_member_column,
+    account_share,
+    require_account,
+    require_active_profile,
+)
 from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import add_month, money
 from ..db import get_session
 from ..debt_recurring import debt_payment, recurring_amount
 from ..models import (
     Account,
+    AccountOwner,
     Category,
     Debt,
+    HouseholdMember,
     RecurringSeries,
     RecurringSeriesAttachment,
 )
@@ -34,8 +42,15 @@ from ..schemas import (
 router = APIRouter(tags=["recurring"])
 
 
-async def _require_account(session: AsyncSession, account_id: int) -> None:
-    await require_account(session, account_id, writable=True)
+async def _require_account(
+    session: AsyncSession, account_id: int, profile: HouseholdMember
+) -> None:
+    await require_account(
+        session,
+        account_id,
+        writable=True,
+        profile_id=profile.id,
+    )
 
 
 async def _require_category(session: AsyncSession, category_id: int) -> None:
@@ -55,20 +70,46 @@ async def _category_name(session: AsyncSession, category_id: int | None) -> str 
     return category.name if category else None
 
 
-async def _series_read(session: AsyncSession, series: RecurringSeries) -> RecurringRead:
+def _with_share_fields(
+    series_read: RecurringRead,
+    *,
+    total_amount: Decimal | None,
+    profile_share: Decimal | None,
+) -> RecurringRead:
+    updates: dict[str, object] = {"amount": profile_share}
+    available = type(series_read).model_fields
+    for name, value in (
+        ("total_amount", total_amount),
+        ("profile_share", profile_share),
+    ):
+        if name in available:
+            updates[name] = value
+    return series_read.model_copy(update=updates)
+
+
+async def _series_read(
+    session: AsyncSession, series: RecurringSeries, profile: HouseholdMember
+) -> RecurringRead:
     attachment_count = await session.scalar(
         select(func.count())
         .select_from(RecurringSeriesAttachment)
         .where(RecurringSeriesAttachment.series_id == series.id)
     )
-    return RecurringRead(
+    total_amount = money(series.amount) if series.amount is not None else None
+    profile_share = (
+        await account_share(session, series.account_id, profile.id, total_amount)
+        if total_amount is not None
+        else None
+    )
+    return _with_share_fields(
+        RecurringRead(
         id=series.id,
         label=series.label,
         account_id=series.account_id,
         category_id=series.category_id,
         frequency=series.frequency,
         next_due=series.next_due,
-        amount=series.amount,
+        amount=total_amount,
         amount_type=series.amount_type,
         status=series.status,
         recurring_type=series.recurring_type,
@@ -76,16 +117,27 @@ async def _series_read(session: AsyncSession, series: RecurringSeries) -> Recurr
         credit_insurance_rate=series.credit_insurance_rate,
         account_name=await _account_name(session, series.account_id),
         category_name=await _category_name(session, series.category_id),
-        attachment_count=int(attachment_count or 0),
+            attachment_count=int(attachment_count or 0),
+        ),
+        total_amount=total_amount,
+        profile_share=profile_share,
     )
 
 # --------------------------------------------------------------------------- #
 # CRUD
 # --------------------------------------------------------------------------- #
 @router.get("/recurring", response_model=list[RecurringRead])
-async def list_series(session: AsyncSession = Depends(get_session)) -> list[RecurringRead]:
+async def list_series(
+    profile: HouseholdMember = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> list[RecurringRead]:
     rows = (
-        await session.execute(select(RecurringSeries).order_by(RecurringSeries.next_due))
+        await session.execute(
+            select(RecurringSeries)
+            .join(AccountOwner, AccountOwner.account_id == RecurringSeries.account_id)
+            .where(account_owner_member_column() == profile.id)
+            .order_by(RecurringSeries.next_due)
+        )
     ).scalars().all()
     accounts = {
         acc.id: acc.name for acc in (await session.execute(select(Account))).scalars().all()
@@ -105,14 +157,15 @@ async def list_series(session: AsyncSession = Depends(get_session)) -> list[Recu
         ).all()
     }
     return [
-        RecurringRead(
+        _with_share_fields(
+            RecurringRead(
             id=row.id,
             label=row.label,
             account_id=row.account_id,
             category_id=row.category_id,
             frequency=row.frequency,
             next_due=row.next_due,
-            amount=row.amount,
+            amount=money(row.amount) if row.amount is not None else None,
             amount_type=row.amount_type,
             status=row.status,
             recurring_type=row.recurring_type,
@@ -120,7 +173,19 @@ async def list_series(session: AsyncSession = Depends(get_session)) -> list[Recu
             credit_insurance_rate=row.credit_insurance_rate,
             account_name=accounts.get(row.account_id, ""),
             category_name=categories.get(row.category_id) if row.category_id else None,
-            attachment_count=int(attachment_counts.get(row.id, 0)),
+                attachment_count=int(attachment_counts.get(row.id, 0)),
+            ),
+            total_amount=money(row.amount) if row.amount is not None else None,
+            profile_share=(
+                await account_share(
+                    session,
+                    row.account_id,
+                    profile.id,
+                    money(row.amount),
+                )
+                if row.amount is not None
+                else None
+            ),
         )
         for row in rows
     ]
@@ -128,26 +193,31 @@ async def list_series(session: AsyncSession = Depends(get_session)) -> list[Recu
 
 @router.post("/recurring", response_model=RecurringRead, status_code=201)
 async def create_series(
-    payload: RecurringCreate, session: AsyncSession = Depends(get_session)
+    payload: RecurringCreate,
+    profile: HouseholdMember = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> RecurringRead:
-    await _require_account(session, payload.account_id)
+    await _require_account(session, payload.account_id, profile)
     if payload.category_id is not None:
         await _require_category(session, payload.category_id)
     series = RecurringSeries(**payload.model_dump())
     session.add(series)
     await session.commit()
     await session.refresh(series)
-    return await _series_read(session, series)
+    return await _series_read(session, series, profile)
 
 
 @router.patch("/recurring/{series_id}", response_model=RecurringRead)
 async def update_series(
-    series_id: int, payload: RecurringUpdate, session: AsyncSession = Depends(get_session)
+    series_id: int,
+    payload: RecurringUpdate,
+    profile: HouseholdMember = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> RecurringRead:
     series = await session.get(RecurringSeries, series_id)
     if series is None:
         raise HTTPException(status_code=404, detail="Serie introuvable")
-    await require_account(session, series.account_id, writable=True)
+    await require_account(session, series.account_id, writable=True, profile_id=profile.id)
     data = payload.model_dump(exclude_unset=True)
     for required_field in (
         "label",
@@ -164,7 +234,7 @@ async def update_series(
                 detail=f"Le champ {required_field} ne peut pas être nul",
             )
     if "account_id" in data:
-        await _require_account(session, data["account_id"])
+        await _require_account(session, data["account_id"], profile)
     if data.get("category_id") is not None:
         await _require_category(session, data["category_id"])
     recurring_type = data.get("recurring_type", series.recurring_type)
@@ -199,7 +269,12 @@ async def update_series(
         )
         for debt in linked_debts:
             if debt.account_id is not None:
-                await require_account(session, debt.account_id, writable=True)
+                await require_account(
+                    session,
+                    debt.account_id,
+                    writable=True,
+                    profile_id=profile.id,
+                )
         if linked_debts:
             data["amount"] = recurring_amount(data["amount"])
     for field, value in data.items():
@@ -209,15 +284,19 @@ async def update_series(
             debt.minimum_payment = debt_payment(series.amount)
     await session.commit()
     await session.refresh(series)
-    return await _series_read(session, series)
+    return await _series_read(session, series, profile)
 
 
 @router.delete("/recurring/{series_id}", status_code=204)
-async def delete_series(series_id: int, session: AsyncSession = Depends(get_session)) -> None:
+async def delete_series(
+    series_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> None:
     series = await session.get(RecurringSeries, series_id)
     if series is None:
         raise HTTPException(status_code=404, detail="Serie introuvable")
-    await require_account(session, series.account_id, writable=True)
+    await require_account(session, series.account_id, writable=True, profile_id=profile.id)
     attachments = (
         await session.execute(
             select(RecurringSeriesAttachment).where(
@@ -234,10 +313,12 @@ async def delete_series(series_id: int, session: AsyncSession = Depends(get_sess
 async def _require_series(
     session: AsyncSession,
     series_id: int,
+    profile: HouseholdMember,
 ) -> RecurringSeries:
     series = await session.get(RecurringSeries, series_id)
     if series is None:
         raise HTTPException(status_code=404, detail="Série introuvable")
+    await require_account(session, series.account_id, profile_id=profile.id)
     return series
 
 
@@ -271,9 +352,10 @@ async def _require_attachment(
 )
 async def list_attachments(
     series_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[RecurringSeriesAttachmentRead]:
-    await _require_series(session, series_id)
+    await _require_series(session, series_id, profile)
     rows = (
         await session.execute(
             select(RecurringSeriesAttachment)
@@ -295,10 +377,16 @@ async def list_attachments(
 async def upload_attachment(
     series_id: int,
     file: UploadFile = File(...),
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> RecurringSeriesAttachmentRead:
-    series = await _require_series(session, series_id)
-    await require_account(session, series.account_id, writable=True)
+    series = await _require_series(session, series_id, profile)
+    await require_account(
+        session,
+        series.account_id,
+        writable=True,
+        profile_id=profile.id,
+    )
     content_type = file.content_type
     original_name, stored_path, size = await store_attachment(file)
     attachment = RecurringSeriesAttachment(
@@ -325,8 +413,10 @@ async def upload_attachment(
 async def download_attachment(
     series_id: int,
     attachment_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
+    await _require_series(session, series_id, profile)
     attachment = await _require_attachment(session, series_id, attachment_id)
     path = attachment_path(attachment.stored_path)
     if not path.is_file():
@@ -346,10 +436,16 @@ async def download_attachment(
 async def delete_attachment(
     series_id: int,
     attachment_id: int,
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    series = await _require_series(session, series_id)
-    await require_account(session, series.account_id, writable=True)
+    series = await _require_series(session, series_id, profile)
+    await require_account(
+        session,
+        series.account_id,
+        writable=True,
+        profile_id=profile.id,
+    )
     attachment = await _require_attachment(session, series_id, attachment_id)
     remove_attachment(attachment.stored_path)
     await session.delete(attachment)
@@ -362,13 +458,19 @@ async def delete_attachment(
 @router.get("/recurring/forecast", response_model=list[ForecastPoint])
 async def forecast(
     months: int = Query(default=3, ge=1, le=24),
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[ForecastPoint]:
     today = date.today()
     horizon = add_month(today, months)
     series = (
         await session.execute(
-            select(RecurringSeries).where(RecurringSeries.status == "active")
+            select(RecurringSeries)
+            .join(AccountOwner, AccountOwner.account_id == RecurringSeries.account_id)
+            .where(
+                RecurringSeries.status == "active",
+                account_owner_member_column() == profile.id,
+            )
         )
     ).scalars().all()
     accounts = {
@@ -385,7 +487,12 @@ async def forecast(
                     series_id=item.id,
                     label=item.label,
                     due_date=due,
-                    amount=money(item.amount),
+                    amount=await account_share(
+                        session,
+                        item.account_id,
+                        profile.id,
+                        money(item.amount),
+                    ),
                     account_name=accounts.get(item.account_id, ""),
                     category_name=categories.get(item.category_id) if item.category_id else None,
                     status=item.status,

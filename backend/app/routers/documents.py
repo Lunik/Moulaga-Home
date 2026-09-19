@@ -11,19 +11,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import get_session
 from ..models import (
     Account,
+    AccountOwner,
     BalanceSnapshot,
     BalanceSnapshotAttachment,
     Debt,
     DebtAttachment,
+    DebtOwner,
     PaySlip,
     PaySlipAttachment,
+    Profile,
     RealEstateAsset,
+    RealEstateAssetOwner,
     RealEstateAttachment,
     RecurringSeries,
     RecurringSeriesAttachment,
     WorkContract,
     WorkContractAttachment,
 )
+from ..profile_session import require_active_profile
 from ..schemas import (
     DocumentCenterRead,
     DocumentCenterStats,
@@ -54,6 +59,54 @@ DOCUMENT_RESOURCE_MODELS = {
 }
 
 
+async def _visible_resource_ids(
+    session: AsyncSession, profile_id: int
+) -> dict[DocumentKind, set[int]]:
+    account_ids = set(
+        await session.scalars(
+            select(AccountOwner.account_id).where(AccountOwner.member_id == profile_id)
+        )
+    )
+    return {
+        "snapshot": set(
+            await session.scalars(
+                select(BalanceSnapshot.id).where(
+                    BalanceSnapshot.account_id.in_(account_ids)
+                )
+            )
+        ),
+        "recurring": set(
+            await session.scalars(
+                select(RecurringSeries.id).where(
+                    RecurringSeries.account_id.in_(account_ids)
+                )
+            )
+        ),
+        "debt": set(
+            await session.scalars(
+                select(DebtOwner.debt_id).where(DebtOwner.member_id == profile_id)
+            )
+        ),
+        "real_estate": set(
+            await session.scalars(
+                select(RealEstateAssetOwner.asset_id).where(
+                    RealEstateAssetOwner.member_id == profile_id
+                )
+            )
+        ),
+        "work_contract": set(
+            await session.scalars(
+                select(WorkContract.id).where(WorkContract.profile_id == profile_id)
+            )
+        ),
+        "payslip": set(
+            await session.scalars(
+                select(PaySlip.id).where(PaySlip.profile_id == profile_id)
+            )
+        ),
+    }
+
+
 @router.post(
     "/documents/resources/{kind}/{resource_id}/ignored",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -63,8 +116,12 @@ async def set_document_resource_ignored(
     kind: DocumentKind,
     resource_id: int,
     ignored: bool = Query(default=True),
+    profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    visible_ids = await _visible_resource_ids(session, profile.id)
+    if resource_id not in visible_ids[kind]:
+        raise HTTPException(status_code=404, detail="Ressource documentaire introuvable")
     resource_model, attachment_resource_id = DOCUMENT_RESOURCE_MODELS[kind]
     resource = await session.get(resource_model, resource_id)
     if resource is None:
@@ -89,8 +146,15 @@ async def set_document_resource_ignored(
 
 @router.get("/documents", response_model=DocumentCenterRead)
 async def document_center(
+    profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> DocumentCenterRead:
+    visible_ids = await _visible_resource_ids(session, profile.id)
+    visible_account_ids = set(
+        await session.scalars(
+            select(AccountOwner.account_id).where(AccountOwner.member_id == profile.id)
+        )
+    )
     documents: list[DocumentRead] = []
     resources: list[DocumentResourceRead] = []
     covered_keys: set[tuple[DocumentKind, int]] = set()
@@ -107,6 +171,8 @@ async def document_center(
         )
     ).all()
     for attachment, snapshot, account in snapshot_attachments:
+        if snapshot.id not in visible_ids["snapshot"]:
+            continue
         covered_keys.add(("snapshot", snapshot.id))
         documents.append(
             DocumentRead(
@@ -139,6 +205,8 @@ async def document_center(
         )
     ).all()
     for attachment, series, account in recurring_attachments:
+        if series.id not in visible_ids["recurring"]:
+            continue
         covered_keys.add(("recurring", series.id))
         documents.append(
             DocumentRead(
@@ -168,15 +236,22 @@ async def document_center(
         )
     ).all()
     for attachment, debt, account in debt_attachments:
+        if debt.id not in visible_ids["debt"]:
+            continue
         covered_keys.add(("debt", debt.id))
+        visible_account = account if account and account.id in visible_account_ids else None
         documents.append(
             DocumentRead(
                 id=attachment.id,
                 kind="debt",
                 resource_id=debt.id,
-                account_id=debt.account_id,
+                account_id=visible_account.id if visible_account else None,
                 resource_label=debt.name,
-                resource_context=account.name if account else "Dette sans compte associé",
+                resource_context=(
+                    visible_account.name
+                    if visible_account
+                    else "Compte de remboursement privé ou non associé"
+                ),
                 reference=debt.due_date.isoformat() if debt.due_date else None,
                 original_name=attachment.original_name,
                 content_type=attachment.content_type,
@@ -197,6 +272,8 @@ async def document_center(
         )
     ).all()
     for attachment, asset in real_estate_attachments:
+        if asset.id not in visible_ids["real_estate"]:
+            continue
         covered_keys.add(("real_estate", asset.id))
         documents.append(
             DocumentRead(
@@ -227,6 +304,8 @@ async def document_center(
         )
     ).all()
     for attachment, contract in contract_attachments:
+        if contract.id not in visible_ids["work_contract"]:
+            continue
         covered_keys.add(("work_contract", contract.id))
         documents.append(
             DocumentRead(
@@ -256,6 +335,8 @@ async def document_center(
         )
     ).all()
     for attachment, payslip, contract in payslip_attachments:
+        if payslip.id not in visible_ids["payslip"]:
+            continue
         covered_keys.add(("payslip", payslip.id))
         documents.append(
             DocumentRead(
@@ -289,6 +370,8 @@ async def document_center(
         )
     ).all()
     for snapshot, account in snapshots:
+        if snapshot.id not in visible_ids["snapshot"]:
+            continue
         if snapshot.document_ignored:
             ignored_keys.add(("snapshot", snapshot.id))
         resources.append(
@@ -311,6 +394,8 @@ async def document_center(
         )
     ).all()
     for series, account in recurring_series:
+        if series.id not in visible_ids["recurring"]:
+            continue
         if series.document_ignored:
             ignored_keys.add(("recurring", series.id))
         resources.append(
@@ -333,17 +418,24 @@ async def document_center(
         )
     ).all()
     for debt, account in debts:
+        if debt.id not in visible_ids["debt"]:
+            continue
         if debt.document_ignored:
             ignored_keys.add(("debt", debt.id))
+        visible_account = account if account and account.id in visible_account_ids else None
         resources.append(
             DocumentResourceRead(
                 kind="debt",
                 resource_id=debt.id,
-                account_id=debt.account_id,
+                account_id=visible_account.id if visible_account else None,
                 label=debt.name,
-                context=account.name if account else "Dette sans compte associé",
+                context=(
+                    visible_account.name
+                    if visible_account
+                    else "Compte de remboursement privé ou non associé"
+                ),
                 reference=debt.due_date.isoformat() if debt.due_date else None,
-                can_upload=account is None or not account.archived,
+                can_upload=visible_account is None or not visible_account.archived,
             )
         )
 
@@ -356,6 +448,8 @@ async def document_center(
         )
     ).scalars().all()
     for asset in real_estate_assets:
+        if asset.id not in visible_ids["real_estate"]:
+            continue
         if asset.document_ignored:
             ignored_keys.add(("real_estate", asset.id))
         resources.append(
@@ -379,6 +473,8 @@ async def document_center(
         )
     ).scalars().all()
     for contract in contracts:
+        if contract.id not in visible_ids["work_contract"]:
+            continue
         if contract.document_ignored:
             ignored_keys.add(("work_contract", contract.id))
         resources.append(
@@ -401,6 +497,8 @@ async def document_center(
         )
     ).all()
     for payslip, contract in payslips:
+        if payslip.id not in visible_ids["payslip"]:
+            continue
         if payslip.document_ignored:
             ignored_keys.add(("payslip", payslip.id))
         resources.append(

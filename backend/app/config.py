@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     log_level: str = "INFO"
     demo_mode: bool = False
+    session_cookie_name: str = "moulaga_profile_session"
+    session_cookie_secure: bool = False
+    profile_session_hours: int = 12
+    protected_profile_idle_minutes: int = 15
 
     @property
     def db_path(self) -> Path:

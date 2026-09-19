@@ -62,6 +62,7 @@ export default defineConfig({
       workbox: {
         cacheId: 'moulaga',
         cleanupOutdatedCaches: true,
+        importScripts: ['legacy-cache-cleanup.js'],
         clientsClaim: true,
         skipWaiting: true,
         navigateFallback: '/index.html',
@@ -70,30 +71,10 @@ export default defineConfig({
         globIgnores: ['**/pwa-*.png', '**/maskable-icon-*.png'],
         runtimeCaching: [
           {
-            urlPattern: ({ request, url }) => {
-              if (
-                request.method !== 'GET'
-                || url.origin !== self.location.origin
-                || !url.pathname.startsWith('/api/')
-              ) {
-                return false
-              }
-              return url.pathname !== '/api/health'
-                && !url.pathname.includes('/attachments')
-                && !url.pathname.endsWith('/download')
-            },
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'moulaga-visual-data-v1',
-              networkTimeoutSeconds: 4,
-              cacheableResponse: {
-                statuses: [200],
-              },
-              expiration: {
-                maxEntries: 500,
-                purgeOnQuotaError: true,
-              },
-            },
+            urlPattern: ({ url }) => (
+              url.origin === self.location.origin && url.pathname.startsWith('/api/')
+            ),
+            handler: 'NetworkOnly',
           },
         ],
       },
