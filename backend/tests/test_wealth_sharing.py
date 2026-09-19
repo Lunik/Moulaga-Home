@@ -287,6 +287,11 @@ def test_shared_debt_cannot_mutate_series_on_a_private_account(client):
     assert visible_debt["recurring_series_insurance_id"] is None
     assert visible_debt["recurring_series_name_repayment"] is None
     assert visible_debt["recurring_series_name_insurance"] is None
+    unlink = client.patch(
+        f"/api/debts/{debt.json()['id']}",
+        json={"recurring_series_repayment_id": None},
+    )
+    assert unlink.status_code == 404
     update = client.patch(
         f"/api/debts/{debt.json()['id']}",
         json={"minimum_payment": "80.00"},

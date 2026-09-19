@@ -12,7 +12,7 @@ const profileSessionChannelName = 'moulaga:profile-session'
 const profileSessionStorageKey = 'moulaga:profile-session-change'
 const profileSessionLockedStorageKey = 'moulaga:profile-session-locked'
 
-type ProfileSessionChange = 'selected' | 'locked'
+type ProfileSessionChange = 'selected' | 'locking' | 'locked'
 
 function profileSessionIsLocallyLocked() {
   try {
@@ -86,12 +86,19 @@ export function ProfileGate({
   useEffect(() => {
     const synchronizeSession = (change: unknown) => {
       advanceProfileSessionGeneration()
+      if (change === 'locking') {
+        setSessionActionPending(true)
+        showPicker()
+        return
+      }
       if (change === 'locked') {
+        setSessionActionPending(false)
         showPicker()
         return
       }
       if (change !== 'selected') return
 
+      setSessionActionPending(false)
       setProfileSessionLocallyLocked(false)
       setShowProfilePicker(false)
       setManageProfiles(false)
@@ -143,13 +150,14 @@ export function ProfileGate({
     setSessionActionPending(true)
     advanceProfileSessionGeneration()
     showPicker()
-    broadcastProfileSessionChange('locked')
+    broadcastProfileSessionChange('locking')
     try {
       await profilesApi.lock()
     } catch (error) {
       setSessionActionError(error)
     } finally {
       setSessionActionPending(false)
+      broadcastProfileSessionChange('locked')
     }
   }
 
@@ -193,6 +201,7 @@ export function ProfileGate({
       onManageRequest={() => setOpenManagerOnSignIn(true)}
       onConnected={async (profileSession) => {
         setSessionActionError(null)
+        setSessionActionPending(false)
         setProfileSessionLocallyLocked(false)
         setShowProfilePicker(false)
         clearProfileIdentityQueries()

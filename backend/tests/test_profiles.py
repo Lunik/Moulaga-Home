@@ -180,6 +180,49 @@ def test_pin_changes_revoke_other_profile_sessions(app_factory):
         ).status_code == 200
 
 
+def test_archived_resources_do_not_block_deactivation_and_sessions_are_revoked(
+    app_factory,
+):
+    main, _, _ = app_factory
+    app = main.create_app()
+    with (
+        TestClient(app, base_url="https://testserver") as admin_client,
+        TestClient(app, base_url="https://testserver") as member_client,
+    ):
+        alice = admin_client.post("/api/profiles", json={"name": "Alice"}).json()
+        assert admin_client.post(
+            f"/api/profiles/{alice['id']}/select", json={}
+        ).status_code == 200
+        bob = admin_client.post("/api/profiles", json={"name": "Bob"}).json()
+        assert member_client.post(
+            f"/api/profiles/{bob['id']}/select", json={}
+        ).status_code == 200
+        account = member_client.post(
+            "/api/accounts", json={"name": "Ancien compte"}
+        ).json()
+        assert member_client.post(
+            f"/api/accounts/{account['id']}/archive"
+        ).status_code == 200
+        debt = member_client.post(
+            "/api/debts",
+            json={"name": "Ancienne dette", "principal": "100.00", "balance": "0.00"},
+        ).json()
+        assert member_client.patch(
+            f"/api/debts/{debt['id']}", json={"archived": True}
+        ).status_code == 200
+
+        deactivated = admin_client.patch(
+            f"/api/profiles/{bob['id']}", json={"active": False}
+        )
+
+        assert deactivated.status_code == 200
+        assert member_client.get("/api/profiles/session").status_code == 401
+        assert admin_client.patch(
+            f"/api/profiles/{bob['id']}", json={"active": True}
+        ).status_code == 200
+        assert member_client.get("/api/profiles/session").status_code == 401
+
+
 def test_profile_pin_failures_are_throttled_and_profile_fields_reject_null(
     app_factory,
 ):

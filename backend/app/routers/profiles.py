@@ -165,21 +165,36 @@ async def _singleton_household(session: AsyncSession) -> Household:
 
 
 async def _profile_ownership(
-    profile_id: int, session: AsyncSession
+    profile_id: int,
+    session: AsyncSession,
+    *,
+    include_archived: bool = True,
 ) -> ProfileOwnershipRead:
     async def ids(statement):
         return list((await session.scalars(statement)).all())
 
+    account_ids = (
+        select(AccountOwner.account_id)
+        .join(Account, Account.id == AccountOwner.account_id)
+        .where(AccountOwner.member_id == profile_id)
+    )
+    debt_ids = (
+        select(DebtOwner.debt_id)
+        .join(Debt, Debt.id == DebtOwner.debt_id)
+        .where(DebtOwner.member_id == profile_id)
+    )
+    if not include_archived:
+        account_ids = account_ids.where(Account.archived.is_(False))
+        debt_ids = debt_ids.where(Debt.archived.is_(False))
+
     return ProfileOwnershipRead(
-        account_ids=await ids(
-            select(AccountOwner.account_id).where(AccountOwner.member_id == profile_id)
-        ),
+        account_ids=await ids(account_ids),
         real_estate_asset_ids=await ids(
             select(RealEstateAssetOwner.asset_id).where(
                 RealEstateAssetOwner.member_id == profile_id
             )
         ),
-        debt_ids=await ids(select(DebtOwner.debt_id).where(DebtOwner.member_id == profile_id)),
+        debt_ids=await ids(debt_ids),
         work_contract_ids=await ids(
             select(WorkContract.id).where(WorkContract.profile_id == profile_id)
         ),
@@ -454,12 +469,21 @@ async def update_profile(
     if is_admin:
         await _ensure_administrator_remains(profile, payload, session)
     if payload.active is False and profile.active:
-        ownership = await _profile_ownership(profile.id, session)
+        ownership = await _profile_ownership(
+            profile.id,
+            session,
+            include_archived=False,
+        )
         if any(ownership.model_dump().values()):
             raise HTTPException(
                 status_code=409,
                 detail="Les ressources du profil doivent etre transferees ou archivees",
             )
+        await session.execute(
+            ProfileSession.__table__.delete().where(
+                ProfileSession.profile_id == profile.id
+            )
+        )
 
     for field in ("name", "avatar", "color", "active", "role"):
         if field in payload.model_fields_set:

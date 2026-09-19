@@ -689,6 +689,19 @@ async def update_debt(
             writable=True,
             profile_id=active_profile.id,
         )
+    for series_field in (
+        "recurring_series_repayment_id",
+        "recurring_series_insurance_id",
+    ):
+        current_series_id = getattr(debt, series_field)
+        if series_field in data and current_series_id is not None:
+            current_series = await _require_recurring_series(session, current_series_id)
+            await require_account(
+                session,
+                current_series.account_id,
+                writable=True,
+                profile_id=active_profile.id,
+            )
     series_repayment = None
     series_insurance = None
     if data.get("recurring_series_repayment_id") is not None:
