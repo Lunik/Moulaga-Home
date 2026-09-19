@@ -161,12 +161,6 @@ function BudgetOverviewPanel({
           icon="budget"
         />
         <MetricCard
-          label="Budget disponible"
-          value={signedMoney(overview.data?.budget_remaining ?? 0)}
-          detail="Après les dépenses récurrentes du cycle"
-          icon="calendar"
-        />
-        <MetricCard
           label="Épargne du cycle"
           value={money(overview.data?.savings_contributions)}
           detail="Contributions enregistrées"
