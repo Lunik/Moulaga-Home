@@ -330,3 +330,30 @@ def test_shared_holding_exposes_profile_allocations_and_totals(client):
     visible = client.get("/api/holdings").json()[0]
     assert visible["active_profile_quantity"] == "1.5000000000"
     assert visible["active_profile_market_value"] == "180.00"
+
+
+def test_global_portfolio_snapshots_stay_hidden_after_profile_archival(client):
+    alice = client.post("/api/profiles", json={"name": "Alice"}).json()
+    _activate_profile(client, alice["id"])
+    snapshot = client.put(
+        "/api/portfolio/snapshots",
+        json={"period": "2026-09", "market_value": "1000.00", "cost_basis": "900.00"},
+    )
+    assert snapshot.status_code == 200
+
+    bob = client.post("/api/profiles/manage", json={"name": "Bob"}).json()
+    assert client.patch(
+        f"/api/profiles/{bob['id']}", json={"role": "admin"}
+    ).status_code == 200
+    for account in client.get("/api/accounts").json():
+        assert client.post(f"/api/accounts/{account['id']}/archive").status_code == 200
+
+    _activate_profile(client, bob["id"])
+    assert client.patch(
+        f"/api/profiles/{alice['id']}", json={"active": False}
+    ).status_code == 200
+    assert client.get("/api/portfolio/snapshots").json() == []
+    assert client.put(
+        "/api/portfolio/snapshots",
+        json={"period": "2026-09", "market_value": "1.00", "cost_basis": "1.00"},
+    ).status_code == 409

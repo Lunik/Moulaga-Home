@@ -268,14 +268,10 @@ async def _real_estate_owner_profiles(
     )
 
 
-async def _portfolio_snapshots_are_private_to_profile(
+async def _portfolio_snapshots_are_single_profile_only(
     session: AsyncSession,
 ) -> bool:
-    return (
-        await session.scalar(
-            select(func.count()).select_from(Profile).where(Profile.active.is_(True))
-        )
-    ) == 1
+    return (await session.scalar(select(func.count()).select_from(Profile))) == 1
 
 
 @dataclass(slots=True)
@@ -2469,7 +2465,7 @@ async def list_portfolio_snapshots(
     session: AsyncSession = Depends(get_session),
 ) -> list[PortfolioSnapshotRead]:
     del active_profile
-    if not await _portfolio_snapshots_are_private_to_profile(session):
+    if not await _portfolio_snapshots_are_single_profile_only(session):
         return []
     rows = (
         await session.execute(select(PortfolioSnapshot).order_by(PortfolioSnapshot.period))
@@ -2484,7 +2480,7 @@ async def upsert_portfolio_snapshot(
     session: AsyncSession = Depends(get_session),
 ) -> PortfolioSnapshotRead:
     del active_profile
-    if not await _portfolio_snapshots_are_private_to_profile(session):
+    if not await _portfolio_snapshots_are_single_profile_only(session):
         raise HTTPException(
             status_code=409,
             detail="Les snapshots de portefeuille ne sont pas disponibles par profil",
@@ -2510,7 +2506,7 @@ async def generate_portfolio_snapshot(
 ) -> PortfolioSnapshotRead:
     """Idempotently record the current portfolio valuation for a month (YYYY-MM)."""
     del active_profile
-    if not await _portfolio_snapshots_are_private_to_profile(session):
+    if not await _portfolio_snapshots_are_single_profile_only(session):
         raise HTTPException(
             status_code=409,
             detail="Les snapshots de portefeuille ne sont pas disponibles par profil",
@@ -2980,15 +2976,12 @@ async def net_worth_history(
             .order_by(PortfolioSnapshot.period)
         )
     ).scalars().all()
-    active_profiles = await session.scalar(
-        select(func.count()).select_from(Profile).where(Profile.active.is_(True))
-    )
     portfolio_by_period = (
         {
             snapshot.period: Decimal(snapshot.market_value)
             for snapshot in portfolio_snapshots
         }
-        if active_profiles == 1
+        if await _portfolio_snapshots_are_single_profile_only(session)
         else {}
     )
 

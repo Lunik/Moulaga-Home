@@ -210,6 +210,7 @@ def test_archived_resources_do_not_block_deactivation_and_sessions_are_revoked(
         assert member_client.patch(
             f"/api/debts/{debt['id']}", json={"archived": True}
         ).status_code == 200
+        pension = member_client.get("/api/work/pension").json()
 
         deactivated = admin_client.patch(
             f"/api/profiles/{bob['id']}", json={"active": False}
@@ -221,6 +222,10 @@ def test_archived_resources_do_not_block_deactivation_and_sessions_are_revoked(
             f"/api/profiles/{bob['id']}", json={"active": True}
         ).status_code == 200
         assert member_client.get("/api/profiles/session").status_code == 401
+        assert member_client.post(
+            f"/api/profiles/{bob['id']}/select", json={}
+        ).status_code == 200
+        assert member_client.get("/api/work/pension").json()["id"] == pension["id"]
 
 
 def test_profile_pin_failures_are_throttled_and_profile_fields_reject_null(

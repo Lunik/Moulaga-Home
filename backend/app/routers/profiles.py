@@ -474,7 +474,10 @@ async def update_profile(
             session,
             include_archived=False,
         )
-        if any(ownership.model_dump().values()):
+        blocking_resources = ownership.model_dump(
+            exclude={"pension_profile_ids"}
+        )
+        if any(blocking_resources.values()):
             raise HTTPException(
                 status_code=409,
                 detail="Les ressources du profil doivent etre transferees ou archivees",
