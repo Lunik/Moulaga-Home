@@ -60,7 +60,7 @@ def _pension_read(
         required_quarters=profile.required_quarters,
         today=local_today(),
         income_growth_scenario=profile.income_growth_scenario,
-        future_annual_gross=profile.future_annual_gross,
+        target_monthly_income=profile.target_monthly_income,
         future_work_percentage=profile.future_work_percentage,
         planned_unemployment_months=profile.planned_unemployment_months,
     )
@@ -143,7 +143,7 @@ async def get_work_summary(
             required_quarters=req_q,
             today=today,
             income_growth_scenario=pension.income_growth_scenario,
-            future_annual_gross=pension.future_annual_gross,
+            target_monthly_income=pension.target_monthly_income,
             future_work_percentage=pension.future_work_percentage,
             planned_unemployment_months=pension.planned_unemployment_months,
         )

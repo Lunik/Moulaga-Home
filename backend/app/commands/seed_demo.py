@@ -1198,7 +1198,6 @@ async def _seed(
         estimated_monthly_pension=money("0.00"),
         target_monthly_income=money("3000.00"),
         income_growth_scenario="regular",
-        future_annual_gross=money("75208.71"),
         future_work_percentage=100,
         planned_unemployment_months=0,
         notes="59 trimestres hors bulletins saisis ; carrière commencée avant 21 ans",

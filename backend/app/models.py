@@ -560,9 +560,6 @@ class PensionProfile(Base):
     income_growth_scenario: Mapped[str] = mapped_column(
         String(24), default="regular"
     )
-    future_annual_gross: Mapped[Decimal | None] = mapped_column(
-        Numeric(12, 2), nullable=True
-    )
     future_work_percentage: Mapped[int] = mapped_column(Integer, default=100)
     planned_unemployment_months: Mapped[int] = mapped_column(Integer, default=0)
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)

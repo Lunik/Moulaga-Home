@@ -200,7 +200,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         ]
         projection = pension["projection"]
         assert projection["reference_annual_gross"] == "51999.96"
-        assert projection["simulated_end_annual_gross"] == "75208.71"
+        assert projection["simulated_end_annual_gross"] == "36000.00"
         assert projection["payslip_count"] == 8
         assert projection["covered_years"] == [2026, 2021, 2011, 2010]
         assert [scenario["kind"] for scenario in projection["scenarios"]] == [

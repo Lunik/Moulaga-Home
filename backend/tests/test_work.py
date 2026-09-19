@@ -184,7 +184,6 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
             "estimated_monthly_pension": "2600.00",
             "target_monthly_income": "3200.00",
             "income_growth_scenario": "strong_late",
-            "future_annual_gross": "72000.00",
             "future_work_percentage": 80,
             "planned_unemployment_months": 12,
             "notes": "Updated pension test",
@@ -193,7 +192,7 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
         assert res_p_up.status_code == 200
         assert res_p_up.json()["birth_month"] == 6
         assert res_p_up.json()["income_growth_scenario"] == "strong_late"
-        assert res_p_up.json()["future_annual_gross"] == "72000.00"
+        assert "future_annual_gross" not in res_p_up.json()
         assert res_p_up.json()["future_work_percentage"] == 80
         assert res_p_up.json()["planned_unemployment_months"] == 12
         assert res_p_up.json()["estimated_monthly_pension"] == "2600.00"
@@ -203,7 +202,7 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
         assert projection["payslip_count"] == 1
         assert projection["covered_years"] == [2026]
         assert projection["annual_social_security_ceiling"] == "48060.00"
-        assert projection["simulated_end_annual_gross"] == "57600.00"
+        assert projection["simulated_end_annual_gross"] == "30720.00"
         assert projection["income_evolution"][0] == {
             "age_years": 34,
             "annual_gross": "48000.00",
@@ -213,7 +212,7 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
             "target",
             "full_rate_automatic",
         ]
-        assert projection["scenarios"][0]["total_monthly_pension"] == "2572.97"
+        assert projection["scenarios"][0]["total_monthly_pension"] == "2293.72"
 
         # Delete attachments
         del_contract_att = client.delete(

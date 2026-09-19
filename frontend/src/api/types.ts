@@ -491,7 +491,6 @@ export interface PensionProfile {
   estimated_monthly_pension: Money
   target_monthly_income: Money
   income_growth_scenario: 'none' | 'regular' | 'strong_early' | 'strong_late'
-  future_annual_gross: Money | null
   future_work_percentage: number
   planned_unemployment_months: number
   notes: string | null
