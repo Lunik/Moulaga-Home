@@ -2721,14 +2721,11 @@ async def portfolio_performance(
             )
         )
 
-    active_profiles = await session.scalar(
-        select(func.count()).select_from(Profile).where(Profile.active.is_(True))
-    )
     snapshots = (
         (
             await session.execute(select(PortfolioSnapshot).order_by(PortfolioSnapshot.period))
         ).scalars().all()
-        if active_profiles == 1
+        if await _portfolio_snapshots_are_single_profile_only(session)
         else []
     )
     snapshot_by_period = {s.period: s for s in snapshots}

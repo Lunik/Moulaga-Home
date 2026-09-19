@@ -46,6 +46,7 @@ export function ProfileGate({
   const [sessionActionError, setSessionActionError] = useState<unknown>(null)
   const [sessionActionPending, setSessionActionPending] = useState(false)
   const profileSessionChannel = useRef<BroadcastChannel | null>(null)
+  const sessionSyncGeneration = useRef(0)
   const clearProfileIdentityQueries = useCallback(() => {
     queryClient.removeQueries({
       predicate: (query) => String(query.queryKey[0]) !== profileQueryKeys.session[0],
@@ -85,6 +86,7 @@ export function ProfileGate({
   }, [showPicker])
   useEffect(() => {
     const synchronizeSession = (change: unknown) => {
+      const syncGeneration = ++sessionSyncGeneration.current
       advanceProfileSessionGeneration()
       if (change === 'locking') {
         setSessionActionPending(true)
@@ -98,16 +100,23 @@ export function ProfileGate({
       }
       if (change !== 'selected') return
 
-      setSessionActionPending(false)
-      setProfileSessionLocallyLocked(false)
-      setShowProfilePicker(false)
+      setSessionActionPending(true)
+      setShowProfilePicker(true)
       setManageProfiles(false)
-      queryClient.setQueryData(profileQueryKeys.session, null)
       clearProfileIdentityQueries()
-      void queryClient.fetchQuery({
-        queryKey: profileQueryKeys.session,
-        queryFn: profilesApi.session,
-      }).catch(() => showPicker())
+      void queryClient.cancelQueries({ queryKey: profileQueryKeys.session }).then(async () => {
+        queryClient.removeQueries({ queryKey: profileQueryKeys.session })
+        return profilesApi.session()
+      }).then((profileSession) => {
+        if (syncGeneration !== sessionSyncGeneration.current) return
+        queryClient.setQueryData(profileQueryKeys.session, profileSession)
+        setProfileSessionLocallyLocked(false)
+        setShowProfilePicker(false)
+      }).catch(() => {
+        if (syncGeneration === sessionSyncGeneration.current) showPicker()
+      }).finally(() => {
+        if (syncGeneration === sessionSyncGeneration.current) setSessionActionPending(false)
+      })
     }
     const onStorage = (event: StorageEvent) => {
       if (event.key !== profileSessionStorageKey || event.newValue === null) return
@@ -148,6 +157,7 @@ export function ProfileGate({
   const endSession = async () => {
     setSessionActionError(null)
     setSessionActionPending(true)
+    sessionSyncGeneration.current += 1
     advanceProfileSessionGeneration()
     showPicker()
     broadcastProfileSessionChange('locking')
@@ -200,6 +210,7 @@ export function ProfileGate({
       profiles={profiles.data ?? []}
       onManageRequest={() => setOpenManagerOnSignIn(true)}
       onConnected={async (profileSession) => {
+        sessionSyncGeneration.current += 1
         setSessionActionError(null)
         setSessionActionPending(false)
         setProfileSessionLocallyLocked(false)

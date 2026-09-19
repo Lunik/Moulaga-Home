@@ -285,6 +285,51 @@ def test_first_profile_bootstrap_is_atomic(app_factory):
         assert profiles[0]["role"] == "admin"
 
 
+def test_concurrent_admin_demotions_keep_one_active_administrator(app_factory):
+    main, _, data_dir = app_factory
+    app = main.create_app()
+    with (
+        TestClient(app, base_url="https://testserver") as alice_client,
+        TestClient(app, base_url="https://testserver") as bob_client,
+    ):
+        alice = alice_client.post("/api/profiles", json={"name": "Alice"}).json()
+        assert alice_client.post(
+            f"/api/profiles/{alice['id']}/select", json={}
+        ).status_code == 200
+        bob = alice_client.post("/api/profiles", json={"name": "Bob"}).json()
+        assert alice_client.patch(
+            f"/api/profiles/{bob['id']}", json={"role": "admin"}
+        ).status_code == 200
+        assert bob_client.post(
+            f"/api/profiles/{bob['id']}/select", json={}
+        ).status_code == 200
+        barrier = Barrier(2)
+
+        def demote(client: TestClient, profile_id: int):
+            barrier.wait()
+            return client.patch(
+                f"/api/profiles/{profile_id}",
+                json={"role": "member"},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            responses = list(
+                executor.map(
+                    lambda item: demote(*item),
+                    ((alice_client, alice["id"]), (bob_client, bob["id"])),
+                )
+            )
+
+        assert sorted(response.status_code for response in responses) == [200, 409]
+
+    with sqlite3.connect(data_dir / "moulaga.db") as connection:
+        active_admins = connection.execute(
+            "SELECT COUNT(*) FROM household_members "
+            "WHERE active = 1 AND role IN ('admin', 'owner')"
+        ).fetchone()[0]
+    assert active_admins == 1
+
+
 def test_owner_link_column_migrates_from_profile_to_member_id(app_factory, monkeypatch):
     main, _, data_dir = app_factory
     with TestClient(main.create_app(), base_url="https://testserver") as client:

@@ -448,6 +448,10 @@ async def update_profile(
     current_profile: Profile = Depends(get_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> ProfileRead:
+    if {"active", "role"}.intersection(payload.model_fields_set):
+        connection = await session.connection()
+        await connection.exec_driver_sql("BEGIN IMMEDIATE")
+        await session.refresh(current_profile)
     profile = await session.get(Profile, profile_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="Profil introuvable")
