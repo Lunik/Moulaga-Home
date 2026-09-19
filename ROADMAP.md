@@ -50,6 +50,20 @@ Moulaga se concentre sur trois sources locales et explicites :
 - [x] Comptes partages avec dernier solde releve.
 - [x] Objectifs et contributions communes.
 
+## Multi-utilisateur
+
+Conception detaillee et invariants dans `MULTI_USER.md`.
+
+- [x] Ecran de selection de profil, creation et changement de profil.
+- [x] PIN facultatif par profil et session validee cote backend.
+- [x] Migration des donnees existantes vers le premier profil.
+- [x] Profil de retraite, contrats de travail et bulletins de paie propres a un profil.
+- [x] Titulaires multiples sur les comptes et heritage des series recurrentes.
+- [x] Levee de l'unicite globale des noms de comptes.
+- [x] Proprietaires explicites sur les biens immobiliers et les dettes.
+- [x] Quote-part et montant total affiches dans toutes les vues.
+- [x] Seed de demonstration avec deux carrieres, un compte joint et un bien partage.
+
 ## Retrait du registre d'operations - 2026-09-10
 
 - [x] Solde historique materialise dans un releve avant migration.

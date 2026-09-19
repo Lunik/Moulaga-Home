@@ -20,7 +20,9 @@ import type {
   AccountSnapshot,
   AccountSnapshotImportResult,
   Holding,
+  UserProfile,
 } from '../api/types'
+import { ProfileOwnership } from '../ProfileOwnership'
 import { supportsHoldings } from '../accountCapabilities'
 import {
   AttachmentManager,
@@ -163,10 +165,14 @@ function filterInstitutionChartData(
 
 export function AccountsView({
   accounts,
+  activeProfile,
+  profiles,
   navigate,
   onRefresh,
 }: {
   accounts: Account[]
+  activeProfile: UserProfile
+  profiles: UserProfile[]
   navigate: (route: Route) => void
   onRefresh: () => Promise<void>
 }) {
@@ -188,7 +194,7 @@ export function AccountsView({
   const visibleAccounts = accounts.filter((account) => {
     return account.archived === showArchived && (typeFilter === 'all' || account.type === typeFilter)
   })
-  const total = visibleAccounts.reduce((sum, account) => sum + Number(account.balance), 0)
+  const total = visibleAccounts.reduce((sum, account) => sum + Number(account.profile_share ?? account.balance), 0)
   const availableTypes = new Set(accounts.map((account) => account.type))
   const types = [
     ...accountTypeFilterOrder.filter((type) => availableTypes.has(type)),
@@ -235,6 +241,8 @@ export function AccountsView({
 
       {showForm && (
         <AccountForm
+          activeProfile={activeProfile}
+          profiles={profiles}
           onCancel={() => setShowForm(false)}
           onSaved={async () => {
             await onRefresh()
@@ -390,7 +398,7 @@ export function AccountsView({
           {accountGroups.map(([institutionLabel, institutionAccounts]) => {
             const collapsed = collapsedInstitutions.has(institutionLabel)
             const institutionTotal = institutionAccounts.reduce(
-              (sum, account) => sum + Number(account.balance),
+              (sum, account) => sum + Number(account.profile_share ?? account.balance),
               0,
             )
             return (
@@ -418,7 +426,7 @@ export function AccountsView({
                 {!collapsed && (
                   <div className="account-grid">
                     {institutionAccounts.map((account) => (
-                      <AccountCard account={account} key={account.id} navigate={navigate} />
+                      <AccountCard account={account} activeProfile={activeProfile} key={account.id} navigate={navigate} profiles={profiles} />
                     ))}
                   </div>
                 )}
@@ -438,9 +446,13 @@ export function AccountsView({
 
 function AccountCard({
   account,
+  activeProfile,
+  profiles,
   navigate,
 }: {
   account: Account
+  activeProfile: UserProfile
+  profiles: UserProfile[]
   navigate: (route: Route) => void
 }) {
   const missingSnapshotCount = account.missing_snapshot_periods.length
@@ -464,7 +476,7 @@ function AccountCard({
           <small className="account-number">ID : {account.account_number}</small>
         )}
       </div>
-      <strong className="account-balance">{money(account.balance)}</strong>
+      <strong className="account-balance">{money(account.profile_share ?? account.balance)}</strong>
       <div className="account-meta">
         {missingSnapshotCount > 0 && !account.archived ? (
           <span className="account-missing-statements">
@@ -472,7 +484,9 @@ function AccountCard({
             {missingStatementsLabel(missingSnapshotCount)}
           </span>
         ) : (
-          <span>Solde relevé</span>
+          <span>{account.owner_profile_ids && account.owner_profile_ids.length > 1
+            ? `Solde total : ${money(account.total_balance ?? account.balance)} · partagé avec ${profiles.filter((profile) => account.owner_profile_ids?.includes(profile.id) && profile.id !== activeProfile.id).map((profile) => profile.name).join(', ')}`
+            : 'Solde relevé'}</span>
         )}
         <span>Voir le détail <Icon name="arrow" /></span>
       </div>
@@ -483,11 +497,15 @@ function AccountCard({
 export function AccountDetailView({
   accountId,
   accounts,
+  activeProfile,
+  profiles,
   navigate,
   onRefresh,
 }: {
   accountId: number
   accounts: Account[]
+  activeProfile: UserProfile
+  profiles: UserProfile[]
   navigate: (route: Route) => void
   onRefresh: () => Promise<void>
 }) {
@@ -558,11 +576,12 @@ export function AccountDetailView({
   if (account.isLoading) return <div className="loading-card">Chargement du compte…</div>
   if (!account.data) return <div className="error-banner">{errors.length > 0 ? errorMessage(errors[0]) : 'Compte introuvable.'}</div>
   const readOnly = account.data.archived
-  const balance = Number(account.data.balance)
+  const totalBalance = account.data.total_balance ?? account.data.balance
+  const balance = Number(totalBalance)
   const missingSnapshotPeriods = readOnly ? [] : account.data.missing_snapshot_periods
-  const snapshotChartData = [...(snapshots.data ?? [])]
+  const snapshotChartData = [...account.data.history]
     .sort((left, right) => left.period.localeCompare(right.period))
-    .map((snapshot) => ({ ...snapshot, balance: Number(snapshot.balance) }))
+    .map((point) => ({ ...point, balance: Number(point.balance) }))
   const statementItems: StatementListItem[] = [
     ...(snapshots.data ?? []).map((snapshot): StatementListItem => ({
       kind: 'snapshot',
@@ -705,7 +724,7 @@ export function AccountDetailView({
             <div className="modal-warning warning">
               <Icon name="alert" />
               <p>
-                Le dernier relevé de ce compte indique <strong>{money(account.data.balance)}</strong>.
+                Le dernier relevé de ce compte indique <strong>{money(totalBalance)}</strong>.
                 Vérifiez-le avant de poursuivre.
               </p>
             </div>
@@ -778,6 +797,8 @@ export function AccountDetailView({
       {showEdit && !readOnly && (
         <EditAccountForm
           account={account.data}
+          activeProfile={activeProfile}
+          profiles={profiles}
           onCancel={() => setShowEdit(false)}
           onSaved={async () => {
             await refreshDetail()
@@ -794,10 +815,11 @@ export function AccountDetailView({
           {account.data.archived && <StatusBadge tone="warning">Archivé</StatusBadge>}
         </div>
         <p>{snapshotChartData.length > 0 ? 'Dernier solde relevé' : 'Solde initial'}</p>
-        <strong>{money(account.data.balance)}</strong>
+        <strong>{money(account.data.profile_share ?? account.data.balance)}</strong>
         <small>
           {accountInstitutionLabel(account.data) || 'Établissement non renseigné'}
           {account.data.account_number && ` · ID : ${account.data.account_number}`}
+          {account.data.owner_profile_ids && account.data.owner_profile_ids.length > 1 && ` · Solde total : ${money(account.data.total_balance ?? account.data.balance)}`}
         </small>
       </section>
 
@@ -1341,13 +1363,14 @@ function SavingsConfigurator({
   )
 }
 
-function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => Promise<void> }) {
+function AccountForm({ activeProfile, profiles, onCancel, onSaved }: { activeProfile: UserProfile; profiles: UserProfile[]; onCancel: () => void; onSaved: () => Promise<void> }) {
   const [name, setName] = useState('')
   const [type, setType] = useState('checking')
   const [institution, setInstitution] = useState('')
   const [regionalEntity, setRegionalEntity] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
   const [initialBalance, setInitialBalance] = useState('0')
+  const [ownerProfileIds, setOwnerProfileIds] = useState([activeProfile.id])
   const mutation = useMutation({
     mutationFn: () => apiPost<Account>('/accounts', {
       name,
@@ -1357,6 +1380,7 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
       regional_entity: regionalEntity || null,
       account_number: accountNumber || null,
       initial_balance: initialBalance,
+      owner_profile_ids: ownerProfileIds,
       ...(type === 'savings' ? {
         savings_product: savingsProducts[0].name,
         annual_interest_rate: savingsProducts[0].rate,
@@ -1394,6 +1418,16 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
           </FormSelect>
         </Field>
         <Field label="Solde initial"><FormInput type="number" step="0.01" value={initialBalance} onChange={(event) => setInitialBalance(event.target.value)} required /></Field>
+        <div className="account-ownership-row">
+          <ProfileOwnership
+            activeProfileId={activeProfile.id}
+            description="Sélectionnez les profils qui partagent le solde et les budgets associés."
+            onChange={setOwnerProfileIds}
+            profiles={profiles}
+            selectedIds={ownerProfileIds}
+            title="Partage du compte"
+          />
+        </div>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
           <button className="primary-button" type="submit" disabled={mutation.isPending}>Créer</button>
@@ -1404,13 +1438,15 @@ function AccountForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () 
   )
 }
 
-function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onCancel: () => void; onSaved: () => Promise<void> }) {
+function EditAccountForm({ account, activeProfile, profiles, onCancel, onSaved }: { account: Account; activeProfile: UserProfile; profiles: UserProfile[]; onCancel: () => void; onSaved: () => Promise<void> }) {
   const [name, setName] = useState(account.name)
   const [type, setType] = useState(account.type)
   const [institution, setInstitution] = useState(account.institution ?? '')
   const [regionalEntity, setRegionalEntity] = useState(account.regional_entity ?? '')
   const [accountNumber, setAccountNumber] = useState(account.account_number ?? '')
-  const [balance, setBalance] = useState(account.balance)
+  const storedBalance = account.total_balance ?? account.balance
+  const [balance, setBalance] = useState(storedBalance)
+  const [ownerProfileIds, setOwnerProfileIds] = useState(account.owner_profile_ids ?? [activeProfile.id])
   const mutation = useMutation({
     mutationFn: () => apiPatch<Account>(`/accounts/${account.id}`, {
       name,
@@ -1418,7 +1454,8 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
       institution: institution || null,
       regional_entity: regionalEntity || null,
       account_number: accountNumber || null,
-      ...(balance !== account.balance ? { balance } : {}),
+      ...(balance !== storedBalance ? { balance } : {}),
+      owner_profile_ids: ownerProfileIds,
       ...(type === 'savings' && account.type !== 'savings' ? {
         savings_product: savingsProducts[0].name,
         annual_interest_rate: savingsProducts[0].rate,
@@ -1461,7 +1498,17 @@ function EditAccountForm({ account, onCancel, onSaved }: { account: Account; onC
             ))}
           </FormSelect>
         </Field>
-        <Field label="Solde du mois en cours"><FormInput type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} required /></Field>
+        <Field label="Solde total du mois en cours"><FormInput type="number" step="0.01" value={balance} onChange={(event) => setBalance(event.target.value)} required /></Field>
+        <div className="account-ownership-row">
+          <ProfileOwnership
+            activeProfileId={activeProfile.id}
+            description="Sélectionnez les profils qui partagent le solde et les budgets associés."
+            onChange={setOwnerProfileIds}
+            profiles={profiles}
+            selectedIds={ownerProfileIds}
+            title="Partage du compte"
+          />
+        </div>
         <div className="form-buttons">
           <button className="secondary-button" type="button" onClick={onCancel}>Annuler</button>
           <button className="primary-button" type="submit" disabled={mutation.isPending}>Enregistrer</button>
@@ -1555,7 +1602,7 @@ function SnapshotForm({
   const [period, setPeriod] = useState(
     initialPeriod ?? localDateInputValue().slice(0, 7),
   )
-  const [balance, setBalance] = useState(account.balance)
+  const [balance, setBalance] = useState(account.total_balance ?? account.balance)
   const [attachment, setAttachment] = useState<File | null>(null)
   const formId = 'snapshot-create'
   const mutation = useMutation({
@@ -1608,7 +1655,7 @@ function SnapshotForm({
             required
           />
         </Field>
-        <Field label="Solde de clôture">
+        <Field label="Solde total de clôture">
           <FormInput
             type="number"
             step="0.01"

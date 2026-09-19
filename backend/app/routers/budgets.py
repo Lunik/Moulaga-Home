@@ -6,9 +6,14 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..account_access import (
+    account_owner_member_column,
+    account_share,
+    require_active_profile,
+)
 from ..category_budgeting import (
     budgeted_category_ids,
     effective_parent_ids,
@@ -18,8 +23,11 @@ from ..common import cycle_bounds, get_preferences, money
 from ..db import get_session
 from ..models import (
     Account,
+    AccountOwner,
     Category,
     Contribution,
+    Holding,
+    HouseholdMember,
 )
 from ..recurring_budget import recurring_budget_occurrences, recurring_budget_projection
 from ..schemas import (
@@ -31,6 +39,10 @@ from ..schemas import (
 )
 
 router = APIRouter(tags=["budget-cycles"], prefix="/budget")
+
+
+def _profile_amount(amount: Decimal, profile_share: Decimal | None) -> Decimal:
+    return profile_share if profile_share is not None else amount
 
 
 async def _bounds(session: AsyncSession, on: date | None) -> tuple[date, date, int]:
@@ -53,16 +65,32 @@ async def _period_bounds(
 
 @router.get("/overview", response_model=BudgetCycleOverview)
 async def cycle_overview(
-    on: date | None = None, session: AsyncSession = Depends(get_session)
+    on: date | None = None,
+    profile: HouseholdMember = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> BudgetCycleOverview:
     start, end, start_day = await _bounds(session, on)
-    occurrences = await recurring_budget_occurrences(session, start, end)
+    occurrences = await recurring_budget_occurrences(
+        session,
+        start,
+        end,
+        profile_id=profile.id,
+    )
+    household_occurrences = await recurring_budget_occurrences(session, start, end)
     income = sum(
-        (occurrence.amount for occurrence in occurrences if occurrence.amount > 0),
+        (
+            _profile_amount(occurrence.amount, occurrence.profile_share)
+            for occurrence in occurrences
+            if occurrence.amount > 0
+        ),
         Decimal("0"),
     )
     expenses = sum(
-        (-occurrence.amount for occurrence in occurrences if occurrence.amount < 0),
+        (
+            -_profile_amount(occurrence.amount, occurrence.profile_share)
+            for occurrence in occurrences
+            if occurrence.amount < 0
+        ),
         Decimal("0"),
     )
     categories = (
@@ -76,22 +104,43 @@ async def cycle_overview(
     envelope_planned_raw = sum(
         (
             -occurrence.amount
-            for occurrence in occurrences
+            for occurrence in household_occurrences
             if occurrence.amount < 0
             and occurrence.category_id in covered_category_ids
         ),
         Decimal("0"),
     )
+    household_expenses = sum(
+        (
+            -occurrence.amount
+            for occurrence in household_occurrences
+            if occurrence.amount < 0
+        ),
+        Decimal("0"),
+    )
     recurring_amount = sum(
-        (occurrence.amount for occurrence in occurrences),
+        (
+            _profile_amount(occurrence.amount, occurrence.profile_share)
+            for occurrence in occurrences
+        ),
         Decimal("0"),
     )
     # Savings contributions recorded in-cycle (kept separate from expense flows).
-    savings = await session.scalar(
-        select(func.coalesce(func.sum(Contribution.amount), 0)).where(
-            Contribution.occurred_on >= start, Contribution.occurred_on <= end
+    contribution_rows = (
+        await session.execute(
+            select(Contribution.amount, Holding.account_id)
+            .join(Holding, Holding.id == Contribution.holding_id)
+            .join(AccountOwner, AccountOwner.account_id == Holding.account_id)
+            .where(
+                Contribution.occurred_on >= start,
+                Contribution.occurred_on <= end,
+                account_owner_member_column() == profile.id,
+            )
         )
-    )
+    ).all()
+    savings = Decimal("0.00")
+    for amount, account_id in contribution_rows:
+        savings += await account_share(session, account_id, profile.id, amount)
     income_amount = money(income)
     expenses_abs = money(expenses)
     budget_total = money(budget)
@@ -102,7 +151,7 @@ async def cycle_overview(
         expenses=expenses_abs,
         net=money(income_amount - expenses_abs),
         budget_total=budget_total,
-        budget_remaining=money(budget_total - expenses_abs),
+        budget_remaining=money(budget_total - household_expenses),
         envelope_planned=envelope_planned,
         envelope_available=money(budget_total - envelope_planned),
         upcoming_recurring_amount=money(recurring_amount),
@@ -113,7 +162,9 @@ async def cycle_overview(
 
 @router.get("/envelopes", response_model=list[EnvelopeRead])
 async def envelopes(
-    on: date | None = None, session: AsyncSession = Depends(get_session)
+    on: date | None = None,
+    profile: HouseholdMember = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> list[EnvelopeRead]:
     start, end, _ = await _bounds(session, on)
     categories = (
@@ -211,6 +262,7 @@ async def cashflow(
     by: str = Query(default="category", pattern="^(category|source)$"),
     period: str = Query(default="cycle", pattern="^(cycle|year)$"),
     months: int | None = Query(default=None),
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[CashflowFlow]:
     if months is not None and months not in {1, 3, 6, 12}:
@@ -220,9 +272,18 @@ async def cashflow(
         )
     if months is None:
         start, end, _ = await _period_bounds(session, on, period)
-        entries = await recurring_budget_occurrences(session, start, end)
+        entries = await recurring_budget_occurrences(
+            session,
+            start,
+            end,
+            profile_id=profile.id,
+        )
     else:
-        entries = await recurring_budget_projection(session, months)
+        entries = await recurring_budget_projection(
+            session,
+            months,
+            profile_id=profile.id,
+        )
 
     if by == "source":
         accounts = {
@@ -235,10 +296,11 @@ async def cashflow(
                 occurrence.account_id,
                 (Decimal("0"), Decimal("0")),
             )
-            if occurrence.amount > 0:
-                income += occurrence.amount
-            elif occurrence.amount < 0:
-                expenses -= occurrence.amount
+            amount = _profile_amount(occurrence.amount, occurrence.profile_share)
+            if amount > 0:
+                income += amount
+            elif amount < 0:
+                expenses -= amount
             totals[occurrence.account_id] = income, expenses
         return [
             CashflowFlow(
@@ -264,10 +326,11 @@ async def cashflow(
             occurrence.category_id,
             (Decimal("0"), Decimal("0")),
         )
-        if occurrence.amount > 0:
-            income += occurrence.amount
-        elif occurrence.amount < 0:
-            expenses -= occurrence.amount
+        amount = _profile_amount(occurrence.amount, occurrence.profile_share)
+        if amount > 0:
+            income += amount
+        elif amount < 0:
+            expenses -= amount
         totals_by_category[occurrence.category_id] = income, expenses
     return [
         CashflowFlow(
@@ -288,10 +351,16 @@ async def cashflow(
 async def hierarchical_spending(
     on: date | None = None,
     period: str = Query(default="cycle", pattern="^(cycle|year)$"),
+    profile: HouseholdMember = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[HierarchicalSpendingNode]:
     start, end, _ = await _period_bounds(session, on, period)
-    occurrences = await recurring_budget_occurrences(session, start, end)
+    occurrences = await recurring_budget_occurrences(
+        session,
+        start,
+        end,
+        profile_id=profile.id,
+    )
     planned: dict[int | None, tuple[Decimal, int]] = {}
     for occurrence in occurrences:
         if occurrence.amount >= 0:
@@ -301,7 +370,7 @@ async def hierarchical_spending(
             (Decimal("0"), 0),
         )
         planned[occurrence.category_id] = (
-            money(amount - occurrence.amount),
+            money(amount - _profile_amount(occurrence.amount, occurrence.profile_share)),
             count + 1,
         )
 

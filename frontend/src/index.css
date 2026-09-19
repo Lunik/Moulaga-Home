@@ -560,6 +560,764 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   gap: 0.9rem;
 }
 
+.profile-loading,
+.profile-picker {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 1.5rem;
+  background:
+    radial-gradient(circle at 20% 15%, rgb(97 95 255 / 28%), transparent 32rem),
+    radial-gradient(circle at 85% 90%, rgb(22 199 154 / 18%), transparent 28rem),
+    var(--background);
+}
+
+.profile-loading {
+  color: var(--muted);
+}
+
+.profile-picker-card {
+  width: min(62rem, 100%);
+  padding: clamp(1.5rem, 5vw, 4rem);
+  border: 1px solid var(--line-strong);
+  border-radius: 2rem;
+  background: rgb(17 17 19 / 86%);
+  box-shadow: 0 30px 100px rgb(0 0 0 / 42%);
+}
+
+.profile-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 3rem;
+  font-size: 1.1rem;
+}
+
+.profile-picker-card > h1 {
+  margin: 0.35rem 0;
+  font-size: clamp(1.9rem, 5vw, 3.2rem);
+}
+
+.profile-picker-copy {
+  max-width: 35rem;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.profile-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 1.25rem;
+  margin-top: 2.5rem;
+}
+
+.profile-tile {
+  display: grid;
+  min-height: 12.5rem;
+  place-items: center;
+  gap: 0.65rem;
+  padding: 1rem;
+  border: 1px solid transparent;
+  border-radius: 1.25rem;
+  background: transparent;
+  color: var(--text);
+  text-align: center;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.profile-tile:hover,
+.profile-tile:focus-visible {
+  transform: scale(1.04);
+  border-color: var(--line-strong);
+  background: var(--surface-soft);
+}
+
+.profile-tile small,
+.profile-management-hint,
+.profile-create-form > p,
+.profile-manager-list small {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.profile-avatar {
+  display: inline-grid;
+  width: 5.5rem;
+  height: 5.5rem;
+  place-items: center;
+  border-radius: 1.15rem;
+  color: #fff;
+  font-size: 2.1rem;
+  font-weight: 800;
+  box-shadow: inset 0 1px rgb(255 255 255 / 22%);
+}
+
+.profile-add-tile > span {
+  display: grid;
+  width: 5.5rem;
+  height: 5.5rem;
+  place-items: center;
+  border: 2px dashed var(--line-strong);
+  border-radius: 1.15rem;
+  color: var(--muted);
+}
+
+.profile-create-form,
+.profile-edit-form {
+  display: grid;
+  max-width: 36rem;
+  gap: 0.9rem;
+  margin-top: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface-soft);
+}
+
+.profile-create-form label,
+.profile-edit-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.profile-create-form input,
+.profile-edit-form input {
+  min-height: 2.6rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.7rem;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.profile-pin-form {
+  display: grid;
+  width: min(25rem, 100%);
+  gap: 1.25rem;
+  margin: 2.5rem auto 0;
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  background: var(--surface-soft);
+  box-shadow: 0 18px 45px rgb(0 0 0 / 20%);
+}
+
+.profile-pin-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.profile-pin-identity .profile-avatar {
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 0.9rem;
+  font-size: 1.35rem;
+}
+
+.profile-pin-identity > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.profile-pin-identity strong {
+  font-size: 1rem;
+}
+
+.profile-pin-identity span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.pin-keypad {
+  display: grid;
+  width: min(18rem, 100%);
+  gap: 0.85rem;
+  margin-inline: auto;
+}
+
+.pin-keypad-display {
+  position: relative;
+  display: flex;
+  min-height: 3.25rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.7rem 3rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.9rem;
+  background: var(--surface);
+}
+
+.pin-keypad-display small {
+  position: absolute;
+  right: 0.85rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.pin-keypad-dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.pin-keypad-dots > span {
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 1px solid var(--faint);
+  border-radius: 50%;
+  background: transparent;
+  transition: 120ms ease;
+}
+
+.pin-keypad-dots > span.filled {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.pin-keypad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.pin-keypad-grid button {
+  min-height: 3rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 750;
+  cursor: pointer;
+  transition: 120ms ease;
+}
+
+.pin-keypad-grid button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  transform: translateY(-1px);
+}
+
+.pin-keypad-grid button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.pin-keypad-grid button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.pin-keypad-grid .pin-keypad-clear {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.pin-keypad-backspace svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.profile-pin-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.profile-pin-actions .text-button,
+.profile-pin-actions .primary-button {
+  gap: 0.45rem;
+}
+
+.profile-create-form > div,
+.profile-edit-form > div,
+.profile-selection-footer,
+.active-profile-menu,
+.profile-manager-list > div,
+.profile-badge,
+.ownership-options {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.profile-create-form .profile-onboarding-pin {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface-soft);
+}
+
+.profile-onboarding-pin > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.profile-onboarding-pin > div:first-child > span {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.profile-onboarding-pin small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.profile-selection-footer {
+  align-items: baseline;
+  margin-top: 1.75rem;
+}
+
+.profile-management-hint {
+  margin: 0;
+}
+
+.active-profile-menu {
+  margin-left: 0.25rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--line);
+}
+
+.active-profile-button {
+  padding: 0.25rem;
+  border: 0;
+  border-radius: 0.65rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.active-profile-button:hover {
+  background: var(--surface-raised);
+}
+
+.active-profile-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.profile-badge {
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.profile-badge i {
+  display: inline-grid;
+  width: 1.7rem;
+  height: 1.7rem;
+  place-items: center;
+  border-radius: 0.5rem;
+  color: #fff;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.profile-manager {
+  width: min(42rem, 100%);
+}
+
+.profile-manager-list {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 1.25rem;
+}
+
+.profile-manager-list > div {
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+}
+
+.profile-manager-list .profile-avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.65rem;
+  font-size: 1rem;
+}
+
+.profile-manager-list span {
+  display: grid;
+  flex: 1;
+}
+
+.profile-admin-pin-reset {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid rgb(255 107 112 / 25%);
+  border-radius: 0.8rem;
+  background: rgb(255 107 112 / 8%);
+}
+
+.profile-admin-pin-reset > span {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.profile-admin-pin-reset small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.profile-pin-panel {
+  align-content: start;
+}
+
+.profile-pin-overview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  min-height: 4.5rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface-soft);
+}
+
+.profile-pin-icon {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.85rem;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.profile-pin-icon.active {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface));
+  color: var(--primary);
+}
+
+.profile-pin-icon svg {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.profile-pin-status {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.profile-pin-status > span {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.profile-pin-status p {
+  max-width: 32rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.profile-pin-settings-form {
+  display: grid;
+  gap: 1.1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface-soft);
+}
+
+.profile-pin-editor-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.profile-pin-editor-heading > span:last-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.profile-pin-editor-heading small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.profile-pin-step-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.profile-pin-step-indicator span {
+  display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 750;
+}
+
+.profile-pin-step-indicator span.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.profile-pin-step-indicator i {
+  width: 2rem;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.profile-pin-success {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--positive);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.profile-pin-success svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.profile-pin-settings-footer,
+.profile-pin-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.profile-pin-settings-footer {
+  justify-content: space-between;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+
+.profile-pin-settings-actions {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.profile-pin-settings-actions .primary-button {
+  min-width: 8.5rem;
+}
+
+.ownership-field {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface-soft);
+}
+
+.ownership-heading {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.ownership-heading strong {
+  font-size: 0.9rem;
+}
+
+.ownership-heading small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.ownership-options {
+  flex-wrap: wrap;
+}
+
+.ownership-option {
+  display: inline-flex;
+  align-items: center;
+  min-width: 10rem;
+  gap: 0.7rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.ownership-option:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-raised);
+}
+
+.ownership-option.selected {
+  border-color: color-mix(in srgb, var(--primary) 65%, var(--line));
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.ownership-option .profile-badge {
+  flex: 1;
+}
+
+.ownership-check {
+  display: grid;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 1.25rem;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: transparent;
+}
+
+.ownership-option.selected .ownership-check {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.ownership-check svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.ownership-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.ownership-summary strong {
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.ownership-summary.shared strong {
+  color: var(--primary);
+}
+
+.ownership-summary span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.account-ownership-row {
+  grid-column: 1 / -1;
+}
+
+.account-ownership-row + .form-buttons {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+@media (max-width: 640px) {
+  .profile-picker {
+    padding: 0;
+  }
+
+  .profile-picker-card {
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .profile-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+
+  .profile-tile {
+    min-height: 9.5rem;
+  }
+
+  .profile-avatar,
+  .profile-add-tile > span {
+    width: 4rem;
+    height: 4rem;
+    border-radius: 0.9rem;
+    font-size: 1.5rem;
+  }
+
+  .profile-selection-footer,
+  .active-profile-menu {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .active-profile-menu {
+    width: 100%;
+    margin: 0;
+    padding: 0.5rem 0 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .profile-manager-list > div {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .profile-admin-pin-reset {
+    flex-direction: column;
+  }
+
+  .profile-pin-overview {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .profile-pin-overview > .secondary-button {
+    grid-column: 1 / -1;
+  }
+
+  .profile-pin-settings-footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .profile-pin-settings-actions {
+    width: 100%;
+    margin: 0;
+  }
+
+  .profile-pin-settings-actions .primary-button {
+    flex: 1;
+  }
+
+  .profile-onboarding-pin > div:first-child {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .modal-card:has(.debt-modal-form) {
   width: min(44rem, 100%);
 }
@@ -4363,6 +5121,19 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   margin-top: 0.25rem;
   color: var(--muted);
   font-size: 0.7rem;
+}
+
+.recurring-amount-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  white-space: nowrap;
+}
+
+.recurring-amount-summary small {
+  color: var(--muted);
+  font-size: 0.68rem;
 }
 
 .change-list time {

@@ -65,6 +65,9 @@ Le dashboard doit montrer :
 - Les projections de livrets utilisent le taux configurable du compte et excluent les versements futurs.
 - Les mutations d'un foyer exigent un acteur et un role suffisant.
 
+L'evolution multi-utilisateur, ses trois natures de propriete et ses invariants de partage sont
+decrits dans `MULTI_USER.md`.
+
 ## Seed de demonstration
 
 - `backend/app/commands/seed_demo.py` est le contrat de demonstration et de QA visuelle de

@@ -19,7 +19,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, synonym
 
 
 class Base(DeclarativeBase):
@@ -37,7 +37,7 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
     type: Mapped[str] = mapped_column(String(32), default="checking")
     currency: Mapped[str] = mapped_column(String(3), default="EUR")
     initial_balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=ZERO)
@@ -56,6 +56,9 @@ class Account(Base):
     snapshots: Mapped[list[BalanceSnapshot]] = relationship(
         back_populates="account",
         cascade="all, delete-orphan",
+    )
+    owners: Mapped[list[AccountOwner]] = relationship(
+        back_populates="account", cascade="all, delete-orphan"
     )
 
 
@@ -220,6 +223,9 @@ class Debt(Base):
     attachments: Mapped[list[DebtAttachment]] = relationship(
         back_populates="debt", cascade="all, delete-orphan"
     )
+    owners: Mapped[list[DebtOwner]] = relationship(
+        back_populates="debt", cascade="all, delete-orphan"
+    )
 
 
 class DebtAttachment(Base):
@@ -261,6 +267,9 @@ class RealEstateAsset(Base):
         back_populates="asset", cascade="all, delete-orphan", passive_deletes=True
     )
     attachments: Mapped[list[RealEstateAttachment]] = relationship(
+        back_populates="asset", cascade="all, delete-orphan"
+    )
+    owners: Mapped[list[RealEstateAssetOwner]] = relationship(
         back_populates="asset", cascade="all, delete-orphan"
     )
 
@@ -380,10 +389,14 @@ class Household(Base):
         back_populates="household", cascade="all, delete-orphan"
     )
 
+    @property
+    def profiles(self) -> list[HouseholdMember]:
+        """Profile-oriented alias for the established household-member model."""
+        return self.members
+
 
 class HouseholdMember(Base):
-    """A local profile inside a household. There is no remote auth: mutations
-    must supply an ``actor_id`` matching a member; roles gate what is allowed."""
+    """A person using the local singleton household."""
 
     __tablename__ = "household_members"
 
@@ -392,10 +405,112 @@ class HouseholdMember(Base):
         ForeignKey("households.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(120))
-    role: Mapped[str] = mapped_column(String(16), default="member")  # owner|admin|member|viewer
+    role: Mapped[str] = mapped_column(String(16), default="member")  # admin|member
+    avatar: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    color: Mapped[str] = mapped_column(String(16), default="#4f46e5")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    pin_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    pin_failed_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
+    pin_locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     household: Mapped[Household] = relationship(back_populates="members")
+    account_ownerships: Mapped[list[AccountOwner]] = relationship(back_populates="member")
+    real_estate_ownerships: Mapped[list[RealEstateAssetOwner]] = relationship(
+        back_populates="member"
+    )
+    debt_ownerships: Mapped[list[DebtOwner]] = relationship(back_populates="member")
+    sessions: Mapped[list[ProfileSession]] = relationship(
+        back_populates="profile", cascade="all, delete-orphan"
+    )
+
+
+# ``Profile`` describes the API concept while retaining the long-lived model
+# name/table used by existing household and goal references.
+Profile = HouseholdMember
+
+
+class AccountOwner(Base):
+    """A profile's share of an account; equal weights are the current policy."""
+
+    __tablename__ = "account_owners"
+    __table_args__ = (UniqueConstraint("account_id", "member_id", name="uq_account_owner"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), index=True
+    )
+    member_id: Mapped[int] = mapped_column(
+        ForeignKey("household_members.id", ondelete="RESTRICT"), index=True
+    )
+    weight: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("1.000000"))
+
+    account: Mapped[Account] = relationship(back_populates="owners")
+    member: Mapped[HouseholdMember] = relationship(back_populates="account_ownerships")
+    profile_id = synonym("member_id")
+
+
+class RealEstateAssetOwner(Base):
+    """A profile's share of the household portion of a real-estate asset."""
+
+    __tablename__ = "real_estate_owners"
+    __table_args__ = (UniqueConstraint("asset_id", "member_id", name="uq_real_estate_owner"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("real_estate_assets.id", ondelete="CASCADE"), index=True
+    )
+    member_id: Mapped[int] = mapped_column(
+        ForeignKey("household_members.id", ondelete="RESTRICT"), index=True
+    )
+    weight: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("1.000000"))
+
+    asset: Mapped[RealEstateAsset] = relationship(back_populates="owners")
+    member: Mapped[HouseholdMember] = relationship(back_populates="real_estate_ownerships")
+    profile_id = synonym("member_id")
+
+
+# Compatibility while wealth routes migrate to the explicit asset owner name.
+RealEstateOwner = RealEstateAssetOwner
+
+
+class DebtOwner(Base):
+    """A profile's share of a debt independently from its repayment account."""
+
+    __tablename__ = "debt_owners"
+    __table_args__ = (UniqueConstraint("debt_id", "member_id", name="uq_debt_owner"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    debt_id: Mapped[int] = mapped_column(ForeignKey("debts.id", ondelete="CASCADE"), index=True)
+    member_id: Mapped[int] = mapped_column(
+        ForeignKey("household_members.id", ondelete="RESTRICT"), index=True
+    )
+    weight: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("1.000000"))
+
+    debt: Mapped[Debt] = relationship(back_populates="owners")
+    member: Mapped[HouseholdMember] = relationship(back_populates="debt_ownerships")
+    profile_id = synonym("member_id")
+
+
+class ProfileSession(Base):
+    """Opaque browser-session tokens, stored only as SHA-256 digests."""
+
+    __tablename__ = "profile_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("household_members.id", ondelete="CASCADE"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    profile: Mapped[Profile] = relationship(back_populates="sessions")
 
 
 class SharedAccountLink(Base):
@@ -456,6 +571,9 @@ class WorkContract(Base):
     __tablename__ = "work_contracts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("household_members.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     employer: Mapped[str] = mapped_column(String(120))
     position: Mapped[str] = mapped_column(String(120))
     contract_type: Mapped[str] = mapped_column(String(32), default="CDI")
@@ -481,6 +599,7 @@ class WorkContract(Base):
         back_populates="contract", cascade="all, delete-orphan"
     )
     recurring_series: Mapped[RecurringSeries | None] = relationship()
+    profile: Mapped[Profile] = relationship()
 
 
 class WorkContractAttachment(Base):
@@ -503,6 +622,9 @@ class PaySlip(Base):
     __tablename__ = "pay_slips"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("household_members.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     contract_id: Mapped[int | None] = mapped_column(
         ForeignKey("work_contracts.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -525,6 +647,7 @@ class PaySlip(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     contract: Mapped[WorkContract | None] = relationship(back_populates="slips")
+    profile: Mapped[Profile] = relationship()
     attachments: Mapped[list[PaySlipAttachment]] = relationship(
         back_populates="payslip", cascade="all, delete-orphan"
     )
@@ -548,8 +671,14 @@ class PaySlipAttachment(Base):
 
 class PensionProfile(Base):
     __tablename__ = "pension_profiles"
+    __table_args__ = (
+        UniqueConstraint("profile_id", name="uq_pension_profile_owner"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("household_members.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     birth_year: Mapped[int] = mapped_column(Integer, default=1990)
     birth_month: Mapped[int] = mapped_column(Integer, default=1)
     target_retirement_age: Mapped[int] = mapped_column(Integer, default=64)
@@ -564,3 +693,4 @@ class PensionProfile(Base):
     planned_unemployment_months: Mapped[int] = mapped_column(Integer, default=0)
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    profile: Mapped[Profile] = relationship()

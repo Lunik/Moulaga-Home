@@ -1,5 +1,41 @@
 export type Money = string
 
+export type ProfileRole = 'admin' | 'member'
+
+export interface ProfileReference {
+  id: number
+  name: string
+  avatar: string | null
+  color: string
+}
+
+export interface UserProfile extends ProfileReference {
+  role: ProfileRole
+  active: boolean
+  has_pin: boolean
+}
+
+export interface ProfileSession {
+  profile: UserProfile
+}
+
+export interface ProfileOwnership {
+  account_ids: number[]
+  real_estate_asset_ids: number[]
+  debt_ids: number[]
+  work_contract_ids: number[]
+  pay_slip_ids: number[]
+  pension_profile_ids: number[]
+}
+
+export interface ProfileInput {
+  name: string
+  avatar?: string | null
+  color: string
+  pin?: string | null
+  active?: boolean
+}
+
 export interface Overview {
   balance: Money
   income_current_month: Money
@@ -24,6 +60,9 @@ export interface Account {
   annual_interest_rate: string | null
   legal_cap: Money | null
   missing_snapshot_periods: string[]
+  owner_profile_ids?: number[]
+  profile_share?: Money
+  total_balance?: Money
 }
 
 export interface AccountSnapshot {
@@ -219,6 +258,8 @@ export interface RecurringSeries {
   category_id: number | null
   category_name?: string | null
   amount: Money | null
+  total_amount: Money | null
+  profile_share: Money | null
   frequency: 'weekly' | 'monthly' | 'quarterly' | 'yearly'
   next_due: string
   amount_type: 'fixed' | 'variable'
@@ -259,6 +300,11 @@ export interface Debt {
   color?: string
   archived?: boolean
   attachment_count: number
+  owners?: ProfileReference[]
+  active_profile_balance?: Money
+  total_balance?: Money
+  active_profile_minimum_payment?: Money
+  total_minimum_payment?: Money
 }
 
 export interface RealEstateAsset {
@@ -279,6 +325,14 @@ export interface RealEstateAsset {
   net_equity: Money
   attachment_count: number
   icon_path?: string | null
+  owners?: ProfileReference[]
+  active_profile_purchase_price?: Money
+  active_profile_owned_value?: Money
+  active_profile_debt_balance?: Money
+  active_profile_gain?: Money
+  total_owned_value?: Money
+  active_profile_net_equity?: Money
+  total_net_equity?: Money
 }
 
 export interface RealEstateDebt {
@@ -310,6 +364,15 @@ export interface Holding {
   cost_basis: Money
   gain: Money
   operation_count: number
+  active_profile_quantity?: string
+  active_profile_cost_basis?: Money
+  active_profile_unrealized_cost_basis?: Money
+  active_profile_realized_cost_basis?: Money
+  active_profile_total_cost_basis?: Money
+  active_profile_market_value?: Money
+  active_profile_unrealized_gain?: Money
+  active_profile_realized_gain?: Money
+  active_profile_total_gain?: Money
 }
 
 export interface HoldingOperation {

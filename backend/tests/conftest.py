@@ -20,6 +20,7 @@ def load_app(tmp_path, monkeypatch):
     import app.db
     import app.main
     import app.migrations
+    import app.profile_session
     import app.routers.accounts
     import app.routers.budget
     import app.routers.budgets
@@ -27,22 +28,27 @@ def load_app(tmp_path, monkeypatch):
     import app.routers.documents
     import app.routers.household
     import app.routers.preferences
+    import app.routers.profiles
     import app.routers.recurring
     import app.routers.wealth
+    import app.routers.work
 
     importlib.reload(app.config)
     importlib.reload(app.migrations)
     importlib.reload(app.db)
     importlib.reload(app.common)
+    importlib.reload(app.profile_session)
     for module in (
         app.routers.budget,
         app.routers.accounts,
         app.routers.categories,
         app.routers.documents,
         app.routers.preferences,
+        app.routers.profiles,
         app.routers.budgets,
         app.routers.recurring,
         app.routers.wealth,
+        app.routers.work,
         app.routers.household,
     ):
         importlib.reload(module)

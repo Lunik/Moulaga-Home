@@ -22,6 +22,7 @@ cd frontend && npm run build && npm run lint
 ## Référence
 
 - `AGENTS.md` : conventions métier et architecture
+- `MULTI_USER.md` : conception multi-utilisateur et invariants de partage
 - `.copilot/instructions.md` : instructions Copilot
 - `.copilot/skills/local-demo/SKILL.md` : démonstration locale pour la validation développeur
 - `README.md` : usage et démarrage

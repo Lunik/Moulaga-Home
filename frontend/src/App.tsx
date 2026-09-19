@@ -2,10 +2,12 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiGet } from './api/client'
-import type { Account, AppSettings, Category } from './api/types'
+import type { Account, AppSettings, Category, UserProfile } from './api/types'
 import { ViewErrorBoundary } from './ErrorBoundary'
 import { isRouteBeta } from './featureValidation'
-import { useOfflineDataWarmup, useOnlineStatus } from './pwa'
+import { ProfileBadge } from './ProfileOwnership'
+import { ProfileGate } from './ProfileGate'
+import { useOnlineStatus } from './pwa'
 import { type Route, useRoute } from './routing'
 import { BetaBadge, Icon, configureUiPreferences, errorMessage, longToday } from './ui'
 
@@ -37,10 +39,40 @@ const navigation: Array<{
 ]
 
 export default function App() {
+  return (
+    <ProfileGate>
+      {({ profile, profiles, inactivityTimeout, lock, switchProfile, manageProfiles }) => (
+        <AuthenticatedApp
+          activeProfile={profile}
+          profiles={profiles}
+          inactivityTimeout={inactivityTimeout}
+          lock={lock}
+          manageProfiles={manageProfiles}
+          switchProfile={switchProfile}
+        />
+      )}
+    </ProfileGate>
+  )
+}
+
+function AuthenticatedApp({
+  activeProfile,
+  profiles,
+  inactivityTimeout,
+  lock,
+  manageProfiles,
+  switchProfile,
+}: {
+  activeProfile: UserProfile
+  profiles: UserProfile[]
+  inactivityTimeout: number | null
+  lock: () => Promise<void>
+  manageProfiles: () => void
+  switchProfile: () => Promise<void>
+}) {
   const [route, navigate] = useRoute()
   const queryClient = useQueryClient()
   const isOnline = useOnlineStatus()
-  useOfflineDataWarmup(isOnline)
   const accounts = useQuery({
     queryKey: ['accounts'],
     queryFn: () => apiGet<Account[]>('/accounts?include_archived=true'),
@@ -54,6 +86,7 @@ export default function App() {
     queryFn: () => apiGet<AppSettings>('/preferences'),
   })
   const [hideNumericValues, setHideNumericValues] = usePrivacyMode()
+  useProtectedProfileAutoLock(activeProfile.has_pin, inactivityTimeout, lock)
   configureUiPreferences(settings.data?.language, settings.data?.date_format, hideNumericValues)
   useAppearance(settings.data)
 
@@ -103,7 +136,7 @@ export default function App() {
           <div className="page-header-actions">
             {!isOnline && (
               <span className="offline-status" role="status">
-                <Icon name="database" /> Hors ligne · vues en cache
+                <Icon name="database" /> Hors ligne · données indisponibles
               </span>
             )}
             <button
@@ -115,6 +148,18 @@ export default function App() {
             >
               <Icon name={hideNumericValues ? 'eye-off' : 'eye'} />
             </button>
+            <div className="active-profile-menu">
+              <button
+                aria-label={`Changer de profil depuis ${activeProfile.name}`}
+                className="active-profile-button"
+                onClick={() => void switchProfile()}
+                title="Changer de profil"
+                type="button"
+              >
+                <ProfileBadge profile={activeProfile} />
+              </button>
+              {activeProfile.has_pin && <button className="text-button" onClick={() => void lock()} type="button">Verrouiller</button>}
+            </div>
           </div>
         </header>
 
@@ -134,6 +179,8 @@ export default function App() {
             {route.name === 'accounts' && (
               <AccountsView
                 accounts={accounts.data ?? []}
+                activeProfile={activeProfile}
+                profiles={profiles}
                 navigate={navigate}
                 onRefresh={refreshCore}
               />
@@ -142,6 +189,8 @@ export default function App() {
               <AccountDetailView
                 accountId={route.accountId}
                 accounts={accounts.data ?? []}
+                activeProfile={activeProfile}
+                profiles={profiles}
                 navigate={navigate}
                 onRefresh={refreshCore}
               />
@@ -162,6 +211,8 @@ export default function App() {
                 holdingsTab={route.holdingsTab}
                 focusId={route.focusId}
                 accounts={accounts.data ?? []}
+                activeProfile={activeProfile}
+                profiles={profiles}
                 navigate={navigate}
               />
             )}
@@ -172,15 +223,40 @@ export default function App() {
               <WorkView
                 tab={route.tab}
                 navigate={navigate}
+                profileId={activeProfile.id}
               />
             )}
-            {route.name === 'family' && <FamilyView accounts={accounts.data ?? []} />}
+            {route.name === 'family' && (
+              <FamilyView activeProfile={activeProfile} manageProfiles={manageProfiles} />
+            )}
             {route.name === 'settings' && <SettingsView />}
           </Suspense>
         </ViewErrorBoundary>
       </main>
     </div>
   )
+}
+
+function useProtectedProfileAutoLock(
+  protectedByPin: boolean,
+  timeoutSeconds: number | null,
+  lock: () => Promise<void>,
+) {
+  useEffect(() => {
+    if (!protectedByPin || !timeoutSeconds || timeoutSeconds <= 0) return
+    let timer: number | undefined
+    const schedule = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => { void lock() }, timeoutSeconds * 1000)
+    }
+    const events = ['pointerdown', 'keydown', 'touchstart', 'mousemove'] as const
+    events.forEach((event) => window.addEventListener(event, schedule, { passive: true }))
+    schedule()
+    return () => {
+      window.clearTimeout(timer)
+      events.forEach((event) => window.removeEventListener(event, schedule))
+    }
+  }, [lock, protectedByPin, timeoutSeconds])
 }
 
 function usePrivacyMode() {
@@ -244,7 +320,7 @@ function Sidebar({
         <span className="status-icon"><Icon name="database" /></span>
         <span>
           <strong>{isOnline ? 'Stockage local' : 'Mode hors ligne'}</strong>
-          <small>{isOnline ? 'Base SQLite persistante' : 'Vues en cache'}</small>
+          <small>{isOnline ? 'Base SQLite persistante' : 'Données financières indisponibles'}</small>
         </span>
         <span className={`status-dot ${isOnline ? '' : 'offline'}`} aria-label={isOnline ? 'Disponible' : 'Hors ligne'} />
       </div>

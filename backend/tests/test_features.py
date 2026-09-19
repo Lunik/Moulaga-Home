@@ -13,7 +13,10 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     main, _ = load_app(tmp_path, monkeypatch)
-    with TestClient(main.create_app()) as test_client:
+    with TestClient(main.create_app(), base_url="https://testserver") as test_client:
+        profile = test_client.post("/api/profiles", json={"name": "Profil test"}).json()
+        selected = test_client.post(f"/api/profiles/{profile['id']}/select", json={})
+        assert selected.status_code == 200
         yield test_client
 
 
@@ -1034,37 +1037,35 @@ def test_holding_and_operations_can_move_between_accounts(client):
     }
 
 
-def test_household_roles_shared_balance_and_goals(client):
+def test_singleton_household_and_goals_use_active_profile(client):
     account_id = _account_id(client)
     client.put(
         f"/api/accounts/{account_id}/snapshots",
         json={"period": date.today().strftime("%Y-%m"), "balance": "500.00"},
     )
-    household = client.post(
+    households = client.get("/api/households").json()
+    assert len(households) == 1
+    household = households[0]
+    assert household["members"][0]["name"] == "Profil test"
+    assert client.post(
         "/api/households",
-        json={"name": "Foyer", "owner_name": "Profil principal"},
-    ).json()
-    owner_id = household["members"][0]["id"]
-    shared = client.post(
+        json={"name": "Autre foyer", "owner_name": "Autre profil"},
+    ).status_code == 409
+    assert client.post(
         f"/api/households/{household['id']}/shared-accounts",
-        params={"actor_id": owner_id},
         json={"account_id": account_id, "permission": "edit"},
-    )
-    assert shared.status_code == 201
-    assert shared.json()["balance"] == "500.00"
+    ).status_code == 410
 
     goal = client.post(
         f"/api/households/{household['id']}/goals",
-        params={"actor_id": owner_id},
         json={"name": "Fonds", "target_amount": "1000.00"},
     ).json()
     contribution = client.post(
         f"/api/households/{household['id']}/goals/{goal['id']}/contributions",
-        params={"actor_id": owner_id},
-        json={"amount": "250.00", "occurred_on": "2026-01-10", "member_id": owner_id},
+        json={"amount": "250.00", "occurred_on": "2026-01-10"},
     )
     assert contribution.status_code == 201
-    assert contribution.json()["member_name"] == "Profil principal"
+    assert contribution.json()["member_name"] == "Profil test"
     assert client.get(f"/api/households/{household['id']}/goals").json()[0][
         "current_amount"
     ] == "250.00"

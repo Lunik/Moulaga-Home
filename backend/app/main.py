@@ -21,6 +21,7 @@ from .routers import (
     documents,
     household,
     preferences,
+    profiles,
     recurring,
     wealth,
     work,
@@ -63,6 +64,14 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
+    @app.middleware("http")
+    async def prevent_private_api_caching(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Vary"] = "Cookie"
+        return response
+
     app.include_router(budget.router, prefix="/api")
     app.include_router(accounts.router, prefix="/api")
     app.include_router(categories.router, prefix="/api")
@@ -73,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(wealth.router, prefix="/api")
     app.include_router(work.router, prefix="/api")
     app.include_router(household.router, prefix="/api")
+    app.include_router(profiles.router, prefix="/api")
 
     @app.get("/api/health", tags=["systeme"])
     async def health() -> dict[str, str]:

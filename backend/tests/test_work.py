@@ -8,9 +8,27 @@ from conftest import load_app
 from fastapi.testclient import TestClient
 
 
+def _activate_default_profile(client: TestClient) -> None:
+    profiles = client.get("/api/profiles")
+    assert profiles.status_code == 200
+    if profiles.json():
+        profile_id = profiles.json()[0]["id"]
+    else:
+        created = client.post(
+            "/api/profiles",
+            json={"name": "Profil de test", "color": "#4f46e5"},
+        )
+        assert created.status_code == 201
+        profile_id = created.json()["id"]
+    response = client.post(f"/api/profiles/{profile_id}/select", json={})
+    assert response.status_code == 200
+
+
 def test_work_crud_and_summary(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOULAGA_SESSION_COOKIE_SECURE", "false")
     app_module, _ = load_app(tmp_path, monkeypatch)
     with TestClient(app_module.create_app()) as client:
+        _activate_default_profile(client)
         # Check empty summary
         summary = client.get("/api/work/summary").json()
         assert summary["active_contracts_count"] == 0
@@ -273,8 +291,10 @@ def test_work_crud_and_summary(tmp_path, monkeypatch):
 
 
 def test_payslip_period_rejects_invalid_month(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOULAGA_SESSION_COOKIE_SECURE", "false")
     app_module, _ = load_app(tmp_path, monkeypatch)
     with TestClient(app_module.create_app()) as client:
+        _activate_default_profile(client)
         response = client.post(
             "/api/work/payslips",
             json={"period": "2026-99"},
@@ -284,8 +304,10 @@ def test_payslip_period_rejects_invalid_month(tmp_path, monkeypatch):
 
 
 def test_payslip_quarters_are_aggregated_by_year_and_capped(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOULAGA_SESSION_COOKIE_SECURE", "false")
     app_module, _ = load_app(tmp_path, monkeypatch)
     with TestClient(app_module.create_app()) as client:
+        _activate_default_profile(client)
         pension_update = {
             "birth_year": 1990,
             "birth_month": 11,

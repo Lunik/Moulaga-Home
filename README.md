@@ -21,16 +21,19 @@ restent dans une base SQLite locale et persistante.
   d'echeancier pour les credits, liens navigables entre biens, dettes et series recurrentes,
   biens immobiliers avec quote-part et emprunt associe, positions, valorisations,
   contributions et performance du portefeuille ;
-- foyers locaux, roles, comptes partages et objectifs communs ;
+- instance mono-foyer avec selection de profils, PIN facultatif gere par chaque membre, carrieres et retraites privees,
+  comptes, biens et dettes partageables avec quote-parts automatiques, et objectifs communs ;
 - themes clair/sombre/systeme, formats de date et styles de navigation ;
-- PWA installable avec interface, graphiques et tuiles de synthese disponibles hors ligne.
+- PWA installable ; les donnees financieres privees ne sont jamais conservees dans le cache du
+  service worker afin d'eviter toute fuite lors d'un changement de profil.
 
 Les derniers releves sont la source des soldes ; les series recurrentes actives, hors virements,
 sont la source des indicateurs et graphiques budgetaires. Moulaga ne conserve aucun registre
 d'operations unitaires.
 
-La correspondance avec les 26 maquettes et l'ordre d'audit iteratif des fonctionnalites sont
-decrits dans [ROADMAP.md](ROADMAP.md).
+La conception du partage est decrite dans [MULTI_USER.md](MULTI_USER.md). La correspondance avec
+les 26 maquettes et l'ordre d'audit iteratif des fonctionnalites sont decrits dans
+[ROADMAP.md](ROADMAP.md).
 
 ## Confidentialite
 
@@ -64,6 +67,10 @@ docker compose up -d --force-recreate
 Sans cette variable, l'image utilise `MOULAGA_DEMO_MODE=false` et le volume `./data:/data`
 conserve la base `./data/moulaga.db` lors des redemarrages et reconstructions du conteneur.
 
+Le cookie de profil est compatible par defaut avec l'acces HTTP direct documente ci-dessus. Si
+Moulaga est expose exclusivement en HTTPS, ajouter `MOULAGA_SESSION_COOKIE_SECURE=true` dans
+`.env`, puis recreer le conteneur, afin d'activer l'attribut `Secure`.
+
 ## Demarrage en developpement
 
 Backend :
@@ -89,12 +96,10 @@ Vite proxifie `/api` vers <http://localhost:8000>.
 
 Moulaga peut etre installee depuis un navigateur compatible lorsqu'elle est servie en HTTPS, ou
 depuis `localhost` pendant le developpement. Le premier chargement en ligne precache l'interface et
-les vues compilees, puis precharge les donnees des graphiques et tuiles courantes.
+les vues compilees.
 
-Les lectures visuelles utilisent le reseau en priorite et la derniere reponse locale en cas
-d'indisponibilite de l'instance. Les filtres et periodes deja consultes sont egalement conserves.
-Les pieces jointes ne sont volontairement pas stockees pour le mode hors ligne. Les modifications
-restent reservees au mode connecte.
+Les donnees financieres utilisent exclusivement le reseau et ne sont pas disponibles hors ligne.
+Les pieces jointes et les modifications restent reservees au mode connecte.
 
 ## Base persistante et migrations
 
@@ -108,7 +113,11 @@ SQLite devient la source de verite apres la reprise initiale. Au demarrage, Moul
 3. applique les ajouts non destructifs necessaires ;
 4. lors du passage au schema sans registre, materialise le dernier solde historique dans un releve,
    puis retire les anciennes tables et leurs pieces jointes ;
-5. conserve les comptes, relevés, recurrents et relations patrimoniales.
+5. lors du passage de la version classique au mode multi-profils, attribue exclusivement au premier
+   administrateur tous les comptes, releves, recurrents, positions, biens, dettes, contrats, fiches
+   de paie et parametres de retraite existants ; les anciens liens de partage ne sont pas convertis
+   automatiquement en partage entre profils ;
+6. conserve les identifiants, montants, relations et pieces jointes des donnees existantes.
 
 Pour une sauvegarde manuelle coherente :
 

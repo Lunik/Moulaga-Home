@@ -494,9 +494,7 @@ function RecurringPanel({
               <div className="recurring-list">
                 {visibleSeries.map((item) => (
                   <RecurringRow
-                    accountArchived={
-                      accounts.find((account) => account.id === item.account_id)?.archived ?? false
-                    }
+                    account={accounts.find((account) => account.id === item.account_id)}
                     focused={item.id === focusId}
                     item={item}
                     key={item.id}
@@ -518,18 +516,22 @@ function RecurringPanel({
 }
 
 function RecurringRow({
-  accountArchived,
+  account,
   focused,
   item,
   onEdit,
   onSaved,
 }: {
-  accountArchived: boolean
+  account?: Account
   focused: boolean
   item: RecurringSeries
   onEdit: () => void
   onSaved: () => Promise<void>
 }) {
+  const accountArchived = account?.archived ?? false
+  const accountShared = (account?.owner_profile_ids?.length ?? 0) > 1
+  const profileAmount = item.profile_share ?? item.amount
+  const totalAmount = item.total_amount ?? item.amount
   const [showAttachments, setShowAttachments] = useState(false)
   const update = useMutation({
     mutationFn: (status: RecurringSeries['status']) =>
@@ -560,9 +562,13 @@ function RecurringRow({
         </small>
         <small>Prochaine échéance le {formatDate(item.next_due)}</small>
       </span>
-      <strong className={Number(item.amount ?? 0) >= 0 ? 'positive' : 'negative'}>
-        {signedMoney(item.amount ?? 0)}
-      </strong>
+      <span className="recurring-amount-summary">
+        {accountShared && <small>Votre part</small>}
+        <strong className={Number(profileAmount ?? 0) >= 0 ? 'positive' : 'negative'}>
+          {signedMoney(profileAmount ?? 0)}
+        </strong>
+        {accountShared && <small>Total : {signedMoney(totalAmount ?? 0)}</small>}
+      </span>
       <div className="row-actions">
         {(!accountArchived || item.attachment_count > 0) && (
           <button
@@ -639,10 +645,13 @@ function RecurringSeriesModal({
   const [label, setLabel] = useState(item?.label ?? '')
   const [accountId, setAccountId] = useState(String(item?.account_id ?? selectableAccounts[0]?.id ?? ''))
   const [categoryId, setCategoryId] = useState(String(item?.category_id ?? ''))
+  const itemTotalAmount = item?.total_amount ?? item?.amount
   const [direction, setDirection] = useState<AmountDirection>(
-    item && Number(item.amount ?? 0) >= 0 ? 'deposit' : 'withdrawal',
+    item && Number(itemTotalAmount ?? 0) >= 0 ? 'deposit' : 'withdrawal',
   )
-  const [amount, setAmount] = useState(item?.amount ? String(Math.abs(Number(item.amount))) : '')
+  const [amount, setAmount] = useState(
+    itemTotalAmount ? String(Math.abs(Number(itemTotalAmount))) : '',
+  )
   const [frequency, setFrequency] = useState<RecurringSeries['frequency']>(item?.frequency ?? 'monthly')
   const [nextDue, setNextDue] = useState(
     monthInputValue(item?.next_due ?? localDateInputValue()),
@@ -655,6 +664,8 @@ function RecurringSeriesModal({
   const [insuranceRate, setInsuranceRate] = useState(item?.credit_insurance_rate ?? '')
   const [attachment, setAttachment] = useState<File | null>(null)
   const createdItemId = useRef<number | null>(null)
+  const selectedAccount = selectableAccounts.find((account) => account.id === Number(accountId))
+  const sharedProfileCount = selectedAccount?.owner_profile_ids?.length ?? 1
   const mutation = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -772,7 +783,12 @@ function RecurringSeriesModal({
             ))}
           </FormSelect>
         </Field>
-        <Field label={variable ? 'Montant estimé' : 'Montant'}>
+        <Field
+          label={variable ? 'Montant total estimé' : 'Montant total'}
+          hint={sharedProfileCount > 1
+            ? `Votre part sera calculée automatiquement entre les ${sharedProfileCount} profils du compte.`
+            : undefined}
+        >
           <FormInput
             type="number"
             min="0.01"

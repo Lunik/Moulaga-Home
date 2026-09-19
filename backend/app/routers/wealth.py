@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..account_access import require_account, require_holding_account
+from ..account_access import (
+    account_owner_ids,
+    allocate_equal_shares,
+    require_account,
+    require_holding_account,
+    visible_account_ids,
+)
 from ..account_balances import account_balances
 from ..attachments import attachment_path, remove_attachment, store_attachment
 from ..common import local_today, money
@@ -25,19 +34,24 @@ from ..debt_recurring import (
     recurring_amount,
 )
 from ..models import (
-    Account,
     BalanceSnapshot,
     Contribution,
     Debt,
     DebtAttachment,
+    DebtOwner,
     Holding,
     HoldingOperation,
     PortfolioSnapshot,
     RealEstateAsset,
+    RealEstateAssetOwner,
     RealEstateAttachment,
     RealEstateDebtLink,
     RecurringSeries,
 )
+from ..models import (
+    HouseholdMember as Profile,
+)
+from ..profile_session import require_active_profile
 from ..schemas import (
     AllocationSlice,
     AssetPerformancePoint,
@@ -69,6 +83,195 @@ from ..schemas import (
 )
 
 router = APIRouter(tags=["wealth"])
+
+_CENT = Decimal("0.01")
+
+
+class _ProfileReference(BaseModel):
+    id: int
+    name: str
+    avatar: str | None
+    color: str
+
+
+class _DebtCreate(DebtCreate):
+    owner_profile_ids: list[int] | None = Field(default=None, max_length=100)
+
+
+class _DebtUpdate(DebtUpdate):
+    owner_profile_ids: list[int] | None = Field(default=None, max_length=100)
+
+
+class _DebtRead(DebtRead):
+    owners: list[_ProfileReference]
+    active_profile_balance: Decimal
+    total_balance: Decimal
+    active_profile_minimum_payment: Decimal
+    total_minimum_payment: Decimal
+
+
+class _RealEstateCreate(RealEstateCreate):
+    owner_profile_ids: list[int] | None = Field(default=None, max_length=100)
+
+
+class _RealEstateUpdate(RealEstateUpdate):
+    owner_profile_ids: list[int] | None = Field(default=None, max_length=100)
+
+
+class _RealEstateRead(RealEstateRead):
+    owners: list[_ProfileReference]
+    active_profile_purchase_price: Decimal
+    active_profile_owned_value: Decimal
+    active_profile_debt_balance: Decimal
+    active_profile_gain: Decimal
+    total_owned_value: Decimal
+    active_profile_net_equity: Decimal
+    total_net_equity: Decimal
+
+
+def _equal_owner_shares(
+    total: Decimal,
+    owner_ids: Iterable[int],
+) -> dict[int, Decimal]:
+    """Split a stored monetary total without losing cents.
+
+    Association tables guarantee unique owners in production; rejecting
+    duplicates here keeps a malformed relationship from silently double
+    counting a resource.
+    """
+    ordered_owner_ids = sorted(owner_ids)
+    if not ordered_owner_ids:
+        raise ValueError("Une ressource doit avoir au moins un proprietaire")
+    if len(ordered_owner_ids) != len(set(ordered_owner_ids)):
+        raise ValueError("Un proprietaire ne peut apparaitre qu'une fois")
+
+    total = money(total)
+    base_share = (total / len(ordered_owner_ids)).quantize(_CENT, rounding=ROUND_DOWN)
+    remainder_cents = int((total - base_share * len(ordered_owner_ids)) / _CENT)
+    increment = _CENT if remainder_cents > 0 else -_CENT
+    shares = {owner_id: base_share for owner_id in ordered_owner_ids}
+    for owner_id in ordered_owner_ids[: abs(remainder_cents)]:
+        shares[owner_id] += increment
+    return shares
+
+
+def _equal_owner_quantity_shares(
+    total: Decimal,
+    owner_ids: Iterable[int],
+) -> dict[int, Decimal]:
+    ordered_owner_ids = sorted(owner_ids)
+    if not ordered_owner_ids:
+        raise ValueError("Une ressource doit avoir au moins un proprietaire")
+    if len(ordered_owner_ids) != len(set(ordered_owner_ids)):
+        raise ValueError("Un proprietaire ne peut apparaitre qu'une fois")
+    quantum = Decimal("0.0000000001")
+    total = total.quantize(quantum)
+    base_share = (total / len(ordered_owner_ids)).quantize(quantum, rounding=ROUND_DOWN)
+    remainder_units = int((total - base_share * len(ordered_owner_ids)) / quantum)
+    shares = {owner_id: base_share for owner_id in ordered_owner_ids}
+    for owner_id in ordered_owner_ids[:remainder_units]:
+        shares[owner_id] += quantum
+    return shares
+
+
+def _real_estate_owner_values(
+    asset: RealEstateAsset,
+    owner_ids: Iterable[int],
+) -> dict[int, tuple[Decimal, Decimal]]:
+    """Allocate the household-owned part of a property among its profiles."""
+    household_purchase, household_value = _real_estate_owned_values(asset)
+    purchase_shares = _equal_owner_shares(household_purchase, owner_ids)
+    value_shares = _equal_owner_shares(household_value, owner_ids)
+    return {
+        owner_id: (purchase_shares[owner_id], value_shares[owner_id])
+        for owner_id in purchase_shares
+    }
+
+
+def _profile_reference(profile: Profile) -> dict[str, int | str | None]:
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "avatar": profile.avatar,
+        "color": profile.color,
+    }
+
+
+async def _validate_owner_profile_ids(
+    session: AsyncSession,
+    owner_profile_ids: list[int] | None,
+    *,
+    default_profile_id: int,
+) -> list[int]:
+    owner_ids = owner_profile_ids if owner_profile_ids is not None else [default_profile_id]
+    if not owner_ids:
+        raise HTTPException(status_code=422, detail="Au moins un proprietaire est requis")
+    if len(owner_ids) != len(set(owner_ids)):
+        raise HTTPException(status_code=422, detail="Un proprietaire ne peut apparaitre qu'une fois")
+    profiles = (
+        await session.execute(
+            select(Profile).where(Profile.id.in_(owner_ids), Profile.active.is_(True))
+        )
+    ).scalars().all()
+    if len(profiles) != len(owner_ids):
+        raise HTTPException(status_code=422, detail="Profil proprietaire introuvable ou archive")
+    return sorted(owner_ids)
+
+
+async def _replace_resource_owners(
+    session: AsyncSession,
+    resource: Debt | RealEstateAsset,
+    owner_ids: list[int],
+) -> None:
+    if isinstance(resource, Debt):
+        owner_type = DebtOwner
+        foreign_key = "debt_id"
+    else:
+        owner_type = RealEstateAssetOwner
+        foreign_key = "asset_id"
+    await session.execute(
+        sql_delete(owner_type).where(getattr(owner_type, foreign_key) == resource.id)
+    )
+    await session.flush()
+    session.add_all(
+        owner_type(**{foreign_key: resource.id, "member_id": profile_id})
+        for profile_id in owner_ids
+    )
+
+
+async def _debt_owner_profiles(session: AsyncSession, debt_id: int) -> list[Profile]:
+    return list(
+        (
+            await session.execute(
+                select(Profile)
+                .join(DebtOwner, DebtOwner.member_id == Profile.id)
+                .where(DebtOwner.debt_id == debt_id)
+                .order_by(Profile.id)
+            )
+        ).scalars().all()
+    )
+
+
+async def _real_estate_owner_profiles(
+    session: AsyncSession,
+    asset_id: int,
+) -> list[Profile]:
+    return list(
+        (
+            await session.execute(
+                select(Profile)
+                .join(RealEstateAssetOwner, RealEstateAssetOwner.member_id == Profile.id)
+                .where(RealEstateAssetOwner.asset_id == asset_id)
+                .order_by(Profile.id)
+            )
+        ).scalars().all()
+    )
+
+
+async def _portfolio_snapshots_are_single_profile_only(
+    session: AsyncSession,
+) -> bool:
+    return (await session.scalar(select(func.count()).select_from(Profile))) == 1
 
 
 @dataclass(slots=True)
@@ -168,10 +371,15 @@ def _holding_operation_metrics(
 def _debt_read(
     debt: Debt,
     *,
+    owners: list[Profile],
+    active_profile_id: int,
     recurring_series_name_repayment: str | None = None,
     recurring_series_name_insurance: str | None = None,
+    account_visible: bool = True,
+    repayment_series_visible: bool = True,
+    insurance_series_visible: bool = True,
     attachment_count: int = 0,
-) -> DebtRead:
+) -> _DebtRead:
     principal = Decimal(debt.principal)
     balance = Decimal(debt.balance)
     paid = money(principal - balance)
@@ -183,8 +391,16 @@ def _debt_read(
         total_budget += Decimal(debt.recurring_series_repayment.amount or 0)
     if debt.recurring_series_insurance_id is not None:
         total_budget += Decimal(debt.recurring_series_insurance.amount or 0)
+    balance_shares = _equal_owner_shares(
+        balance,
+        [owner.id for owner in owners],
+    )
+    minimum_payment_shares = _equal_owner_shares(
+        total_budget,
+        [owner.id for owner in owners],
+    )
 
-    return DebtRead(
+    return _DebtRead(
         id=debt.id,
         name=debt.name,
         debt_type=debt.debt_type,
@@ -192,22 +408,45 @@ def _debt_read(
         balance=money(balance),
         interest_rate=debt.interest_rate,
         minimum_payment=total_budget,
-        account_id=debt.account_id,
-        recurring_series_repayment_id=debt.recurring_series_repayment_id,
-        recurring_series_insurance_id=debt.recurring_series_insurance_id,
-        recurring_series_name_repayment=recurring_series_name_repayment,
-        recurring_series_name_insurance=recurring_series_name_insurance,
+        account_id=debt.account_id if account_visible else None,
+        recurring_series_repayment_id=(
+            debt.recurring_series_repayment_id if repayment_series_visible else None
+        ),
+        recurring_series_insurance_id=(
+            debt.recurring_series_insurance_id if insurance_series_visible else None
+        ),
+        recurring_series_name_repayment=(
+            recurring_series_name_repayment if repayment_series_visible else None
+        ),
+        recurring_series_name_insurance=(
+            recurring_series_name_insurance if insurance_series_visible else None
+        ),
         due_date=debt.due_date,
         color=debt.color,
         archived=debt.archived,
         paid=paid,
         progress=progress,
         attachment_count=attachment_count,
+        owners=[_profile_reference(owner) for owner in owners],
+        active_profile_balance=balance_shares.get(active_profile_id, Decimal("0.00")),
+        total_balance=money(balance),
+        active_profile_minimum_payment=minimum_payment_shares.get(
+            active_profile_id, Decimal("0.00")
+        ),
+        total_minimum_payment=money(total_budget),
     )
 
 
-async def _require_debt(session: AsyncSession, debt_id: int) -> Debt:
-    debt = await session.get(Debt, debt_id)
+async def _require_debt(
+    session: AsyncSession,
+    debt_id: int,
+    profile_id: int,
+) -> Debt:
+    debt = await session.scalar(
+        select(Debt)
+        .join(DebtOwner)
+        .where(Debt.id == debt_id, DebtOwner.member_id == profile_id)
+    )
     if debt is None:
         raise HTTPException(status_code=404, detail="Dette introuvable")
     return debt
@@ -223,15 +462,32 @@ async def _require_recurring_series(
     return series
 
 
-async def _debt_response(session: AsyncSession, debt: Debt) -> DebtRead:
-    recurring_series_name_repayment = None
-    recurring_series_name_insurance = None
-    if debt.recurring_series_repayment_id is not None:
-        series = await session.get(RecurringSeries, debt.recurring_series_repayment_id)
-        recurring_series_name_repayment = series.label if series else None
-    if debt.recurring_series_insurance_id is not None:
-        series = await session.get(RecurringSeries, debt.recurring_series_insurance_id)
-        recurring_series_name_insurance = series.label if series else None
+async def _debt_response(
+    session: AsyncSession,
+    debt: Debt,
+    active_profile_id: int,
+) -> _DebtRead:
+    repayment_series = (
+        await session.get(RecurringSeries, debt.recurring_series_repayment_id)
+        if debt.recurring_series_repayment_id is not None
+        else None
+    )
+    insurance_series = (
+        await session.get(RecurringSeries, debt.recurring_series_insurance_id)
+        if debt.recurring_series_insurance_id is not None
+        else None
+    )
+    visible_accounts = await visible_account_ids(session, active_profile_id)
+    repayment_series_visible = (
+        debt.recurring_series_repayment_id is None
+        or repayment_series is not None
+        and repayment_series.account_id in visible_accounts
+    )
+    insurance_series_visible = (
+        debt.recurring_series_insurance_id is None
+        or insurance_series is not None
+        and insurance_series.account_id in visible_accounts
+    )
     attachment_count = await session.scalar(
         select(func.count())
         .select_from(DebtAttachment)
@@ -239,15 +495,35 @@ async def _debt_response(session: AsyncSession, debt: Debt) -> DebtRead:
     )
     return _debt_read(
         debt,
-        recurring_series_name_repayment=recurring_series_name_repayment,
-        recurring_series_name_insurance=recurring_series_name_insurance,
+        owners=await _debt_owner_profiles(session, debt.id),
+        active_profile_id=active_profile_id,
+        recurring_series_name_repayment=(
+            repayment_series.label if repayment_series else None
+        ),
+        recurring_series_name_insurance=(
+            insurance_series.label if insurance_series else None
+        ),
+        account_visible=debt.account_id is None or debt.account_id in visible_accounts,
+        repayment_series_visible=repayment_series_visible,
+        insurance_series_visible=insurance_series_visible,
         attachment_count=int(attachment_count or 0),
     )
 
 
-@router.get("/debts", response_model=list[DebtRead])
-async def list_debts(session: AsyncSession = Depends(get_session)) -> list[DebtRead]:
-    rows = (await session.execute(select(Debt).order_by(Debt.name))).scalars().all()
+@router.get("/debts", response_model=list[_DebtRead])
+async def list_debts(
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> list[_DebtRead]:
+    visible_accounts = await visible_account_ids(session, active_profile.id)
+    rows = (
+        await session.execute(
+            select(Debt)
+            .join(DebtOwner)
+            .where(DebtOwner.member_id == active_profile.id)
+            .order_by(Debt.name)
+        )
+    ).scalars().all()
     recurring_series = {
         series.id: series
         for series in (await session.execute(select(RecurringSeries))).scalars().all()
@@ -261,37 +537,83 @@ async def list_debts(session: AsyncSession = Depends(get_session)) -> list[DebtR
             )
         ).all()
     }
-    result: list[DebtRead] = []
+    owners_by_debt = {
+        debt_id: await _debt_owner_profiles(session, debt_id)
+        for debt_id in (row.id for row in rows)
+    }
+    result: list[_DebtRead] = []
     for row in rows:
         rs_repayment = recurring_series.get(row.recurring_series_repayment_id)
         rs_insurance = recurring_series.get(row.recurring_series_insurance_id)
         result.append(
             _debt_read(
                 row,
+                owners=owners_by_debt[row.id],
+                active_profile_id=active_profile.id,
                 recurring_series_name_repayment=rs_repayment.label if rs_repayment else None,
                 recurring_series_name_insurance=rs_insurance.label if rs_insurance else None,
+                account_visible=(
+                    row.account_id is None or row.account_id in visible_accounts
+                ),
+                repayment_series_visible=(
+                    rs_repayment is None or rs_repayment.account_id in visible_accounts
+                ),
+                insurance_series_visible=(
+                    rs_insurance is None or rs_insurance.account_id in visible_accounts
+                ),
                 attachment_count=int(attachment_counts.get(row.id, 0)),
             )
         )
     return result
 
 
-@router.post("/debts", response_model=DebtRead, status_code=201)
-async def create_debt(payload: DebtCreate, session: AsyncSession = Depends(get_session)) -> DebtRead:
+@router.post("/debts", response_model=_DebtRead, status_code=201)
+async def create_debt(
+    payload: _DebtCreate,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> _DebtRead:
+    owner_ids = await _validate_owner_profile_ids(
+        session,
+        getattr(payload, "owner_profile_ids", None),
+        default_profile_id=active_profile.id,
+    )
+    if active_profile.id not in owner_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="Le createur doit rester proprietaire de la dette",
+        )
     if payload.account_id is not None:
-        await require_account(session, payload.account_id, writable=True)
+        await require_account(
+            session,
+            payload.account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
     series_repayment = None
     series_insurance = None
     if payload.recurring_series_repayment_id is not None:
         series_repayment = await _require_recurring_series(session, payload.recurring_series_repayment_id)
-        await require_account(session, series_repayment.account_id, writable=True)
+        await require_account(
+            session,
+            series_repayment.account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
     if payload.recurring_series_insurance_id is not None:
         series_insurance = await _require_recurring_series(session, payload.recurring_series_insurance_id)
-        await require_account(session, series_insurance.account_id, writable=True)
+        await require_account(
+            session,
+            series_insurance.account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
     if payload.balance > payload.principal:
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
-    debt = Debt(**payload.model_dump())
+    debt = Debt(**payload.model_dump(exclude={"owner_profile_ids"}))
     session.add(debt)
+    await session.flush()
+    await _replace_resource_owners(session, debt, owner_ids)
     if series_repayment is None and series_insurance is None:
         if payload.minimum_payment is not None and payload.minimum_payment > 0:
             try:
@@ -336,31 +658,81 @@ async def create_debt(payload: DebtCreate, session: AsyncSession = Depends(get_s
             series_insurance.amount = recurring_amount(payload.minimum_payment)
     await session.commit()
     await session.refresh(debt)
-    return await _debt_response(session, debt)
+    return await _debt_response(session, debt, active_profile.id)
 
 
-@router.patch("/debts/{debt_id}", response_model=DebtRead)
+@router.patch("/debts/{debt_id}", response_model=_DebtRead)
 async def update_debt(
-    debt_id: int, payload: DebtUpdate, session: AsyncSession = Depends(get_session)
-) -> DebtRead:
-    debt = await _require_debt(session, debt_id)
-    if debt.account_id is not None:
-        await require_account(session, debt.account_id, writable=True)
+    debt_id: int,
+    payload: _DebtUpdate,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> _DebtRead:
+    debt = await _require_debt(session, debt_id, active_profile.id)
     data = payload.model_dump(exclude_unset=True)
+    owner_profile_ids = data.pop("owner_profile_ids", None)
+    if "account_id" in data and debt.account_id is not None:
+        await require_account(
+            session,
+            debt.account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
     if data.get("account_id") is not None:
-        await require_account(session, data["account_id"], writable=True)
+        await require_account(
+            session,
+            data["account_id"],
+            writable=True,
+            profile_id=active_profile.id,
+        )
+    for series_field in (
+        "recurring_series_repayment_id",
+        "recurring_series_insurance_id",
+    ):
+        current_series_id = getattr(debt, series_field)
+        if series_field in data and current_series_id is not None:
+            current_series = await _require_recurring_series(session, current_series_id)
+            await require_account(
+                session,
+                current_series.account_id,
+                writable=True,
+                profile_id=active_profile.id,
+            )
     series_repayment = None
     series_insurance = None
     if data.get("recurring_series_repayment_id") is not None:
         series_repayment = await _require_recurring_series(session, data["recurring_series_repayment_id"])
-        await require_account(session, series_repayment.account_id, writable=True)
+        await require_account(
+            session,
+            series_repayment.account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
     elif "recurring_series_repayment_id" not in data and debt.recurring_series_repayment_id is not None:
         series_repayment = await _require_recurring_series(session, debt.recurring_series_repayment_id)
     if data.get("recurring_series_insurance_id") is not None:
         series_insurance = await _require_recurring_series(session, data["recurring_series_insurance_id"])
-        await require_account(session, series_insurance.account_id, writable=True)
+        await require_account(
+            session,
+            series_insurance.account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
     elif "recurring_series_insurance_id" not in data and debt.recurring_series_insurance_id is not None:
         series_insurance = await _require_recurring_series(session, debt.recurring_series_insurance_id)
+    if {
+        "minimum_payment",
+        "recurring_series_repayment_id",
+        "recurring_series_insurance_id",
+    }.intersection(data):
+        for series in (series_repayment, series_insurance):
+            if series is not None:
+                await require_account(
+                    session,
+                    series.account_id,
+                    writable=True,
+                    profile_id=active_profile.id,
+                )
     for required_field in ("name", "debt_type", "principal", "balance", "color", "archived"):
         if required_field in data and data[required_field] is None:
             raise HTTPException(
@@ -371,6 +743,16 @@ async def update_debt(
         setattr(debt, field, value)
     if Decimal(debt.balance) > Decimal(debt.principal):
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
+    if owner_profile_ids is not None:
+        await _replace_resource_owners(
+            session,
+            debt,
+            await _validate_owner_profile_ids(
+                session,
+                owner_profile_ids,
+                default_profile_id=active_profile.id,
+            ),
+        )
     # Synchronize the two series with minimum_payment
     if series_repayment is not None or series_insurance is not None:
         if "minimum_payment" in data:
@@ -399,13 +781,15 @@ async def update_debt(
                 pass
     await session.commit()
     await session.refresh(debt)
-    return await _debt_response(session, debt)
+    return await _debt_response(session, debt, active_profile.id)
 
 @router.delete("/debts/{debt_id}", status_code=204)
-async def delete_debt(debt_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    debt = await _require_debt(session, debt_id)
-    if debt.account_id is not None:
-        await require_account(session, debt.account_id, writable=True)
+async def delete_debt(
+    debt_id: int,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    debt = await _require_debt(session, debt_id, active_profile.id)
     attachments = (
         await session.execute(
             select(DebtAttachment).where(DebtAttachment.debt_id == debt_id)
@@ -432,10 +816,12 @@ async def _require_debt_attachment(
     session: AsyncSession,
     debt_id: int,
     attachment_id: int,
+    profile_id: int,
 ) -> DebtAttachment:
     attachment = await session.get(DebtAttachment, attachment_id)
     if attachment is None or attachment.debt_id != debt_id:
         raise HTTPException(status_code=404, detail="Piece jointe introuvable")
+    await _require_debt(session, debt_id, profile_id)
     return attachment
 
 
@@ -445,9 +831,10 @@ async def _require_debt_attachment(
 )
 async def list_debt_attachments(
     debt_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[DebtAttachmentRead]:
-    await _require_debt(session, debt_id)
+    await _require_debt(session, debt_id, active_profile.id)
     rows = (
         await session.execute(
             select(DebtAttachment)
@@ -466,11 +853,10 @@ async def list_debt_attachments(
 async def upload_debt_attachment(
     debt_id: int,
     file: UploadFile = File(...),
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> DebtAttachmentRead:
-    debt = await _require_debt(session, debt_id)
-    if debt.account_id is not None:
-        await require_account(session, debt.account_id, writable=True)
+    await _require_debt(session, debt_id, active_profile.id)
     content_type = file.content_type
     original_name, stored_path, size = await store_attachment(file)
     attachment = DebtAttachment(
@@ -497,9 +883,15 @@ async def upload_debt_attachment(
 async def download_debt_attachment(
     debt_id: int,
     attachment_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
-    attachment = await _require_debt_attachment(session, debt_id, attachment_id)
+    attachment = await _require_debt_attachment(
+        session,
+        debt_id,
+        attachment_id,
+        active_profile.id,
+    )
     path = attachment_path(attachment.stored_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Fichier de piece jointe introuvable")
@@ -518,12 +910,16 @@ async def download_debt_attachment(
 async def delete_debt_attachment(
     debt_id: int,
     attachment_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    debt = await _require_debt(session, debt_id)
-    if debt.account_id is not None:
-        await require_account(session, debt.account_id, writable=True)
-    attachment = await _require_debt_attachment(session, debt_id, attachment_id)
+    await _require_debt(session, debt_id, active_profile.id)
+    attachment = await _require_debt_attachment(
+        session,
+        debt_id,
+        attachment_id,
+        active_profile.id,
+    )
     remove_attachment(attachment.stored_path)
     await session.delete(attachment)
     await session.commit()
@@ -548,13 +944,22 @@ def _real_estate_owned_values(asset: RealEstateAsset) -> tuple[Decimal, Decimal]
 def _real_estate_read(
     asset: RealEstateAsset,
     debts: list[tuple[Debt, str | None, str | None]],
+    *,
+    owners: list[Profile],
+    active_profile_id: int,
+    active_profile_debt_balance: Decimal,
+    visible_recurring_series_ids: set[int],
     attachment_count: int = 0,
-) -> RealEstateRead:
+) -> _RealEstateRead:
     owned_purchase_price, owned_value = _real_estate_owned_values(asset)
     debt_balance = money(
         sum((Decimal(debt.balance) for debt, _, _ in debts), Decimal("0"))
     )
-    return RealEstateRead(
+    active_purchase_price, active_owned_value = _real_estate_owner_values(
+        asset,
+        [owner.id for owner in owners],
+    ).get(active_profile_id, (Decimal("0.00"), Decimal("0.00")))
+    return _RealEstateRead(
         id=asset.id,
         name=asset.name,
         property_type=asset.property_type,
@@ -571,10 +976,26 @@ def _real_estate_read(
                 id=debt.id,
                 name=debt.name,
                 balance=money(Decimal(debt.balance)),
-                recurring_series_repayment_id=debt.recurring_series_repayment_id,
-                recurring_series_insurance_id=debt.recurring_series_insurance_id,
-                recurring_series_name_repayment=repayment_label,
-                recurring_series_name_insurance=insurance_label,
+                recurring_series_repayment_id=(
+                    debt.recurring_series_repayment_id
+                    if debt.recurring_series_repayment_id in visible_recurring_series_ids
+                    else None
+                ),
+                recurring_series_insurance_id=(
+                    debt.recurring_series_insurance_id
+                    if debt.recurring_series_insurance_id in visible_recurring_series_ids
+                    else None
+                ),
+                recurring_series_name_repayment=(
+                    repayment_label
+                    if debt.recurring_series_repayment_id in visible_recurring_series_ids
+                    else None
+                ),
+                recurring_series_name_insurance=(
+                    insurance_label
+                    if debt.recurring_series_insurance_id in visible_recurring_series_ids
+                    else None
+                ),
             )
             for debt, repayment_label, insurance_label in debts
         ],
@@ -585,13 +1006,40 @@ def _real_estate_read(
         net_equity=money(owned_value - debt_balance),
         attachment_count=attachment_count,
         icon_path=asset.icon_path,
+        owners=[_profile_reference(owner) for owner in owners],
+        active_profile_purchase_price=active_purchase_price,
+        active_profile_owned_value=active_owned_value,
+        active_profile_debt_balance=money(active_profile_debt_balance),
+        active_profile_gain=money(active_owned_value - active_purchase_price),
+        total_owned_value=owned_value,
+        active_profile_net_equity=money(active_owned_value - active_profile_debt_balance),
+        total_net_equity=money(owned_value - debt_balance),
     )
+
+
+async def _require_real_estate(
+    session: AsyncSession,
+    asset_id: int,
+    profile_id: int,
+) -> RealEstateAsset:
+    asset = await session.scalar(
+        select(RealEstateAsset)
+        .join(RealEstateAssetOwner)
+        .where(
+            RealEstateAsset.id == asset_id,
+            RealEstateAssetOwner.member_id == profile_id,
+        )
+    )
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    return asset
 
 
 async def _load_real_estate_debts(
     session: AsyncSession,
     asset_id: int,
 ) -> list[tuple[Debt, str | None, str | None]]:
+    debt_filters = [RealEstateDebtLink.asset_id == asset_id]
     # Get repayment series labels
     repayment_rows = (
         await session.execute(
@@ -601,7 +1049,7 @@ async def _load_real_estate_debts(
                 RecurringSeries,
                 RecurringSeries.id == Debt.recurring_series_repayment_id,
             )
-            .where(RealEstateDebtLink.asset_id == asset_id)
+            .where(*debt_filters)
             .order_by(Debt.name, Debt.id)
         )
     ).all()
@@ -614,7 +1062,7 @@ async def _load_real_estate_debts(
                 RecurringSeries,
                 RecurringSeries.id == Debt.recurring_series_insurance_id,
             )
-            .where(RealEstateDebtLink.asset_id == asset_id)
+            .where(*debt_filters)
             .order_by(Debt.name, Debt.id)
         )
     ).all()
@@ -634,15 +1082,64 @@ async def _load_real_estate_debts(
     return result
 
 
+async def _real_estate_response(
+    session: AsyncSession,
+    asset: RealEstateAsset,
+    active_profile_id: int,
+    attachment_count: int = 0,
+) -> _RealEstateRead:
+    linked_debts = await _load_real_estate_debts(session, asset.id)
+    visible_accounts = await visible_account_ids(session, active_profile_id)
+    visible_recurring_series_ids = set(
+        await session.scalars(
+            select(RecurringSeries.id).where(
+                RecurringSeries.account_id.in_(visible_accounts)
+            )
+        )
+    )
+    debts: list[tuple[Debt, str | None, str | None]] = []
+    active_profile_debt_balance = Decimal("0")
+    for debt, repayment_label, insurance_label in linked_debts:
+        debt_owner_ids = [owner.id for owner in await _debt_owner_profiles(session, debt.id)]
+        if active_profile_id not in debt_owner_ids:
+            continue
+        debts.append((debt, repayment_label, insurance_label))
+        active_profile_debt_balance += _equal_owner_shares(
+            Decimal(debt.balance),
+            debt_owner_ids,
+        ).get(active_profile_id, Decimal("0"))
+    return _real_estate_read(
+        asset,
+        debts,
+        owners=await _real_estate_owner_profiles(session, asset.id),
+        active_profile_id=active_profile_id,
+        active_profile_debt_balance=active_profile_debt_balance,
+        visible_recurring_series_ids=visible_recurring_series_ids,
+        attachment_count=attachment_count,
+    )
+
+
 async def _validate_real_estate_debts(
     session: AsyncSession,
     debt_ids: list[int],
     asset_id: int | None = None,
+    profile_id: int | None = None,
 ) -> list[Debt]:
     if not debt_ids:
         return []
     debts = (
-        await session.execute(select(Debt).where(Debt.id.in_(debt_ids)))
+        await session.execute(
+            select(Debt)
+            .join(DebtOwner)
+            .where(
+                Debt.id.in_(debt_ids),
+                *(
+                    [DebtOwner.member_id == profile_id]
+                    if profile_id is not None
+                    else []
+                ),
+            )
+        )
     ).scalars().all()
     debts_by_id = {debt.id: debt for debt in debts}
     if len(debts_by_id) != len(debt_ids):
@@ -678,44 +1175,19 @@ async def _replace_real_estate_debts(
     )
 
 
-@router.get("/real-estate", response_model=list[RealEstateRead])
+@router.get("/real-estate", response_model=list[_RealEstateRead])
 async def list_real_estate(
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
-) -> list[RealEstateRead]:
+) -> list[_RealEstateRead]:
     assets = (
         await session.execute(
-            select(RealEstateAsset).order_by(RealEstateAsset.name)
+            select(RealEstateAsset)
+            .join(RealEstateAssetOwner)
+            .where(RealEstateAssetOwner.member_id == active_profile.id)
+            .order_by(RealEstateAsset.name)
         )
     ).scalars().all()
-    debts_by_asset: dict[int, list[tuple[Debt, str | None, str | None]]] = {}
-    linked_debts = (
-        await session.execute(
-            select(
-                RealEstateDebtLink.asset_id,
-                Debt,
-                RecurringSeries.label.label("repayment_label"),
-            )
-            .join(Debt, Debt.id == RealEstateDebtLink.debt_id)
-            .outerjoin(
-                RecurringSeries,
-                RecurringSeries.id == Debt.recurring_series_repayment_id,
-            )
-            .order_by(RealEstateDebtLink.asset_id, Debt.name, Debt.id)
-        )
-    ).all()
-    # Also get insurance labels
-    insurance_labels = {
-        row.id: row.label
-        for row in (
-            await session.execute(
-                select(Debt.id, RecurringSeries.label)
-                .join(RecurringSeries, RecurringSeries.id == Debt.recurring_series_insurance_id)
-            )
-        ).all()
-    }
-    for asset_id, debt, repayment_label in linked_debts:
-        insurance_label = insurance_labels.get(debt.id)
-        debts_by_asset.setdefault(asset_id, []).append((debt, repayment_label, insurance_label))
     attachment_counts = {
         asset_id: count
         for asset_id, count in (
@@ -728,49 +1200,92 @@ async def list_real_estate(
         ).all()
     }
     return [
-        _real_estate_read(
+        await _real_estate_response(
+            session,
             asset,
-            debts_by_asset.get(asset.id, []),
+            active_profile.id,
             attachment_count=int(attachment_counts.get(asset.id, 0)),
         )
         for asset in assets
     ]
 
 
-@router.post("/real-estate", response_model=RealEstateRead, status_code=201)
+@router.post("/real-estate", response_model=_RealEstateRead, status_code=201)
 async def create_real_estate(
-    payload: RealEstateCreate, session: AsyncSession = Depends(get_session)
-) -> RealEstateRead:
-    debts = await _validate_real_estate_debts(session, payload.debt_ids)
-    asset = RealEstateAsset(**payload.model_dump(exclude={"debt_ids"}))
+    payload: _RealEstateCreate,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> _RealEstateRead:
+    owner_ids = await _validate_owner_profile_ids(
+        session,
+        getattr(payload, "owner_profile_ids", None),
+        default_profile_id=active_profile.id,
+    )
+    if active_profile.id not in owner_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="Le createur doit rester proprietaire du bien",
+        )
+    debts = await _validate_real_estate_debts(
+        session,
+        payload.debt_ids,
+        profile_id=active_profile.id,
+    )
+    asset = RealEstateAsset(
+        **payload.model_dump(exclude={"debt_ids", "owner_profile_ids"})
+    )
     session.add(asset)
     await session.flush()
+    await _replace_resource_owners(session, asset, owner_ids)
     await _replace_real_estate_debts(session, asset.id, debts)
     await session.commit()
     await session.refresh(asset)
-    return _real_estate_read(asset, await _load_real_estate_debts(session, asset.id))
+    return await _real_estate_response(session, asset, active_profile.id)
 
 
-@router.patch("/real-estate/{asset_id}", response_model=RealEstateRead)
+@router.patch("/real-estate/{asset_id}", response_model=_RealEstateRead)
 async def update_real_estate(
     asset_id: int,
-    payload: RealEstateUpdate,
+    payload: _RealEstateUpdate,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
-) -> RealEstateRead:
-    asset = await session.get(RealEstateAsset, asset_id)
-    if asset is None:
-        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+) -> _RealEstateRead:
+    asset = await _require_real_estate(session, asset_id, active_profile.id)
     data = payload.model_dump(exclude_unset=True)
     debt_ids = data.pop("debt_ids", None)
+    owner_profile_ids = data.pop("owner_profile_ids", None)
     debts = (
-        await _validate_real_estate_debts(session, debt_ids, asset_id)
+        await _validate_real_estate_debts(
+            session,
+            debt_ids,
+            asset_id,
+            active_profile.id,
+        )
         if debt_ids is not None
         else None
     )
+    if debts is not None:
+        requested_debt_ids = {debt.id for debt in debts}
+        for debt, _, _ in await _load_real_estate_debts(session, asset.id):
+            debt_owner_ids = [
+                owner.id for owner in await _debt_owner_profiles(session, debt.id)
+            ]
+            if active_profile.id not in debt_owner_ids and debt.id not in requested_debt_ids:
+                debts.append(debt)
     for field, value in data.items():
         setattr(asset, field, value)
     if debts is not None:
         await _replace_real_estate_debts(session, asset.id, debts)
+    if owner_profile_ids is not None:
+        await _replace_resource_owners(
+            session,
+            asset,
+            await _validate_owner_profile_ids(
+                session,
+                owner_profile_ids,
+                default_profile_id=active_profile.id,
+            ),
+        )
     await session.commit()
     await session.refresh(asset)
     attachment_count = await session.scalar(
@@ -778,20 +1293,21 @@ async def update_real_estate(
         .select_from(RealEstateAttachment)
         .where(RealEstateAttachment.asset_id == asset.id)
     )
-    return _real_estate_read(
+    return await _real_estate_response(
+        session,
         asset,
-        await _load_real_estate_debts(session, asset.id),
-        int(attachment_count or 0),
+        active_profile.id,
+        attachment_count=int(attachment_count or 0),
     )
 
 
 @router.delete("/real-estate/{asset_id}", status_code=204)
 async def delete_real_estate(
-    asset_id: int, session: AsyncSession = Depends(get_session)
+    asset_id: int,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> None:
-    asset = await session.get(RealEstateAsset, asset_id)
-    if asset is None:
-        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    asset = await _require_real_estate(session, asset_id, active_profile.id)
     attachments = (
         await session.execute(
             select(RealEstateAttachment).where(RealEstateAttachment.asset_id == asset_id)
@@ -807,11 +1323,10 @@ async def delete_real_estate(
 async def upload_real_estate_icon(
     asset_id: int,
     file: UploadFile = File(...),
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    asset = await session.get(RealEstateAsset, asset_id)
-    if asset is None:
-        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    asset = await _require_real_estate(session, asset_id, active_profile.id)
     if asset.icon_path is not None:
         remove_attachment(asset.icon_path)
     original_name, stored_path, size = await store_attachment(file)
@@ -824,11 +1339,10 @@ async def upload_real_estate_icon(
 @router.get("/real-estate/{asset_id}/icon/download", response_model=None)
 async def download_real_estate_icon(
     asset_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
-    asset = await session.get(RealEstateAsset, asset_id)
-    if asset is None:
-        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    asset = await _require_real_estate(session, asset_id, active_profile.id)
     if asset.icon_path is None:
         raise HTTPException(status_code=404, detail="Icone introuvable")
     path = attachment_path(asset.icon_path)
@@ -845,11 +1359,10 @@ async def download_real_estate_icon(
 @router.delete("/real-estate/{asset_id}/icon", status_code=204)
 async def delete_real_estate_icon(
     asset_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    asset = await session.get(RealEstateAsset, asset_id)
-    if asset is None:
-        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    asset = await _require_real_estate(session, asset_id, active_profile.id)
     if asset.icon_path is not None:
         remove_attachment(asset.icon_path)
         asset.icon_path = None
@@ -873,10 +1386,12 @@ async def _require_real_estate_attachment(
     session: AsyncSession,
     asset_id: int,
     attachment_id: int,
+    profile_id: int,
 ) -> RealEstateAttachment:
     attachment = await session.get(RealEstateAttachment, attachment_id)
     if attachment is None or attachment.asset_id != asset_id:
         raise HTTPException(status_code=404, detail="Piece jointe introuvable")
+    await _require_real_estate(session, asset_id, profile_id)
     return attachment
 
 
@@ -886,10 +1401,10 @@ async def _require_real_estate_attachment(
 )
 async def list_real_estate_attachments(
     asset_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[RealEstateAttachmentRead]:
-    if await session.get(RealEstateAsset, asset_id) is None:
-        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    await _require_real_estate(session, asset_id, active_profile.id)
     rows = (
         await session.execute(
             select(RealEstateAttachment)
@@ -908,10 +1423,10 @@ async def list_real_estate_attachments(
 async def upload_real_estate_attachment(
     asset_id: int,
     file: UploadFile = File(...),
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> RealEstateAttachmentRead:
-    if await session.get(RealEstateAsset, asset_id) is None:
-        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
+    await _require_real_estate(session, asset_id, active_profile.id)
     content_type = file.content_type
     original_name, stored_path, size = await store_attachment(file)
     attachment = RealEstateAttachment(
@@ -938,12 +1453,14 @@ async def upload_real_estate_attachment(
 async def download_real_estate_attachment(
     asset_id: int,
     attachment_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
     attachment = await _require_real_estate_attachment(
         session,
         asset_id,
         attachment_id,
+        active_profile.id,
     )
     path = attachment_path(attachment.stored_path)
     if not path.is_file():
@@ -963,14 +1480,14 @@ async def download_real_estate_attachment(
 async def delete_real_estate_attachment(
     asset_id: int,
     attachment_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
-    if await session.get(RealEstateAsset, asset_id) is None:
-        raise HTTPException(status_code=404, detail="Bien immobilier introuvable")
     attachment = await _require_real_estate_attachment(
         session,
         asset_id,
         attachment_id,
+        active_profile.id,
     )
     remove_attachment(attachment.stored_path)
     await session.delete(attachment)
@@ -980,10 +1497,24 @@ async def delete_real_estate_attachment(
 # --------------------------------------------------------------------------- #
 # Holdings
 # --------------------------------------------------------------------------- #
+async def _require_holding(
+    session: AsyncSession,
+    holding_id: int,
+    profile_id: int,
+) -> Holding:
+    holding = await session.get(Holding, holding_id)
+    if holding is None:
+        raise HTTPException(status_code=404, detail="Actif introuvable")
+    await require_account(session, holding.account_id, profile_id=profile_id)
+    return holding
+
+
 def _holding_read(
     holding: Holding,
     operation_count: int = 0,
     *,
+    owner_ids: list[int],
+    active_profile_id: int,
     realized_cost_basis: Decimal = Decimal("0"),
     realized_gain: Decimal = Decimal("0"),
 ) -> HoldingRead:
@@ -995,6 +1526,14 @@ def _holding_read(
     realized_gain = money(realized_gain)
     total_cost_basis = money(cost_basis + realized_cost_basis)
     total_gain = money(unrealized_gain + realized_gain)
+    quantity_shares = _equal_owner_quantity_shares(quantity, owner_ids)
+    cost_basis_shares = _equal_owner_shares(cost_basis, owner_ids)
+    realized_cost_basis_shares = _equal_owner_shares(realized_cost_basis, owner_ids)
+    total_cost_basis_shares = _equal_owner_shares(total_cost_basis, owner_ids)
+    market_value_shares = _equal_owner_shares(market_value, owner_ids)
+    unrealized_gain_shares = _equal_owner_shares(unrealized_gain, owner_ids)
+    realized_gain_shares = _equal_owner_shares(realized_gain, owner_ids)
+    total_gain_shares = _equal_owner_shares(total_gain, owner_ids)
     return HoldingRead(
         id=holding.id,
         account_id=holding.account_id,
@@ -1014,10 +1553,25 @@ def _holding_read(
         total_gain=total_gain,
         gain=total_gain,
         operation_count=operation_count,
+        active_profile_quantity=quantity_shares[active_profile_id],
+        active_profile_cost_basis=cost_basis_shares[active_profile_id],
+        active_profile_unrealized_cost_basis=cost_basis_shares[active_profile_id],
+        active_profile_realized_cost_basis=realized_cost_basis_shares[
+            active_profile_id
+        ],
+        active_profile_total_cost_basis=total_cost_basis_shares[active_profile_id],
+        active_profile_market_value=market_value_shares[active_profile_id],
+        active_profile_unrealized_gain=unrealized_gain_shares[active_profile_id],
+        active_profile_realized_gain=realized_gain_shares[active_profile_id],
+        active_profile_total_gain=total_gain_shares[active_profile_id],
     )
 
 
-async def _holding_response(session: AsyncSession, holding: Holding) -> HoldingRead:
+async def _holding_response(
+    session: AsyncSession,
+    holding: Holding,
+    active_profile_id: int,
+) -> HoldingRead:
     operations = (
         await session.execute(
             select(HoldingOperation).where(HoldingOperation.holding_id == holding.id)
@@ -1027,6 +1581,8 @@ async def _holding_response(session: AsyncSession, holding: Holding) -> HoldingR
     return _holding_read(
         holding,
         len(operations),
+        owner_ids=await account_owner_ids(session, holding.account_id),
+        active_profile_id=active_profile_id,
         realized_cost_basis=realized.realized_cost_basis,
         realized_gain=realized.realized_gain,
     )
@@ -1182,12 +1738,13 @@ async def _holding_for_account(
 @router.get("/holdings", response_model=list[HoldingRead])
 async def list_holdings(
     account_id: int | None = None,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[HoldingRead]:
-    statement = select(Holding).order_by(Holding.name)
+    visible_accounts = await visible_account_ids(session, active_profile.id)
+    statement = select(Holding).where(Holding.account_id.in_(visible_accounts)).order_by(Holding.name)
     if account_id is not None:
-        if await session.get(Account, account_id) is None:
-            raise HTTPException(status_code=404, detail="Compte introuvable")
+        await require_account(session, account_id, profile_id=active_profile.id)
         statement = statement.where(Holding.account_id == account_id)
     rows = (await session.execute(statement)).scalars().all()
     operations_by_holding: dict[int, list[HoldingOperation]] = defaultdict(list)
@@ -1214,6 +1771,8 @@ async def list_holdings(
             _holding_read(
                 row,
                 len(operations),
+                owner_ids=await account_owner_ids(session, row.account_id),
+                active_profile_id=active_profile.id,
                 realized_cost_basis=realized.realized_cost_basis,
                 realized_gain=realized.realized_gain,
             )
@@ -1223,9 +1782,16 @@ async def list_holdings(
 
 @router.post("/holdings", response_model=HoldingRead, status_code=201)
 async def create_holding(
-    payload: HoldingCreate, session: AsyncSession = Depends(get_session)
+    payload: HoldingCreate,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> HoldingRead:
-    await require_holding_account(session, payload.account_id, writable=True)
+    await require_holding_account(
+        session,
+        payload.account_id,
+        writable=True,
+        profile_id=active_profile.id,
+    )
     holding = Holding(**payload.model_dump())
     session.add(holding)
     await session.flush()
@@ -1241,21 +1807,32 @@ async def create_holding(
         )
     await session.commit()
     await session.refresh(holding)
-    return await _holding_response(session, holding)
+    return await _holding_response(session, holding, active_profile.id)
 
 
 @router.patch("/holdings/{holding_id}", response_model=HoldingRead)
 async def update_holding(
-    holding_id: int, payload: HoldingUpdate, session: AsyncSession = Depends(get_session)
+    holding_id: int,
+    payload: HoldingUpdate,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> HoldingRead:
-    holding = await session.get(Holding, holding_id)
-    if holding is None:
-        raise HTTPException(status_code=404, detail="Actif introuvable")
-    await require_account(session, holding.account_id, writable=True)
+    holding = await _require_holding(session, holding_id, active_profile.id)
+    await require_account(
+        session,
+        holding.account_id,
+        writable=True,
+        profile_id=active_profile.id,
+    )
     data = payload.model_dump(exclude_unset=True)
     target_account_id = data.pop("account_id", holding.account_id)
     if target_account_id != holding.account_id:
-        await require_holding_account(session, target_account_id, writable=True)
+        await require_holding_account(
+            session,
+            target_account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
         destination, is_new_destination = await _holding_for_account(
             session,
             holding,
@@ -1294,20 +1871,27 @@ async def update_holding(
             await session.delete(holding)
             await session.commit()
             await session.refresh(destination)
-            return await _holding_response(session, destination)
+            return await _holding_response(session, destination, active_profile.id)
     for field, value in data.items():
         setattr(holding, field, value)
     await session.commit()
     await session.refresh(holding)
-    return await _holding_response(session, holding)
+    return await _holding_response(session, holding, active_profile.id)
 
 
 @router.delete("/holdings/{holding_id}", status_code=204)
-async def delete_holding(holding_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    holding = await session.get(Holding, holding_id)
-    if holding is None:
-        raise HTTPException(status_code=404, detail="Actif introuvable")
-    await require_account(session, holding.account_id, writable=True)
+async def delete_holding(
+    holding_id: int,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    holding = await _require_holding(session, holding_id, active_profile.id)
+    await require_account(
+        session,
+        holding.account_id,
+        writable=True,
+        profile_id=active_profile.id,
+    )
     await session.delete(holding)
     await session.commit()
 
@@ -1318,10 +1902,10 @@ async def delete_holding(holding_id: int, session: AsyncSession = Depends(get_se
 )
 async def list_holding_operations(
     holding_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[HoldingOperationRead]:
-    if await session.get(Holding, holding_id) is None:
-        raise HTTPException(status_code=404, detail="Actif introuvable")
+    await _require_holding(session, holding_id, active_profile.id)
     rows = (
         await session.execute(
             select(HoldingOperation)
@@ -1346,11 +1930,16 @@ async def list_holding_operations(
     response_model=list[HoldingOperationRead],
 )
 async def list_all_holding_operations(
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[HoldingOperationRead]:
+    visible_accounts = await visible_account_ids(session, active_profile.id)
     rows = (
         await session.execute(
-            select(HoldingOperation).order_by(
+            select(HoldingOperation)
+            .join(Holding)
+            .where(Holding.account_id.in_(visible_accounts))
+            .order_by(
                 HoldingOperation.occurred_on.desc(),
                 HoldingOperation.created_at.desc(),
                 HoldingOperation.id.desc(),
@@ -1380,19 +1969,32 @@ async def list_all_holding_operations(
 )
 async def create_holding_operation(
     payload: HoldingOperationCreate,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> HoldingOperationResult:
     if payload.holding_id is not None:
-        source_holding = await session.get(Holding, payload.holding_id)
-        if source_holding is None:
-            raise HTTPException(status_code=404, detail="Actif introuvable")
-        await require_account(session, source_holding.account_id, writable=True)
+        source_holding = await _require_holding(
+            session,
+            payload.holding_id,
+            active_profile.id,
+        )
+        await require_account(
+            session,
+            source_holding.account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
         target_account_id = (
             payload.target_account_id
             if payload.target_account_id is not None
             else source_holding.account_id
         )
-        await require_holding_account(session, target_account_id, writable=True)
+        await require_holding_account(
+            session,
+            target_account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
         holding, is_new_holding = await _holding_for_account(
             session,
             source_holding,
@@ -1402,7 +2004,12 @@ async def create_holding_operation(
         new_holding = payload.new_holding
         if new_holding is None:
             raise HTTPException(status_code=422, detail="Nouvel actif manquant")
-        await require_holding_account(session, new_holding.account_id, writable=True)
+        await require_holding_account(
+            session,
+            new_holding.account_id,
+            writable=True,
+            profile_id=active_profile.id,
+        )
         holding = Holding(
             **new_holding.model_dump(),
             quantity=Decimal("0"),
@@ -1455,7 +2062,7 @@ async def create_holding_operation(
         item.id: item for item in _holding_operation_reads(persisted_operations)
     }
     return HoldingOperationResult(
-        holding=await _holding_response(session, holding),
+        holding=await _holding_response(session, holding, active_profile.id),
         operation=operation_reads[operation.id],
     )
 
@@ -1468,12 +2075,16 @@ async def update_holding_operation(
     holding_id: int,
     operation_id: int,
     payload: HoldingOperationUpdate,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> HoldingOperationResult:
-    holding = await session.get(Holding, holding_id)
-    if holding is None:
-        raise HTTPException(status_code=404, detail="Actif introuvable")
-    await require_account(session, holding.account_id, writable=True)
+    holding = await _require_holding(session, holding_id, active_profile.id)
+    await require_account(
+        session,
+        holding.account_id,
+        writable=True,
+        profile_id=active_profile.id,
+    )
     operation = await session.get(HoldingOperation, operation_id)
     if operation is None or operation.holding_id != holding_id:
         raise HTTPException(status_code=404, detail="Operation introuvable")
@@ -1483,7 +2094,12 @@ async def update_holding_operation(
         if payload.target_account_id is not None
         else holding.account_id
     )
-    await require_holding_account(session, target_account_id, writable=True)
+    await require_holding_account(
+        session,
+        target_account_id,
+        writable=True,
+        profile_id=active_profile.id,
+    )
     destination, is_new_destination = await _holding_for_account(
         session,
         holding,
@@ -1541,7 +2157,7 @@ async def update_holding_operation(
         item.id: item for item in _holding_operation_reads(destination_operations)
     }
     return HoldingOperationResult(
-        holding=await _holding_response(session, destination),
+        holding=await _holding_response(session, destination, active_profile.id),
         operation=operation_reads[operation.id],
     )
 
@@ -1553,12 +2169,16 @@ async def update_holding_operation(
 async def delete_holding_operation(
     holding_id: int,
     operation_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> HoldingRead:
-    holding = await session.get(Holding, holding_id)
-    if holding is None:
-        raise HTTPException(status_code=404, detail="Actif introuvable")
-    await require_account(session, holding.account_id, writable=True)
+    holding = await _require_holding(session, holding_id, active_profile.id)
+    await require_account(
+        session,
+        holding.account_id,
+        writable=True,
+        profile_id=active_profile.id,
+    )
     operation = await session.get(HoldingOperation, operation_id)
     if operation is None or operation.holding_id != holding_id:
         raise HTTPException(status_code=404, detail="Operation introuvable")
@@ -1575,7 +2195,7 @@ async def delete_holding_operation(
     await session.delete(operation)
     await session.commit()
     await session.refresh(holding)
-    return await _holding_response(session, holding)
+    return await _holding_response(session, holding, active_profile.id)
 
 
 # --------------------------------------------------------------------------- #
@@ -1583,10 +2203,11 @@ async def delete_holding_operation(
 # --------------------------------------------------------------------------- #
 @router.get("/holdings/{holding_id}/contributions", response_model=list[ContributionRead])
 async def list_contributions(
-    holding_id: int, session: AsyncSession = Depends(get_session)
+    holding_id: int,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> list[ContributionRead]:
-    if await session.get(Holding, holding_id) is None:
-        raise HTTPException(status_code=404, detail="Actif introuvable")
+    await _require_holding(session, holding_id, active_profile.id)
     rows = (
         await session.execute(
             select(Contribution)
@@ -1603,12 +2224,16 @@ async def list_contributions(
 async def create_contribution(
     holding_id: int,
     payload: ContributionCreate,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> ContributionRead:
-    holding = await session.get(Holding, holding_id)
-    if holding is None:
-        raise HTTPException(status_code=404, detail="Actif introuvable")
-    await require_account(session, holding.account_id, writable=True)
+    holding = await _require_holding(session, holding_id, active_profile.id)
+    await require_account(
+        session,
+        holding.account_id,
+        writable=True,
+        profile_id=active_profile.id,
+    )
     contribution = Contribution(holding_id=holding_id, **payload.model_dump())
     session.add(contribution)
     await session.commit()
@@ -1620,26 +2245,35 @@ async def create_contribution(
 async def delete_contribution(
     holding_id: int,
     contribution_id: int,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
     contribution = await session.get(Contribution, contribution_id)
     if contribution is None or contribution.holding_id != holding_id:
         raise HTTPException(status_code=404, detail="Versement introuvable")
-    holding = await session.get(Holding, holding_id)
-    if holding is None:
-        raise HTTPException(status_code=404, detail="Actif introuvable")
-    await require_account(session, holding.account_id, writable=True)
+    holding = await _require_holding(session, holding_id, active_profile.id)
+    await require_account(
+        session,
+        holding.account_id,
+        writable=True,
+        profile_id=active_profile.id,
+    )
     await session.delete(contribution)
     await session.commit()
 
 
 @router.get("/contributions", response_model=list[ContributionRead])
 async def list_all_contributions(
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[ContributionRead]:
+    visible_accounts = await visible_account_ids(session, active_profile.id)
     rows = (
         await session.execute(
-            select(Contribution).order_by(Contribution.occurred_on, Contribution.id)
+            select(Contribution)
+            .join(Holding)
+            .where(Holding.account_id.in_(visible_accounts))
+            .order_by(Contribution.occurred_on, Contribution.id)
         )
     ).scalars().all()
     return [ContributionRead.model_validate(row) for row in rows]
@@ -1648,12 +2282,16 @@ async def list_all_contributions(
 @router.post("/contributions", response_model=ContributionRead, status_code=201)
 async def create_aggregate_contribution(
     payload: ContributionCreateAggregate,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> ContributionRead:
-    holding = await session.get(Holding, payload.holding_id)
-    if holding is None:
-        raise HTTPException(status_code=404, detail="Actif introuvable")
-    await require_account(session, holding.account_id, writable=True)
+    holding = await _require_holding(session, payload.holding_id, active_profile.id)
+    await require_account(
+        session,
+        holding.account_id,
+        writable=True,
+        profile_id=active_profile.id,
+    )
     contribution = Contribution(**payload.model_dump())
     session.add(contribution)
     await session.commit()
@@ -1665,9 +2303,23 @@ async def create_aggregate_contribution(
 # Portfolio analytics
 # --------------------------------------------------------------------------- #
 @router.get("/portfolio/summary", response_model=PortfolioSummary)
-async def portfolio_summary(session: AsyncSession = Depends(get_session)) -> PortfolioSummary:
-    holdings = (await session.execute(select(Holding))).scalars().all()
-    properties = (await session.execute(select(RealEstateAsset))).scalars().all()
+async def portfolio_summary(
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> PortfolioSummary:
+    visible_accounts = await visible_account_ids(session, active_profile.id)
+    holdings = (
+        await session.execute(
+            select(Holding).where(Holding.account_id.in_(visible_accounts))
+        )
+    ).scalars().all()
+    properties = (
+        await session.execute(
+            select(RealEstateAsset)
+            .join(RealEstateAssetOwner)
+            .where(RealEstateAssetOwner.member_id == active_profile.id)
+        )
+    ).scalars().all()
     holding_operations = (
         await session.execute(
             select(HoldingOperation).order_by(
@@ -1681,30 +2333,45 @@ async def portfolio_summary(session: AsyncSession = Depends(get_session)) -> Por
     operations_by_holding: dict[int, list[HoldingOperation]] = defaultdict(list)
     for operation in holding_operations:
         operations_by_holding[operation.holding_id].append(operation)
-    holdings_unrealized_cost_basis = sum(
-        (Decimal(h.quantity) * Decimal(h.average_price) for h in holdings), Decimal("0")
-    )
-    holdings_market_value = sum(
-        (Decimal(h.quantity) * Decimal(h.current_price) for h in holdings), Decimal("0")
-    )
-    holdings_realized = [
-        _holding_realized_metrics(operations_by_holding[holding.id]) for holding in holdings
+    holdings_unrealized_cost_basis = Decimal("0")
+    holdings_market_value = Decimal("0")
+    holdings_realized_cost_basis = Decimal("0")
+    holdings_realized_gain = Decimal("0")
+    for holding in holdings:
+        holdings_unrealized_cost_basis += await _account_owned_amount(
+            session,
+            holding.account_id,
+            active_profile.id,
+            Decimal(holding.quantity) * Decimal(holding.average_price),
+        )
+        holdings_market_value += await _account_owned_amount(
+            session,
+            holding.account_id,
+            active_profile.id,
+            Decimal(holding.quantity) * Decimal(holding.current_price),
+        )
+        realized = _holding_realized_metrics(operations_by_holding[holding.id])
+        holdings_realized_cost_basis += await _account_owned_amount(
+            session,
+            holding.account_id,
+            active_profile.id,
+            realized.realized_cost_basis,
+        )
+        holdings_realized_gain += await _account_owned_amount(
+            session,
+            holding.account_id,
+            active_profile.id,
+            realized.realized_gain,
+        )
+    property_values = [
+        _real_estate_owner_values(
+            asset,
+            [owner.id for owner in await _real_estate_owner_profiles(session, asset.id)],
+        )[active_profile.id]
+        for asset in properties
     ]
-    holdings_realized_cost_basis = sum(
-        (item.realized_cost_basis for item in holdings_realized),
-        Decimal("0"),
-    )
-    holdings_realized_gain = sum(
-        (item.realized_gain for item in holdings_realized),
-        Decimal("0"),
-    )
-    property_values = [_real_estate_owned_values(asset) for asset in properties]
-    properties_cost_basis = sum(
-        (purchase_price for purchase_price, _ in property_values), Decimal("0")
-    )
-    properties_market_value = sum(
-        (current_value for _, current_value in property_values), Decimal("0")
-    )
+    properties_cost_basis = sum((purchase_price for purchase_price, _ in property_values), Decimal("0"))
+    properties_market_value = sum((current_value for _, current_value in property_values), Decimal("0"))
     unrealized_cost_basis = holdings_unrealized_cost_basis + properties_cost_basis
     realized_cost_basis = holdings_realized_cost_basis
     total_cost_basis = unrealized_cost_basis + realized_cost_basis
@@ -1714,9 +2381,21 @@ async def portfolio_summary(session: AsyncSession = Depends(get_session)) -> Por
     )
     realized_gain = holdings_realized_gain
     total_gain = unrealized_gain + realized_gain
-    contributions_total = await session.scalar(
-        select(func.coalesce(func.sum(Contribution.amount), 0))
-    )
+    contributions = (
+        await session.execute(
+            select(Contribution, Holding.account_id)
+            .join(Holding)
+            .where(Holding.account_id.in_(visible_accounts))
+        )
+    ).all()
+    contributions_total = Decimal("0")
+    for contribution, account_id in contributions:
+        contributions_total += await _account_owned_amount(
+            session,
+            account_id,
+            active_profile.id,
+            Decimal(contribution.amount),
+        )
     return PortfolioSummary(
         cost_basis=money(total_cost_basis),
         unrealized_cost_basis=money(unrealized_cost_basis),
@@ -1734,17 +2413,39 @@ async def portfolio_summary(session: AsyncSession = Depends(get_session)) -> Por
 
 
 @router.get("/portfolio/allocation", response_model=list[AllocationSlice])
-async def portfolio_allocation(session: AsyncSession = Depends(get_session)) -> list[AllocationSlice]:
-    holdings = (await session.execute(select(Holding))).scalars().all()
-    properties = (await session.execute(select(RealEstateAsset))).scalars().all()
+async def portfolio_allocation(
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> list[AllocationSlice]:
+    visible_accounts = await visible_account_ids(session, active_profile.id)
+    holdings = (
+        await session.execute(
+            select(Holding).where(Holding.account_id.in_(visible_accounts))
+        )
+    ).scalars().all()
+    properties = (
+        await session.execute(
+            select(RealEstateAsset)
+            .join(RealEstateAssetOwner)
+            .where(RealEstateAssetOwner.member_id == active_profile.id)
+        )
+    ).scalars().all()
     by_class: dict[str, Decimal] = {}
     for holding in holdings:
-        value = Decimal(holding.quantity) * Decimal(holding.current_price)
+        value = await _account_owned_amount(
+            session,
+            holding.account_id,
+            active_profile.id,
+            Decimal(holding.quantity) * Decimal(holding.current_price),
+        )
         if value <= 0:
             continue
         by_class[holding.asset_class] = by_class.get(holding.asset_class, Decimal("0")) + value
     for asset in properties:
-        _, value = _real_estate_owned_values(asset)
+        _, value = _real_estate_owner_values(
+            asset,
+            [owner.id for owner in await _real_estate_owner_profiles(session, asset.id)],
+        )[active_profile.id]
         if value <= 0:
             continue
         by_class["real_estate"] = by_class.get("real_estate", Decimal("0")) + value
@@ -1760,8 +2461,12 @@ async def portfolio_allocation(session: AsyncSession = Depends(get_session)) -> 
 
 @router.get("/portfolio/snapshots", response_model=list[PortfolioSnapshotRead])
 async def list_portfolio_snapshots(
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[PortfolioSnapshotRead]:
+    del active_profile
+    if not await _portfolio_snapshots_are_single_profile_only(session):
+        return []
     rows = (
         await session.execute(select(PortfolioSnapshot).order_by(PortfolioSnapshot.period))
     ).scalars().all()
@@ -1770,8 +2475,16 @@ async def list_portfolio_snapshots(
 
 @router.put("/portfolio/snapshots", response_model=PortfolioSnapshotRead)
 async def upsert_portfolio_snapshot(
-    payload: PortfolioSnapshotCreate, session: AsyncSession = Depends(get_session)
+    payload: PortfolioSnapshotCreate,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> PortfolioSnapshotRead:
+    del active_profile
+    if not await _portfolio_snapshots_are_single_profile_only(session):
+        raise HTTPException(
+            status_code=409,
+            detail="Les snapshots de portefeuille ne sont pas disponibles par profil",
+        )
     snapshot = await session.scalar(
         select(PortfolioSnapshot).where(PortfolioSnapshot.period == payload.period)
     )
@@ -1787,9 +2500,17 @@ async def upsert_portfolio_snapshot(
 
 @router.post("/portfolio/snapshots/generate", response_model=PortfolioSnapshotRead)
 async def generate_portfolio_snapshot(
-    period: str | None = None, session: AsyncSession = Depends(get_session)
+    period: str | None = None,
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
 ) -> PortfolioSnapshotRead:
     """Idempotently record the current portfolio valuation for a month (YYYY-MM)."""
+    del active_profile
+    if not await _portfolio_snapshots_are_single_profile_only(session):
+        raise HTTPException(
+            status_code=409,
+            detail="Les snapshots de portefeuille ne sont pas disponibles par profil",
+        )
     reference = period or local_today().strftime("%Y-%m")
     if len(reference) != 7 or reference[4] != "-":
         raise HTTPException(status_code=422, detail="Periode invalide (attendu AAAA-MM)")
@@ -1840,11 +2561,21 @@ async def generate_portfolio_snapshot(
 
 async def _holding_performance(
     session: AsyncSession,
+    profile_id: int,
 ) -> list[AssetPerformancePoint]:
-    holdings = (await session.execute(select(Holding))).scalars().all()
+    visible_accounts = await visible_account_ids(session, profile_id)
+    holdings = (
+        await session.execute(
+            select(Holding).where(Holding.account_id.in_(visible_accounts))
+        )
+    ).scalars().all()
+    holding_accounts = {holding.id: holding.account_id for holding in holdings}
     operations = (
         await session.execute(
-            select(HoldingOperation).order_by(
+            select(HoldingOperation)
+            .join(Holding)
+            .where(Holding.account_id.in_(visible_accounts))
+            .order_by(
                 HoldingOperation.occurred_on,
                 HoldingOperation.created_at,
                 HoldingOperation.id,
@@ -1890,31 +2621,52 @@ async def _holding_performance(
             state.last_price = operation_price
             positions[operation.holding_id] = state
 
-        market_value = sum(
-            (state.quantity * state.last_price for state in positions.values()),
-            Decimal("0"),
-        )
-        unrealized_cost_basis = sum(
-            (state.quantity * state.average_price for state in positions.values()),
-            Decimal("0"),
-        )
-        realized_cost_basis = sum(
-            (state.realized_cost_basis for state in positions.values()),
-            Decimal("0"),
-        )
-        realized_gain = sum(
-            (state.realized_gain for state in positions.values()),
-            Decimal("0"),
-        )
+        market_value = Decimal("0")
+        unrealized_cost_basis = Decimal("0")
+        realized_cost_basis = Decimal("0")
+        realized_gain = Decimal("0")
+        for holding_id, state in positions.items():
+            account_id = holding_accounts[holding_id]
+            market_value += await _account_owned_amount(
+                session,
+                account_id,
+                profile_id,
+                state.quantity * state.last_price,
+            )
+            unrealized_cost_basis += await _account_owned_amount(
+                session,
+                account_id,
+                profile_id,
+                state.quantity * state.average_price,
+            )
+            realized_cost_basis += await _account_owned_amount(
+                session,
+                account_id,
+                profile_id,
+                state.realized_cost_basis,
+            )
+            realized_gain += await _account_owned_amount(
+                session,
+                account_id,
+                profile_id,
+                state.realized_gain,
+            )
         if period == current_period:
-            market_value = sum(
-                (Decimal(row.quantity) * Decimal(row.current_price) for row in holdings),
-                Decimal("0"),
-            )
-            unrealized_cost_basis = sum(
-                (Decimal(row.quantity) * Decimal(row.average_price) for row in holdings),
-                Decimal("0"),
-            )
+            market_value = Decimal("0")
+            unrealized_cost_basis = Decimal("0")
+            for holding in holdings:
+                market_value += await _account_owned_amount(
+                    session,
+                    holding.account_id,
+                    profile_id,
+                    Decimal(holding.quantity) * Decimal(holding.current_price),
+                )
+                unrealized_cost_basis += await _account_owned_amount(
+                    session,
+                    holding.account_id,
+                    profile_id,
+                    Decimal(holding.quantity) * Decimal(holding.average_price),
+                )
         unrealized_gain = market_value - unrealized_cost_basis
         total_cost_basis = unrealized_cost_basis + realized_cost_basis
         total_gain = unrealized_gain + realized_gain
@@ -1937,29 +2689,48 @@ async def _holding_performance(
 
 @router.get("/holdings/performance", response_model=list[AssetPerformancePoint])
 async def holding_performance(
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[AssetPerformancePoint]:
-    return await _holding_performance(session)
+    return await _holding_performance(session, active_profile.id)
 
 
 @router.get("/portfolio/performance", response_model=list[PerformancePoint])
-async def portfolio_performance(session: AsyncSession = Depends(get_session)) -> list[PerformancePoint]:
-    month_expr = func.strftime("%Y-%m", Contribution.occurred_on)
-    contrib_rows = (
+async def portfolio_performance(
+    active_profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> list[PerformancePoint]:
+    visible_accounts = await visible_account_ids(session, active_profile.id)
+    contributions = (
         await session.execute(
-            select(month_expr, func.sum(Contribution.amount))
-            .group_by(month_expr)
-            .order_by(month_expr)
+            select(Contribution, Holding.account_id)
+            .join(Holding)
+            .where(Holding.account_id.in_(visible_accounts))
+            .order_by(Contribution.occurred_on)
         )
     ).all()
-    contrib_by_period = {period: Decimal(amount or 0) for period, amount in contrib_rows}
+    contrib_by_period: dict[str, Decimal] = {}
+    for contribution, account_id in contributions:
+        period = contribution.occurred_on.strftime("%Y-%m")
+        contrib_by_period[period] = contrib_by_period.get(period, Decimal("0")) + (
+            await _account_owned_amount(
+                session,
+                account_id,
+                active_profile.id,
+                Decimal(contribution.amount),
+            )
+        )
 
     snapshots = (
-        await session.execute(select(PortfolioSnapshot).order_by(PortfolioSnapshot.period))
-    ).scalars().all()
+        (
+            await session.execute(select(PortfolioSnapshot).order_by(PortfolioSnapshot.period))
+        ).scalars().all()
+        if await _portfolio_snapshots_are_single_profile_only(session)
+        else []
+    )
     snapshot_by_period = {s.period: s for s in snapshots}
     if not snapshot_by_period:
-        asset_points = await _holding_performance(session)
+        asset_points = await _holding_performance(session, active_profile.id)
         asset_by_period = {point.period: point for point in asset_points}
         periods = sorted(set(contrib_by_period) | set(asset_by_period))
         points: list[PerformancePoint] = []
@@ -2049,42 +2820,82 @@ async def _investment_account_ids(session: AsyncSession) -> set[int]:
     return set(rows)
 
 
+async def _account_owned_amount(
+    session: AsyncSession,
+    account_id: int,
+    profile_id: int,
+    amount: Decimal,
+) -> Decimal:
+    return allocate_equal_shares(
+        amount,
+        await account_owner_ids(session, account_id),
+    ).get(profile_id, Decimal("0.00"))
+
+
 async def _current_net_worth_components(
     session: AsyncSession,
     through: date,
+    profile_id: int,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, set[int]]:
-    investment_accounts = await _investment_account_ids(session)
+    visible_accounts = await visible_account_ids(session, profile_id)
+    investment_accounts = (await _investment_account_ids(session)) & visible_accounts
     balances = await account_balances(session, through=through)
-    cash = sum(
-        (
-            balance
-            for account_id, balance in balances.items()
-            if account_id not in investment_accounts
-        ),
-        Decimal("0"),
-    )
+    cash = Decimal("0")
+    for account_id, balance in balances.items():
+        if account_id in visible_accounts and account_id not in investment_accounts:
+            cash += await _account_owned_amount(session, account_id, profile_id, balance)
 
-    holdings = (await session.execute(select(Holding))).scalars().all()
-    investments = sum(
-        (Decimal(h.quantity) * Decimal(h.current_price) for h in holdings), Decimal("0")
-    )
-    properties = (await session.execute(select(RealEstateAsset))).scalars().all()
-    real_estate = sum(
-        (_real_estate_owned_values(asset)[1] for asset in properties), Decimal("0")
-    )
-    debts = await session.scalar(select(func.coalesce(func.sum(Debt.balance), 0)))
-    debts_total = Decimal(debts or 0)
+    holdings = (
+        await session.execute(
+            select(Holding).where(Holding.account_id.in_(visible_accounts))
+        )
+    ).scalars().all()
+    investments = Decimal("0")
+    for holding in holdings:
+        investments += await _account_owned_amount(
+            session,
+            holding.account_id,
+            profile_id,
+            Decimal(holding.quantity) * Decimal(holding.current_price),
+        )
+    properties = (
+        await session.execute(
+            select(RealEstateAsset)
+            .join(RealEstateAssetOwner)
+            .where(RealEstateAssetOwner.member_id == profile_id)
+        )
+    ).scalars().all()
+    real_estate = Decimal("0")
+    for asset in properties:
+        real_estate += _real_estate_owner_values(
+            asset,
+            [owner.id for owner in await _real_estate_owner_profiles(session, asset.id)],
+        )[profile_id][1]
+    debts = (
+        await session.execute(
+            select(Debt)
+            .join(DebtOwner)
+            .where(DebtOwner.member_id == profile_id)
+        )
+    ).scalars().all()
+    debts_total = Decimal("0")
+    for debt in debts:
+        debts_total += _equal_owner_shares(
+            Decimal(debt.balance),
+            [owner.id for owner in await _debt_owner_profiles(session, debt.id)],
+        )[profile_id]
     return cash, investments, real_estate, debts_total, investment_accounts
 
 
 @router.get("/networth/overview", response_model=NetWorthOverview)
 async def net_worth_overview(
     as_of: date | None = None,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> NetWorthOverview:
     through = as_of or local_today()
     cash, investments, real_estate, debts_total, _ = (
-        await _current_net_worth_components(session, through)
+        await _current_net_worth_components(session, through, active_profile.id)
     )
 
     return NetWorthOverview(
@@ -2099,6 +2910,7 @@ async def net_worth_overview(
 @router.get("/networth/history", response_model=list[NetWorthPoint])
 async def net_worth_history(
     as_of: date | None = None,
+    active_profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> list[NetWorthPoint]:
     """Historical net worth from account and portfolio valuation snapshots.
@@ -2112,12 +2924,16 @@ async def net_worth_history(
     today = as_of or local_today()
     current_period = today.strftime("%Y-%m")
     cash, investments, real_estate, debts_total, investment_accounts = (
-        await _current_net_worth_components(session, today)
+        await _current_net_worth_components(session, today, active_profile.id)
     )
+    visible_accounts = await visible_account_ids(session, active_profile.id)
     snapshots = (
         await session.execute(
             select(BalanceSnapshot)
-            .where(BalanceSnapshot.period <= current_period)
+            .where(
+                BalanceSnapshot.period <= current_period,
+                BalanceSnapshot.account_id.in_(visible_accounts),
+            )
             .order_by(BalanceSnapshot.period, BalanceSnapshot.account_id)
         )
     ).scalars().all()
@@ -2128,17 +2944,28 @@ async def net_worth_history(
             continue
         cash_snapshots_by_period.setdefault(snapshot.period, []).append(snapshot)
 
-    contrib_rows = (
+    contributions = (
         await session.execute(
-            select(
-                func.strftime("%Y-%m", Contribution.occurred_on), func.sum(Contribution.amount)
+            select(Contribution, Holding.account_id)
+            .join(Holding)
+            .where(
+                Contribution.occurred_on <= today,
+                Holding.account_id.in_(visible_accounts),
             )
-            .where(Contribution.occurred_on <= today)
-            .group_by(func.strftime("%Y-%m", Contribution.occurred_on))
-            .order_by(func.strftime("%Y-%m", Contribution.occurred_on))
+            .order_by(Contribution.occurred_on)
         )
     ).all()
-    contrib_by_period = {period: Decimal(amount or 0) for period, amount in contrib_rows}
+    contrib_by_period: dict[str, Decimal] = {}
+    for contribution, account_id in contributions:
+        period = contribution.occurred_on.strftime("%Y-%m")
+        contrib_by_period[period] = contrib_by_period.get(period, Decimal("0")) + (
+            await _account_owned_amount(
+                session,
+                account_id,
+                active_profile.id,
+                Decimal(contribution.amount),
+            )
+        )
     portfolio_snapshots = (
         await session.execute(
             select(PortfolioSnapshot)
@@ -2146,15 +2973,28 @@ async def net_worth_history(
             .order_by(PortfolioSnapshot.period)
         )
     ).scalars().all()
-    portfolio_by_period = {
-        snapshot.period: Decimal(snapshot.market_value)
-        for snapshot in portfolio_snapshots
-    }
+    portfolio_by_period = (
+        {
+            snapshot.period: Decimal(snapshot.market_value)
+            for snapshot in portfolio_snapshots
+        }
+        if await _portfolio_snapshots_are_single_profile_only(session)
+        else {}
+    )
 
-    properties = (await session.execute(select(RealEstateAsset))).scalars().all()
+    properties = (
+        await session.execute(
+            select(RealEstateAsset)
+            .join(RealEstateAssetOwner)
+            .where(RealEstateAssetOwner.member_id == active_profile.id)
+        )
+    ).scalars().all()
     property_changes: dict[str, Decimal] = {}
     for asset in properties:
-        purchase_price, current_value = _real_estate_owned_values(asset)
+        purchase_price, current_value = _real_estate_owner_values(
+            asset,
+            [owner.id for owner in await _real_estate_owner_profiles(session, asset.id)],
+        )[active_profile.id]
         acquired_on = asset.acquired_on or asset.created_at.date()
         acquisition_period = acquired_on.strftime("%Y-%m")
         property_changes[acquisition_period] = (
@@ -2180,7 +3020,12 @@ async def net_worth_history(
     latest_portfolio_value: Decimal | None = None
     for period in periods:
         for snapshot in cash_snapshots_by_period.get(period, []):
-            latest_cash_by_account[snapshot.account_id] = Decimal(snapshot.balance)
+            latest_cash_by_account[snapshot.account_id] = await _account_owned_amount(
+                session,
+                snapshot.account_id,
+                active_profile.id,
+                Decimal(snapshot.balance),
+            )
         cumulative_contrib += contrib_by_period.get(period, Decimal("0"))
         cumulative_real_estate += property_changes.get(period, Decimal("0"))
         if period in portfolio_by_period:

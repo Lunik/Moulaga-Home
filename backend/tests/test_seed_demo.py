@@ -15,7 +15,34 @@ from fastapi.testclient import TestClient
 
 
 def _load_seed(tmp_path, monkeypatch):
+    monkeypatch.setenv("MOULAGA_SESSION_COOKIE_SECURE", "false")
     main, _ = load_app(tmp_path, monkeypatch)
+    # The profile/session router is introduced alongside this seed contract.
+    # Reload its dependency chain because the shared legacy test loader predates
+    # that router and does not reload it after changing MOULAGA_DATA_DIR.
+    import app.account_access
+    import app.account_balances
+    import app.recurring_budget
+    import app.routers.accounts
+    import app.routers.budget
+    import app.routers.profiles
+    import app.routers.recurring
+    import app.routers.wealth
+    import app.routers.work
+
+    for module in (
+        app.routers.profiles,
+        app.account_access,
+        app.account_balances,
+        app.recurring_budget,
+        app.routers.budget,
+        app.routers.accounts,
+        app.routers.recurring,
+        app.routers.wealth,
+        app.routers.work,
+    ):
+        importlib.reload(module)
+    importlib.reload(main)
     import app.commands.seed_demo as seed
 
     importlib.reload(seed)
@@ -31,10 +58,10 @@ def _month_period(offset: int) -> str:
 def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     main, seed = _load_seed(tmp_path, monkeypatch)
     result = asyncio.run(seed.seed_demo())
-    assert result.accounts == 10
-    assert result.snapshots == 309
+    assert result.accounts == 11
+    assert result.snapshots == 313
     assert result.categories == 12
-    assert result.recurring == 17
+    assert result.recurring == 18
     assert result.debts == 4
     assert result.real_estate_assets == 2
     assert result.holdings == 7
@@ -44,15 +71,80 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert result.recurring_attachments == 2
     assert result.debt_attachments == 1
     assert result.real_estate_attachments == 1
-    assert result.contracts == 4
+    assert result.profiles == 3
+    assert result.contracts == 5
     assert result.contract_attachments == 1
-    assert result.payslips == 8
+    assert result.payslips == 10
     assert result.payslip_attachments == 1
 
     with TestClient(main.create_app()) as client:
+        profiles = client.get("/api/profiles").json()
+        assert {profile["name"] for profile in profiles} == {
+            "Alice demo",
+            "Bob demo",
+            "Chloe demo",
+        }
+        assert profiles[0]["role"] == "admin"
+        alice_profile = next(profile for profile in profiles if profile["name"] == "Alice demo")
+        bob_profile = next(profile for profile in profiles if profile["name"] == "Bob demo")
+        chloe_profile = next(profile for profile in profiles if profile["name"] == "Chloe demo")
+        assert chloe_profile["has_pin"] is True
+        assert client.post(f"/api/profiles/{alice_profile['id']}/select", json={}).status_code == 200
+
         accounts = client.get("/api/accounts").json()
         assert len(accounts) == 9
         assert len({account["balance"] for account in accounts}) > 6
+        alice_account = next(
+            account
+            for account in accounts
+            if account["name"] == "Compte personnel Alice demo"
+        )
+        joint_account = next(
+            account
+            for account in accounts
+            if account["name"] == "Compte joint Alice Bob demo"
+        )
+        rounding_account = next(
+            account
+            for account in accounts
+            if account["name"] == "Compte partage arrondi demo"
+        )
+        assert alice_account["balance"] == "5562.44"
+        assert joint_account["balance"] == "1700.00"
+        assert rounding_account["balance"] == "33.34"
+        alice_ownership = client.get(
+            f"/api/profiles/{alice_profile['id']}/ownership"
+        ).json()
+        assert set(alice_ownership["account_ids"]).issuperset(
+            {alice_account["id"], joint_account["id"], rounding_account["id"]}
+        )
+        assert client.post(f"/api/profiles/{bob_profile['id']}/select", json={}).status_code == 200
+        bob_accounts = client.get("/api/accounts").json()
+        bob_account = next(
+            account
+            for account in bob_accounts
+            if account["name"] == "Compte personnel Bob demo"
+        )
+        assert bob_account["balance"] == "2750.00"
+        assert next(
+            account
+            for account in bob_accounts
+            if account["name"] == "Compte joint Alice Bob demo"
+        )["balance"] == "1700.00"
+        assert next(
+            account
+            for account in bob_accounts
+            if account["name"] == "Compte partage arrondi demo"
+        )["balance"] == "33.33"
+        assert client.post(f"/api/profiles/{chloe_profile['id']}/select", json={}).status_code == 401
+        assert client.post(
+            f"/api/profiles/{chloe_profile['id']}/select", json={"pin": "1234"}
+        ).status_code == 200
+        chloe_accounts = client.get("/api/accounts").json()
+        assert len(chloe_accounts) == 1
+        assert chloe_accounts[0]["name"] == "Compte partage arrondi demo"
+        assert chloe_accounts[0]["balance"] == "33.33"
+        assert client.post(f"/api/profiles/{alice_profile['id']}/select", json={}).status_code == 200
         assert next(account for account in accounts if account["name"] == "PEA demo")[
             "balance"
         ] == "2634.00"
@@ -74,9 +166,10 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
             for point in institution_history
             if point["institution"] == "Crédit Agricole"
         ] == ["900.00", "600.00", "250.00", "0.00"]
+        paths = client.get("/api/openapi.json").json()["paths"]
 
         recurring = client.get("/api/recurring").json()
-        assert len(recurring) == 17
+        assert len(recurring) == 14
         assert any(item["amount_type"] == "variable" for item in recurring)
         assert sum(item["recurring_type"] == "salary" for item in recurring) == 1
         assert len({item["account_id"] for item in recurring}) > 1
@@ -96,6 +189,18 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         }
         salary = next(item for item in recurring if item["label"] == "Salaire mensuel")
         assert salary["amount"] == "3126.50"
+        assert salary["account_id"] == alice_account["id"]
+        assert {
+            item["label"]
+            for item in recurring
+            if item["account_id"] == joint_account["id"]
+        }.issuperset(
+            {
+                "Courses compte joint demo",
+                "Remboursement · Pret immobilier demo",
+                "Assurance · Pret immobilier demo",
+            }
+        )
         internet_series = next(
             item for item in recurring if item["label"] == "Abonnement internet"
         )
@@ -113,6 +218,24 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         ]["id"]
         assert internet_series["category_id"] == categories["Internet"]["id"]
 
+        debts = client.get("/api/debts").json()
+        mortgage = next(item for item in debts if item["name"] == "Pret immobilier demo")
+        assert mortgage["recurring_series_repayment_id"] == next(
+            item["id"]
+            for item in recurring
+            if item["label"] == "Remboursement · Pret immobilier demo"
+        )
+        assert mortgage["recurring_series_insurance_id"] == next(
+            item["id"]
+            for item in recurring
+            if item["label"] == "Assurance · Pret immobilier demo"
+        )
+        real_estate = client.get("/api/real-estate").json()
+        shared_home = next(
+            item for item in real_estate if item["name"] == "Maison commune demo"
+        )
+        assert mortgage["id"] in shared_home["debt_ids"]
+
         contracts = client.get("/api/work/contracts").json()
         assert len(contracts) == 4
         assert {item["contract_type"] for item in contracts} == {
@@ -121,7 +244,9 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
             "CDI",
             "Stage",
         }
-        current_contract = next(item for item in contracts if item["status"] == "active")
+        current_contract = next(
+            item for item in contracts if item["employer"] == "Tech Corp Solutions"
+        )
         previous_contract = next(
             item for item in contracts if item["contract_type"] == "CDD"
         )
@@ -256,6 +381,7 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         overview = client.get("/api/overview").json()
         assert float(overview["income_current_month"]) > 0
         assert float(overview["expenses_current_month"]) > 0
+        assert client.get("/api/budget/overview").status_code == 200
         assert len(client.get("/api/stats/monthly").json()) == 12
 
         source_flows = client.get(
@@ -352,7 +478,6 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
         assert len(portfolio_performance) == 4
         assert all(float(item["market_value"]) > 0 for item in portfolio_performance)
 
-        paths = client.get("/api/openapi.json").json()["paths"]
         assert not any("transaction" in path for path in paths)
         assert "/api/recurring/detect" not in paths
         assert "/api/recurring/changes" not in paths
@@ -370,10 +495,86 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
     assert "merchant_identities" not in tables
 
 
+def test_seed_demo_scopes_multi_user_resources_through_routes(tmp_path, monkeypatch):
+    main, seed = _load_seed(tmp_path, monkeypatch)
+    asyncio.run(seed.seed_demo())
+
+    with TestClient(main.create_app()) as client:
+        profiles = {
+            profile["name"]: profile for profile in client.get("/api/profiles").json()
+        }
+        alice = profiles["Alice demo"]
+        bob = profiles["Bob demo"]
+        chloe = profiles["Chloe demo"]
+
+        assert client.post(f"/api/profiles/{alice['id']}/select", json={}).status_code == 200
+        alice_ownership = client.get(f"/api/profiles/{alice['id']}/ownership").json()
+        assert len(alice_ownership["work_contract_ids"]) == 4
+        assert len(alice_ownership["pension_profile_ids"]) == 1
+        assert len(alice_ownership["real_estate_asset_ids"]) == 2
+        assert len(alice_ownership["debt_ids"]) == 3
+
+        assert client.post(f"/api/profiles/{bob['id']}/select", json={}).status_code == 200
+        bob_accounts = client.get("/api/accounts").json()
+        assert {account["name"] for account in bob_accounts} == {
+            "Compte joint Alice Bob demo",
+            "Compte personnel Bob demo",
+            "Compte partage arrondi demo",
+        }
+        assert next(
+            account
+            for account in bob_accounts
+            if account["name"] == "Compte partage arrondi demo"
+        )["balance"] == "33.33"
+        bob_recurring = client.get("/api/recurring").json()
+        assert next(
+            item for item in bob_recurring if item["label"] == "Salaire mensuel Bob demo"
+        )["amount"] == "2680.00"
+        assert {
+            item["label"] for item in bob_recurring
+        }.issuperset(
+            {
+                "Courses compte joint demo",
+                "Remboursement · Pret immobilier demo",
+                "Assurance · Pret immobilier demo",
+            }
+        )
+        bob_contracts = client.get("/api/work/contracts").json()
+        assert [contract["employer"] for contract in bob_contracts] == [
+            "Atelier Horizon Démo"
+        ]
+        assert len(client.get("/api/work/payslips").json()) == 2
+        assert client.get("/api/work/pension").json()["birth_month"] == 3
+        assert {
+            debt["name"] for debt in client.get("/api/debts").json()
+        } == {"Pret immobilier demo", "Pret etudiant"}
+        assert [asset["name"] for asset in client.get("/api/real-estate").json()] == [
+            "Maison commune demo"
+        ]
+
+        assert client.post(
+            f"/api/profiles/{chloe['id']}/select", json={"pin": "1234"}
+        ).status_code == 200
+        chloe_accounts = client.get("/api/accounts").json()
+        assert len(chloe_accounts) == 1
+        assert chloe_accounts[0]["name"] == "Compte partage arrondi demo"
+        assert chloe_accounts[0]["balance"] == "33.33"
+        assert client.get("/api/recurring").json() == []
+        assert client.get("/api/work/contracts").json() == []
+        assert client.get("/api/debts").json() == []
+        assert client.get("/api/real-estate").json() == []
+
+
 def test_seed_demo_attachments_are_downloadable(tmp_path, monkeypatch):
     main, seed = _load_seed(tmp_path, monkeypatch)
     asyncio.run(seed.seed_demo())
     with TestClient(main.create_app()) as client:
+        alice = next(
+            profile
+            for profile in client.get("/api/profiles").json()
+            if profile["name"] == "Alice demo"
+        )
+        assert client.post(f"/api/profiles/{alice['id']}/select", json={}).status_code == 200
         savings = next(
             account for account in client.get("/api/accounts").json()
             if account["name"] == "Livret epargne demo"
@@ -422,6 +623,16 @@ def test_seed_demo_refuses_overwrite_and_reset_reseeds(tmp_path, monkeypatch):
 
     result = asyncio.run(seed.seed_demo(reset=True))
     assert result.households == 1
+    assert result.profiles == 3
+    asyncio.run(seed.init_db())
+    with sqlite3.connect(tmp_path / "moulaga.db") as connection:
+        profile_names = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM household_members ORDER BY id"
+            )
+        }
+    assert profile_names == {"Alice demo", "Bob demo", "Chloe demo"}
     new_files = {
         path for path in (tmp_path / "attached").rglob("*") if path.is_file()
     }

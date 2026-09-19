@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .common import add_month, money
-from .models import Account, RecurringSeries
+from .models import Account, AccountOwner, RecurringSeries
 
 _FREQUENCY_MONTHS = {
     "monthly": 1,
@@ -32,6 +32,7 @@ class RecurringOccurrence:
     amount: Decimal
     account_id: int
     category_id: int | None
+    profile_share: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class RecurringProjection:
     amount: Decimal
     account_id: int
     category_id: int | None
+    profile_share: Decimal | None = None
 
 
 def advance_recurrence(day: date, frequency: str, steps: int = 1) -> date:
@@ -83,33 +85,50 @@ def recurrence_dates(
     return dates
 
 
-async def _active_budget_series(session: AsyncSession) -> list[RecurringSeries]:
-    return list(
-        (
-            await session.execute(
-                select(RecurringSeries)
-                .join(Account, RecurringSeries.account_id == Account.id)
-                .where(
-                    RecurringSeries.status == "active",
-                    RecurringSeries.amount.is_not(None),
-                    RecurringSeries.recurring_type != "transfer",
-                    Account.archived.is_(False),
-                )
-                .order_by(RecurringSeries.id)
-            )
+async def _active_budget_series(
+    session: AsyncSession,
+    *,
+    profile_id: int | None = None,
+) -> list[RecurringSeries]:
+    statement = (
+        select(RecurringSeries)
+        .join(Account, RecurringSeries.account_id == Account.id)
+        .where(
+            RecurringSeries.status == "active",
+            RecurringSeries.amount.is_not(None),
+            RecurringSeries.recurring_type != "transfer",
+            Account.archived.is_(False),
         )
-        .scalars()
-        .all()
+        .order_by(RecurringSeries.id)
     )
+    if profile_id is not None:
+        statement = statement.join(
+            AccountOwner,
+            AccountOwner.account_id == RecurringSeries.account_id,
+        ).where(AccountOwner.profile_id == profile_id)
+    return list((await session.execute(statement)).scalars().all())
 
 
 async def recurring_budget_occurrences(
     session: AsyncSession,
     start: date,
     end: date,
+    *,
+    profile_id: int | None = None,
 ) -> list[RecurringOccurrence]:
-    """Return active, non-transfer occurrences for active accounts."""
-    series = await _active_budget_series(session)
+    """Return active, non-transfer occurrences for active, visible accounts."""
+    series = await _active_budget_series(session, profile_id=profile_id)
+    shares: dict[int, Decimal] = {}
+    if profile_id is not None:
+        from .account_access import account_share
+
+        for item in series:
+            shares[item.id] = await account_share(
+                session,
+                item.account_id,
+                profile_id,
+                money(item.amount),
+            )
 
     occurrences = [
         RecurringOccurrence(
@@ -118,6 +137,7 @@ async def recurring_budget_occurrences(
             amount=money(item.amount),
             account_id=item.account_id,
             category_id=item.category_id,
+            profile_share=shares.get(item.id),
         )
         for item in series
         for due_date in recurrence_dates(item.next_due, item.frequency, start, end)
@@ -128,23 +148,38 @@ async def recurring_budget_occurrences(
 async def recurring_budget_projection(
     session: AsyncSession,
     months: int,
+    *,
+    profile_id: int | None = None,
 ) -> list[RecurringProjection]:
     """Normalize active series to monthly amounts and scale them to a period."""
     if months <= 0:
         raise ValueError("La projection doit couvrir au moins un mois")
 
-    series = await _active_budget_series(session)
+    series = await _active_budget_series(session, profile_id=profile_id)
     projections: list[RecurringProjection] = []
     for item in series:
         multiplier = _MONTHLY_FREQUENCY_MULTIPLIERS.get(item.frequency)
         if multiplier is None:
             raise ValueError(f"Frequence recurrente inconnue: {item.frequency}")
+        amount = Decimal(item.amount) * multiplier * Decimal(months)
+        profile_share = None
+        if profile_id is not None:
+            from .account_access import account_share
+
+            base_profile_share = await account_share(
+                session,
+                item.account_id,
+                profile_id,
+                money(item.amount),
+            )
+            profile_share = base_profile_share * multiplier * Decimal(months)
         projections.append(
             RecurringProjection(
                 series_id=item.id,
-                amount=Decimal(item.amount) * multiplier * Decimal(months),
+                amount=amount,
                 account_id=item.account_id,
                 category_id=item.category_id,
+                profile_share=profile_share,
             )
         )
     return projections
