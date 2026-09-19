@@ -621,7 +621,6 @@ def test_v25_classic_data_is_preserved_and_assigned_to_first_admin(
                 estimated_monthly_pension NUMERIC(12, 2) NOT NULL,
                 target_monthly_income NUMERIC(12, 2) NOT NULL,
                 income_growth_scenario VARCHAR(24) DEFAULT 'regular' NOT NULL,
-                future_annual_gross NUMERIC(12, 2),
                 future_work_percentage INTEGER DEFAULT 100 NOT NULL,
                 planned_unemployment_months INTEGER DEFAULT 0 NOT NULL,
                 notes VARCHAR(500),
@@ -634,13 +633,13 @@ def test_v25_classic_data_is_preserved_and_assigned_to_first_admin(
             INSERT INTO pension_profiles (
                 id, birth_year, birth_month, target_retirement_age,
                 validated_quarters, required_quarters, estimated_monthly_pension,
-                target_monthly_income, income_growth_scenario, future_annual_gross,
+                target_monthly_income, income_growth_scenario,
                 future_work_percentage, planned_unemployment_months, notes, updated_at
             )
             SELECT
                 id, birth_year, birth_month, target_retirement_age,
                 validated_quarters, required_quarters, estimated_monthly_pension,
-                target_monthly_income, income_growth_scenario, future_annual_gross,
+                target_monthly_income, income_growth_scenario,
                 future_work_percentage, planned_unemployment_months, notes, updated_at
             FROM pension_profiles_multi_user
             """

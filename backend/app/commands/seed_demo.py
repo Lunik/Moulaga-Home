@@ -1484,7 +1484,6 @@ async def _seed(
         estimated_monthly_pension=money("0.00"),
         target_monthly_income=money("2600.00"),
         income_growth_scenario="regular",
-        future_annual_gross=money("48000.00"),
         future_work_percentage=90,
         planned_unemployment_months=3,
         notes="Projection retraite de Bob entièrement synthétique",
