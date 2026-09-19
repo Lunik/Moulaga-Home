@@ -10,8 +10,29 @@ import { Icon, errorMessage } from './ui'
 const profileColors = ['#615fff', '#16c79a', '#1da9e8', '#f97316', '#ec4899', '#8758f6']
 const profileSessionChannelName = 'moulaga:profile-session'
 const profileSessionStorageKey = 'moulaga:profile-session-change'
+const profileSessionLockedStorageKey = 'moulaga:profile-session-locked'
 
 type ProfileSessionChange = 'selected' | 'locked'
+
+function profileSessionIsLocallyLocked() {
+  try {
+    return localStorage.getItem(profileSessionLockedStorageKey) === 'true'
+  } catch (error) {
+    if (!(error instanceof DOMException)) throw error
+    console.warn('L’état de verrouillage du profil ne peut pas être lu.', error)
+    return false
+  }
+}
+
+function setProfileSessionLocallyLocked(locked: boolean) {
+  try {
+    if (locked) localStorage.setItem(profileSessionLockedStorageKey, 'true')
+    else localStorage.removeItem(profileSessionLockedStorageKey)
+  } catch (error) {
+    if (!(error instanceof DOMException)) throw error
+    console.warn('L’état de verrouillage du profil ne peut pas être enregistré.', error)
+  }
+}
 
 export function ProfileGate({
   children,
@@ -21,8 +42,9 @@ export function ProfileGate({
   const queryClient = useQueryClient()
   const [manageProfiles, setManageProfiles] = useState(false)
   const [openManagerOnSignIn, setOpenManagerOnSignIn] = useState(false)
-  const [showProfilePicker, setShowProfilePicker] = useState(false)
+  const [showProfilePicker, setShowProfilePicker] = useState(profileSessionIsLocallyLocked)
   const [sessionActionError, setSessionActionError] = useState<unknown>(null)
+  const [sessionActionPending, setSessionActionPending] = useState(false)
   const profileSessionChannel = useRef<BroadcastChannel | null>(null)
   const clearProfileIdentityQueries = useCallback(() => {
     queryClient.removeQueries({
@@ -30,6 +52,7 @@ export function ProfileGate({
     })
   }, [queryClient])
   const showPicker = useCallback(() => {
+    setProfileSessionLocallyLocked(true)
     setShowProfilePicker(true)
     setManageProfiles(false)
     queryClient.setQueryData(profileQueryKeys.session, null)
@@ -69,6 +92,7 @@ export function ProfileGate({
       }
       if (change !== 'selected') return
 
+      setProfileSessionLocallyLocked(false)
       setShowProfilePicker(false)
       setManageProfiles(false)
       queryClient.setQueryData(profileQueryKeys.session, null)
@@ -116,12 +140,16 @@ export function ProfileGate({
 
   const endSession = async () => {
     setSessionActionError(null)
+    setSessionActionPending(true)
+    advanceProfileSessionGeneration()
+    showPicker()
+    broadcastProfileSessionChange('locked')
     try {
       await profilesApi.lock()
-      showPicker()
-      broadcastProfileSessionChange('locked')
     } catch (error) {
       setSessionActionError(error)
+    } finally {
+      setSessionActionPending(false)
     }
   }
 
@@ -165,6 +193,7 @@ export function ProfileGate({
       onManageRequest={() => setOpenManagerOnSignIn(true)}
       onConnected={async (profileSession) => {
         setSessionActionError(null)
+        setProfileSessionLocallyLocked(false)
         setShowProfilePicker(false)
         clearProfileIdentityQueries()
         queryClient.setQueryData(profileQueryKeys.session, profileSession)
@@ -180,6 +209,8 @@ export function ProfileGate({
           setOpenManagerOnSignIn(false)
         }
       }}
+      sessionActionError={sessionActionError}
+      sessionActionPending={sessionActionPending}
     />
   )
 }
@@ -187,11 +218,15 @@ export function ProfileGate({
 function ProfilePicker({
   profiles,
   error,
+  sessionActionError,
+  sessionActionPending,
   onManageRequest,
   onConnected,
 }: {
   profiles: UserProfile[]
   error: Error | null
+  sessionActionError: unknown
+  sessionActionPending: boolean
   onManageRequest: () => void
   onConnected: (session: ProfileSession) => Promise<void>
 }) {
@@ -215,7 +250,7 @@ function ProfilePicker({
     }
   }
   const isOnboarding = profiles.length === 0
-  const selectionPending = isSelecting || open.isPending
+  const selectionPending = sessionActionPending || isSelecting || open.isPending
   const protectedProfile = selected?.has_pin ? selected : null
   const returnToProfiles = () => {
     setSelected(null)
@@ -244,6 +279,11 @@ function ProfilePicker({
             : 'Vos données restent privées sur cette instance. Aucun accès invité n’est disponible.'}
         </p>
         {error && <p className="form-error">Impossible de charger les profils : {errorMessage(error)}</p>}
+        {sessionActionError ? (
+          <p className="form-error">
+            Le profil est masqué, mais la fermeture de la session distante a échoué : {errorMessage(sessionActionError)}
+          </p>
+        ) : null}
         {!isOnboarding && !protectedProfile && (
           <div className="profile-tiles" aria-label="Profils disponibles">
             {profiles.filter((profile) => profile.active).map((profile) => (

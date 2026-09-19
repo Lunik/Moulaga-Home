@@ -329,6 +329,7 @@ async def delete_goal(
     profile: Profile = Depends(require_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> None:
+    _require_admin(profile)
     goal = await _goal_for_profile(session, household_id, goal_id, profile)
     if goal.account_id is not None:
         await require_account(session, goal.account_id, writable=True, profile_id=profile.id)

@@ -61,8 +61,14 @@ def test_household_routes_use_active_profile_not_actor_id(app_factory):
                 "member_id": alice["id"],
             },
         ).status_code == 403
+        assert client.delete(
+            f"/api/households/{household_id}/goals/{goal.json()['id']}"
+        ).status_code == 403
         assert client.get(f"/api/households/{household_id}/shared-accounts").status_code == 410
         assert client.post(f"/api/profiles/{alice['id']}/select", json={}).status_code == 200
+        assert client.delete(
+            f"/api/households/{household_id}/goals/{goal.json()['id']}"
+        ).status_code == 204
         assert client.delete(
             f"/api/households/{household_id}/members/{bob['id']}"
         ).status_code == 409
