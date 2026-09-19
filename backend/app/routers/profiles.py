@@ -429,6 +429,7 @@ async def profile_ownership(
 async def update_profile(
     profile_id: int,
     payload: ProfileUpdate,
+    request: Request,
     current_profile: Profile = Depends(get_active_profile),
     session: AsyncSession = Depends(get_session),
 ) -> ProfileRead:
@@ -471,6 +472,16 @@ async def update_profile(
         )
         profile.pin_failed_attempts = 0
         profile.pin_locked_until = None
+        revoke_sessions = ProfileSession.__table__.delete().where(
+            ProfileSession.profile_id == profile.id
+        )
+        token = request.cookies.get(config.settings.session_cookie_name)
+        if current_profile.id == profile.id and token:
+            revoke_sessions = revoke_sessions.where(
+                ProfileSession.token_hash
+                != hashlib.sha256(token.encode()).hexdigest()
+            )
+        await session.execute(revoke_sessions)
     await session.commit()
     await session.refresh(profile)
     return _profile_read(profile)

@@ -135,6 +135,51 @@ def test_member_manages_own_pin_and_admin_can_only_remove_it(app_factory):
         assert client.post(f"/api/profiles/{bob['id']}/select", json={}).status_code == 200
 
 
+def test_pin_changes_revoke_other_profile_sessions(app_factory):
+    main, _, _ = app_factory
+    app = main.create_app()
+    with (
+        TestClient(app, base_url="https://testserver") as current_client,
+        TestClient(app, base_url="https://testserver") as other_client,
+    ):
+        alice = current_client.post("/api/profiles", json={"name": "Alice"}).json()
+        assert current_client.post(
+            f"/api/profiles/{alice['id']}/select", json={}
+        ).status_code == 200
+        assert other_client.post(
+            f"/api/profiles/{alice['id']}/select", json={}
+        ).status_code == 200
+
+        changed = current_client.patch(
+            f"/api/profiles/{alice['id']}", json={"pin": "2468"}
+        )
+
+        assert changed.status_code == 200
+        assert current_client.get("/api/profiles/session").status_code == 200
+        assert other_client.get("/api/profiles/session").status_code == 401
+        assert other_client.post(
+            f"/api/profiles/{alice['id']}/select", json={}
+        ).status_code == 401
+
+        bob = current_client.post("/api/profiles", json={"name": "Bob"}).json()
+        assert other_client.post(
+            f"/api/profiles/{bob['id']}/select", json={}
+        ).status_code == 200
+        assert other_client.patch(
+            f"/api/profiles/{bob['id']}", json={"pin": "8642"}
+        ).status_code == 200
+
+        reset = current_client.patch(
+            f"/api/profiles/{bob['id']}", json={"pin": None}
+        )
+
+        assert reset.status_code == 200
+        assert other_client.get("/api/profiles/session").status_code == 401
+        assert other_client.post(
+            f"/api/profiles/{bob['id']}/select", json={}
+        ).status_code == 200
+
+
 def test_profile_pin_failures_are_throttled_and_profile_fields_reject_null(
     app_factory,
 ):
