@@ -36,7 +36,7 @@ from .models import Base
 logger = logging.getLogger("moulaga.migrations")
 
 MULTI_USER_SCHEMA_VERSION = 26
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 31
 OBSOLETE_TABLES = frozenset(
     {
         "categorization_rules",
@@ -61,6 +61,7 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     "real_estate_assets": {
         "icon_path": "VARCHAR(512)",
         "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
+        "value_updated_at": "DATETIME",
     },
     "accounts": {
         "institution": "VARCHAR(120)",
@@ -90,6 +91,7 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "custom_type": "VARCHAR(120)",
         "credit_insurance_rate": "NUMERIC(6, 3)",
         "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
+        "amount_updated_at": "DATETIME",
     },
     "work_contracts": {
         "profile_id": "INTEGER REFERENCES household_members(id) ON DELETE RESTRICT",
@@ -98,6 +100,7 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
             "INTEGER REFERENCES recurring_series(id) ON DELETE SET NULL"
         ),
         "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
+        "updated_at": "DATETIME",
     },
     "debts": {
         "debt_type": "VARCHAR(32) DEFAULT 'other' NOT NULL",
@@ -111,6 +114,7 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "color": "VARCHAR(16) DEFAULT '#ef4444' NOT NULL",
         "archived": "BOOLEAN DEFAULT 0 NOT NULL",
         "document_ignored": "BOOLEAN DEFAULT 0 NOT NULL",
+        "balance_updated_at": "DATETIME",
     },
     "pay_slips": {
         "profile_id": "INTEGER REFERENCES household_members(id) ON DELETE RESTRICT",
@@ -125,6 +129,9 @@ EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     },
     "holding_operations": {
         "occurred_on": "DATE",
+    },
+    "holdings": {
+        "price_updated_at": "DATETIME",
     },
 }
 

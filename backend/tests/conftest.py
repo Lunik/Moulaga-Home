@@ -30,6 +30,7 @@ def load_app(tmp_path, monkeypatch):
     import app.routers.preferences
     import app.routers.profiles
     import app.routers.recurring
+    import app.routers.update_prompts
     import app.routers.wealth
     import app.routers.work
 
@@ -47,6 +48,7 @@ def load_app(tmp_path, monkeypatch):
         app.routers.profiles,
         app.routers.budgets,
         app.routers.recurring,
+        app.routers.update_prompts,
         app.routers.wealth,
         app.routers.work,
         app.routers.household,

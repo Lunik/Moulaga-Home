@@ -175,6 +175,46 @@ export interface DocumentCenter {
   ignored_resources: DocumentResource[]
 }
 
+export type UpdatePromptPriority = 'important' | 'review' | 'suggestion'
+
+export type UpdatePromptTarget =
+  | 'account'
+  | 'accounts'
+  | 'recurring'
+  | 'holdings'
+  | 'holding_operations'
+  | 'real_estate'
+  | 'debts'
+  | 'documents'
+  | 'work_contract'
+  | 'payslips'
+  | 'pension'
+
+export interface UpdatePrompt {
+  id: string
+  kind: string
+  priority: UpdatePromptPriority
+  title: string
+  detail: string
+  action_label: string
+  target: UpdatePromptTarget
+  resource_id: number | null
+  period: string | null
+  document_kind: DocumentKind | null
+  ignore_mode: 'snooze' | 'document'
+  recurrence_days: number | null
+}
+
+export interface UpdatePromptCenter {
+  generated_at: string
+  prompts: UpdatePrompt[]
+}
+
+export interface UpdatePromptIgnoreResult {
+  mode: 'snooze' | 'document'
+  snoozed_until: string | null
+}
+
 export interface AccountSnapshotAttachment extends StoredAttachment {
   snapshot_id: number
 }

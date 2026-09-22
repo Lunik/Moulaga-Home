@@ -163,6 +163,9 @@ class RecurringSeries(Base):
         Boolean, default=False, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    amount_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=True
+    )
 
     account: Mapped[Account] = relationship()
     category: Mapped[Category | None] = relationship()
@@ -213,6 +216,9 @@ class Debt(Base):
         Boolean, default=False, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    balance_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=True
+    )
 
     recurring_series_repayment: Mapped[RecurringSeries | None] = relationship(
         foreign_keys=[recurring_series_repayment_id]
@@ -262,6 +268,9 @@ class RealEstateAsset(Base):
         Boolean, default=False, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    value_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=True
+    )
 
     debt_links: Mapped[list[RealEstateDebtLink]] = relationship(
         back_populates="asset", cascade="all, delete-orphan", passive_deletes=True
@@ -322,6 +331,9 @@ class Holding(Base):
     average_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0"))
     current_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=Decimal("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    price_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=True
+    )
 
     account: Mapped[Account] = relationship()
     contributions: Mapped[list[Contribution]] = relationship(
@@ -513,6 +525,28 @@ class ProfileSession(Base):
     profile: Mapped[Profile] = relationship(back_populates="sessions")
 
 
+class UpdatePromptDismissal(Base):
+    __tablename__ = "update_prompt_dismissals"
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_id",
+            "prompt_id",
+            name="uq_update_prompt_dismissal_profile_prompt",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("household_members.id", ondelete="CASCADE"), index=True
+    )
+    prompt_id: Mapped[str] = mapped_column(String(255))
+    snoozed_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
 class SharedAccountLink(Base):
     __tablename__ = "shared_account_links"
     __table_args__ = (
@@ -591,6 +625,9 @@ class WorkContract(Base):
         Boolean, default=False, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=True
+    )
 
     slips: Mapped[list[PaySlip]] = relationship(
         back_populates="contract", passive_deletes=True

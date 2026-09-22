@@ -29,6 +29,7 @@ from ..models import (
     HouseholdMember,
     RecurringSeries,
     RecurringSeriesAttachment,
+    utc_now,
 )
 from ..recurring_budget import recurrence_dates
 from ..schemas import (
@@ -279,6 +280,8 @@ async def update_series(
             data["amount"] = recurring_amount(data["amount"])
     for field, value in data.items():
         setattr(series, field, value)
+    if "amount" in data:
+        series.amount_updated_at = utc_now()
     if "amount" in data:
         for debt in linked_debts:
             debt.minimum_payment = debt_payment(series.amount)

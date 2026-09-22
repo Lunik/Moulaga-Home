@@ -22,7 +22,7 @@ import asyncio
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -490,6 +490,9 @@ async def _seed(
 
     # --- Monthly balance statements --------------------------------------- #
     anchor = date.today().replace(day=1)
+    stale_six_months = datetime.now(UTC) - timedelta(days=200)
+    stale_quarter = datetime.now(UTC) - timedelta(days=100)
+    stale_year = datetime.now(UTC) - timedelta(days=400)
     months = [add_month(anchor, -offset) for offset in range(3, -1, -1)]
     checking_snapshot_values = ("4700.00", "5000.00", "5300.00", "5562.44")
     savings_snapshot_values = ("5250.00", "5500.00", "5750.00", "6000.00")
@@ -610,6 +613,7 @@ async def _seed(
         label="Loyer", account_id=checking.id, category_id=logement.id, frequency="monthly",
         next_due=add_month(months[-1], 1).replace(day=3), amount=money("-750.00"),
         amount_type="fixed", status="active", recurring_type="rent",
+        amount_updated_at=stale_six_months,
     )
     session.add_all([salary_series, rent_series])
     await session.flush()
@@ -785,6 +789,7 @@ async def _seed(
         due_date=date(2042, 5, 15),
         color="#7c3aed",
         archived=False,
+        balance_updated_at=stale_quarter,
     )
     auto_loan = Debt(
         name="Pret travaux demo",
@@ -878,6 +883,7 @@ async def _seed(
         purchase_price=money("280000.00"),
         current_value=money("310000.00"),
         ownership_share=Decimal("100.00"),
+        value_updated_at=stale_year,
     )
     land = RealEstateAsset(
         name="Terrain demo",
@@ -918,6 +924,7 @@ async def _seed(
     bond = Holding(
         account_id=invest.id, name="Fonds Obligations", symbol="BND", asset_class="bond",
         quantity=Decimal("30"), average_price=Decimal("48"), current_price=Decimal("47"),
+        price_updated_at=stale_quarter,
     )
     life_fund = Holding(
         account_id=life_insurance.id,
@@ -1232,6 +1239,7 @@ async def _seed(
         recurring_series_id=salary_series.id,
         status="active",
         notes="CDI cadre avec forfait jours, participation & PEE",
+        updated_at=stale_year,
     )
     _assign_profile(current_contract, alice)
     previous_contract = WorkContract(
@@ -1473,6 +1481,7 @@ async def _seed(
         future_work_percentage=100,
         planned_unemployment_months=0,
         notes="59 trimestres hors bulletins saisis ; carrière commencée avant 21 ans",
+        updated_at=stale_year,
     )
     _assign_profile(pension, alice)
     bob_pension = PensionProfile(

@@ -90,6 +90,9 @@ async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
     || /^\/profiles\/\d+\/select$/.test(path)
   )
   if (changesProfileSession) advanceProfileSessionGeneration()
+  if (init.method && init.method !== 'GET' && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('moulaga:data-mutated'))
+  }
   if (!text) return undefined as T
   try {
     return JSON.parse(text) as T

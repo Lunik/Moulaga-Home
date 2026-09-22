@@ -23,6 +23,7 @@ from .routers import (
     preferences,
     profiles,
     recurring,
+    update_prompts,
     wealth,
     work,
 )
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(preferences.router, prefix="/api")
     app.include_router(budgets.router, prefix="/api")
     app.include_router(recurring.router, prefix="/api")
+    app.include_router(update_prompts.router, prefix="/api")
     app.include_router(wealth.router, prefix="/api")
     app.include_router(work.router, prefix="/api")
     app.include_router(household.router, prefix="/api")

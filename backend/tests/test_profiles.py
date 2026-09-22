@@ -353,7 +353,7 @@ def test_owner_link_column_migrates_from_profile_to_member_id(app_factory, monke
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert "member_id" in columns
     assert owner_ids == [(profile["id"],)]
-    assert version == 29
+    assert version == 31
 
 
 def test_restart_does_not_restore_a_demoted_first_administrator(app_factory):

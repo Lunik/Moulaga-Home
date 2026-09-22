@@ -46,11 +46,13 @@ import {
   compactMoney,
   errorMessage,
   formatDate,
+  linkedEntityTargetId,
   localDateInputValue,
   maskNumericValue,
   monthBoundaryDate,
   monthInputValue,
   money,
+  useLinkedEntityFocus,
 } from '../ui'
 
 type PaySlipListItem =
@@ -58,10 +60,12 @@ type PaySlipListItem =
   | { kind: 'missing'; contract: WorkContract; period: string }
 
 export function WorkView({
+  focusId,
   tab,
   navigate,
   profileId,
 }: {
+  focusId?: number
   tab: WorkTab
   navigate: (route: Route) => void
   profileId: number
@@ -241,6 +245,7 @@ export function WorkView({
     () => new Map((contracts.data ?? []).map((contract) => [contract.id, contract])),
     [contracts.data],
   )
+  useLinkedEntityFocus('work-contract', focusId, (contracts.data?.length ?? 0) > 0)
 
   useEffect(() => {
     if (!contracts.data || !payslips.data || payslipContractFilter === 'all') return
@@ -411,7 +416,12 @@ export function WorkView({
                     (series) => series.id === contract.recurring_series_id,
                   )
                   return (
-                    <article className="work-contract-card" key={contract.id}>
+                    <article
+                      className={`work-contract-card${contract.id === focusId ? ' linked-entity-target' : ''}`}
+                      id={linkedEntityTargetId('work-contract', contract.id)}
+                      key={contract.id}
+                      tabIndex={contract.id === focusId ? -1 : undefined}
+                    >
                       <span className="work-list-icon"><Icon name="briefcase" /></span>
                       <span className="work-list-copy">
                         <span className="work-list-heading">

@@ -191,6 +191,7 @@ export function WealthView({
       {tab === 'holdings' && (
         <AssetsPanel
           accounts={accounts}
+          focusId={focusId}
           performance={assetPerformance.data ?? []}
           holdings={holdings.data ?? []}
           navigate={navigate}
@@ -412,12 +413,14 @@ function WealthOverview({
 
 function AssetsPanel({
   accounts,
+  focusId,
   holdings,
   navigate,
   performance,
   view,
 }: {
   accounts: Account[]
+  focusId?: number
   holdings: Holding[]
   navigate: (route: Route) => void
   performance: AssetPerformancePoint[]
@@ -489,6 +492,7 @@ function AssetsPanel({
       {view === 'positions' ? (
         <HoldingsPanel
           accounts={accounts}
+          focusId={focusId}
           holdings={holdings}
           onChanged={refresh}
           selectableAccounts={selectableAccounts}
@@ -564,11 +568,13 @@ function AssetPerformanceChart({ performance }: { performance: AssetPerformanceP
 
 function HoldingsPanel({
   accounts,
+  focusId,
   holdings,
   onChanged,
   selectableAccounts,
 }: {
   accounts: Account[]
+  focusId?: number
   holdings: Holding[]
   onChanged: () => Promise<void>
   selectableAccounts: Account[]
@@ -606,6 +612,7 @@ function HoldingsPanel({
       })
       .sort((left, right) => compareHoldings(left, right, sort))
   }, [accountId, assetClass, holdings, search, sort, status])
+  useLinkedEntityFocus('holding', focusId, holdings.length > 0)
 
   return (
     <>
@@ -676,6 +683,7 @@ function HoldingsPanel({
             {visibleHoldings.map((holding) => (
               <HoldingRow
                 accounts={accounts}
+                focused={holding.id === focusId}
                 holding={holding}
                 key={holding.id}
                 onChanged={onChanged}
@@ -694,12 +702,14 @@ function HoldingsPanel({
 
 function HoldingRow({
   accounts,
+  focused,
   holding,
   onChanged,
   onEdit,
   onShowOperations,
 }: {
   accounts: Account[]
+  focused: boolean
   holding: Holding
   onChanged: () => Promise<void>
   onEdit: () => void
@@ -717,7 +727,11 @@ function HoldingRow({
     onSuccess: onChanged,
   })
   return (
-    <article>
+    <article
+      className={focused ? 'linked-entity-target' : undefined}
+      id={linkedEntityTargetId('holding', holding.id)}
+      tabIndex={focused ? -1 : undefined}
+    >
       <span className="asset-symbol">{holding.symbol || initials(holding.name)}</span>
       <span className="holding-copy">
         <strong>{holding.name}</strong>
