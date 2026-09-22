@@ -7,6 +7,7 @@ import { ViewErrorBoundary } from './ErrorBoundary'
 import { isRouteBeta } from './featureValidation'
 import { ProfileBadge } from './ProfileOwnership'
 import { ProfileGate } from './ProfileGate'
+import { UpdatePromptCenter } from './UpdatePromptCenter'
 import { useOnlineStatus } from './pwa'
 import { type Route, useRoute } from './routing'
 import { BetaBadge, Icon, configureUiPreferences, errorMessage, longToday } from './ui'
@@ -111,6 +112,7 @@ function AuthenticatedApp({
       queryClient.invalidateQueries({ queryKey: ['work-contracts'] }),
       queryClient.invalidateQueries({ queryKey: ['work-payslips'] }),
       queryClient.invalidateQueries({ queryKey: ['work-pension'] }),
+      queryClient.invalidateQueries({ queryKey: ['update-prompts'] }),
     ])
   }
   const firstError = [
@@ -139,6 +141,11 @@ function AuthenticatedApp({
                 <Icon name="database" /> Hors ligne · données indisponibles
               </span>
             )}
+            <UpdatePromptCenter
+              activeProfile={activeProfile}
+              isOnline={isOnline}
+              navigate={navigate}
+            />
             <button
               aria-label={hideNumericValues ? 'Afficher les valeurs' : 'Masquer les valeurs'}
               className={`privacy-toggle${hideNumericValues ? ' active' : ''}`}
@@ -221,6 +228,7 @@ function AuthenticatedApp({
             )}
             {route.name === 'work' && (
               <WorkView
+                focusId={route.focusId}
                 tab={route.tab}
                 navigate={navigate}
                 profileId={activeProfile.id}

@@ -21,6 +21,11 @@ restent dans une base SQLite locale et persistante.
   d'echeancier pour les credits, liens navigables entre biens, dettes et series recurrentes,
   biens immobiliers avec quote-part et emprunt associe, positions, valorisations,
   contributions et performance du portefeuille ;
+- centre de demandes de mise a jour, accessible depuis la cloche de notification, pour les
+  releves et fiches de paie manquants, les montants anciens, les documents absents et les
+  informations patrimoniales, contractuelles ou de retraite a verifier ; les demandes peuvent
+  etre ignorees temporairement selon une cadence d'au moins 30 jours, tandis qu'un document
+  ignore rejoint durablement la liste documentaire correspondante ;
 - instance mono-foyer avec selection de profils, PIN facultatif gere par chaque membre, carrieres et retraites privees,
   comptes, biens et dettes partageables avec quote-parts automatiques, et objectifs communs ;
 - themes clair/sombre/systeme, formats de date et styles de navigation ;

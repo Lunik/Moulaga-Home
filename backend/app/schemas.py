@@ -784,6 +784,51 @@ class DocumentCenterRead(BaseModel):
     ignored_resources: list[DocumentResourceRead]
 
 
+# --------------------------------------------------------------------------- #
+# Update prompts
+# --------------------------------------------------------------------------- #
+UpdatePromptPriority = Literal["important", "review", "suggestion"]
+UpdatePromptIgnoreMode = Literal["snooze", "document"]
+UpdatePromptTarget = Literal[
+    "account",
+    "accounts",
+    "recurring",
+    "holdings",
+    "holding_operations",
+    "real_estate",
+    "debts",
+    "documents",
+    "work_contract",
+    "payslips",
+    "pension",
+]
+
+
+class UpdatePromptRead(BaseModel):
+    id: str
+    kind: str
+    priority: UpdatePromptPriority
+    title: str
+    detail: str
+    action_label: str
+    target: UpdatePromptTarget
+    resource_id: int | None = None
+    period: str | None = None
+    document_kind: DocumentKind | None = None
+    ignore_mode: UpdatePromptIgnoreMode
+    recurrence_days: int | None = Field(default=None, ge=30)
+
+
+class UpdatePromptCenterRead(BaseModel):
+    generated_at: datetime
+    prompts: list[UpdatePromptRead]
+
+
+class UpdatePromptIgnoreRead(BaseModel):
+    mode: UpdatePromptIgnoreMode
+    snoozed_until: datetime | None = None
+
+
 class HoldingCreate(BaseModel):
     account_id: int
     name: str = Field(min_length=1, max_length=120)

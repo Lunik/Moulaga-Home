@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -23,6 +22,7 @@ from ..models import (
     RecurringSeries,
     WorkContract,
     WorkContractAttachment,
+    utc_now,
 )
 from ..pension_projection import calculate_pension_projection
 from ..pension_quarters import calculate_payslip_quarters
@@ -306,6 +306,7 @@ async def update_contract(
         )
     for key, value in payload.items():
         setattr(contract, key, value)
+    contract.updated_at = utc_now()
 
     await session.commit()
     await session.refresh(contract)
@@ -806,7 +807,7 @@ async def update_pension_profile(
     for key, value in data.model_dump().items():
         setattr(pension_profile, key, value)
 
-    pension_profile.updated_at = datetime.now()
+    pension_profile.updated_at = utc_now()
     await session.commit()
     await session.refresh(pension_profile)
     res_slips = await session.execute(

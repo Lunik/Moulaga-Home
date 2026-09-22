@@ -502,7 +502,7 @@ def test_v25_classic_data_is_preserved_and_assigned_to_first_admin(
     def preserved_state(connection):
         excluded_columns = {
             "household_members": {"role", "avatar", "color", "active", "pin_hash"},
-            "work_contracts": {"profile_id"},
+            "work_contracts": {"profile_id", "updated_at"},
             "pay_slips": {"profile_id"},
             "pension_profiles": {"profile_id"},
         }
@@ -732,7 +732,7 @@ def test_v25_classic_data_is_preserved_and_assigned_to_first_admin(
     with sqlite3.connect(db_path) as connection:
         assert preserved_state(connection) == classic_state
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 29
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 31
         assert connection.execute(
             "SELECT COUNT(*) FROM shared_account_links"
         ).fetchone()[0] == 0

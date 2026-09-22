@@ -47,6 +47,7 @@ from ..models import (
     RealEstateAttachment,
     RealEstateDebtLink,
     RecurringSeries,
+    utc_now,
 )
 from ..models import (
     HouseholdMember as Profile,
@@ -741,6 +742,8 @@ async def update_debt(
             )
     for field, value in data.items():
         setattr(debt, field, value)
+    if "balance" in data:
+        debt.balance_updated_at = utc_now()
     if Decimal(debt.balance) > Decimal(debt.principal):
         raise HTTPException(status_code=422, detail="Le solde ne peut pas exceder le principal")
     if owner_profile_ids is not None:
@@ -774,6 +777,11 @@ async def update_debt(
                 series_repayment.amount = recurring_amount(debt.minimum_payment)
             elif series_insurance is not None:
                 series_insurance.amount = recurring_amount(debt.minimum_payment)
+            refreshed_at = utc_now()
+            if series_repayment is not None:
+                series_repayment.amount_updated_at = refreshed_at
+            if series_insurance is not None:
+                series_insurance.amount_updated_at = refreshed_at
         elif "recurring_series_repayment_id" in data or "recurring_series_insurance_id" in data:
             if series_repayment is not None:
                 debt.minimum_payment = debt_payment(series_repayment.amount)
@@ -1274,6 +1282,8 @@ async def update_real_estate(
                 debts.append(debt)
     for field, value in data.items():
         setattr(asset, field, value)
+    if "current_value" in data:
+        asset.value_updated_at = utc_now()
     if debts is not None:
         await _replace_real_estate_debts(session, asset.id, debts)
     if owner_profile_ids is not None:
@@ -1825,6 +1835,8 @@ async def update_holding(
         profile_id=active_profile.id,
     )
     data = payload.model_dump(exclude_unset=True)
+    if "current_price" in data:
+        holding.price_updated_at = utc_now()
     target_account_id = data.pop("account_id", holding.account_id)
     if target_account_id != holding.account_id:
         await require_holding_account(
@@ -1868,6 +1880,8 @@ async def update_holding(
             destination.average_price = average_price
             for field, value in data.items():
                 setattr(destination, field, value)
+            if "current_price" in data:
+                destination.price_updated_at = utc_now()
             await session.delete(holding)
             await session.commit()
             await session.refresh(destination)

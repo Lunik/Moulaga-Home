@@ -27,6 +27,7 @@ def _load_seed(tmp_path, monkeypatch):
     import app.routers.budget
     import app.routers.profiles
     import app.routers.recurring
+    import app.routers.update_prompts
     import app.routers.wealth
     import app.routers.work
 
@@ -38,6 +39,7 @@ def _load_seed(tmp_path, monkeypatch):
         app.routers.budget,
         app.routers.accounts,
         app.routers.recurring,
+        app.routers.update_prompts,
         app.routers.wealth,
         app.routers.work,
     ):
@@ -167,6 +169,32 @@ def test_seed_demo_populates_current_product_contract(tmp_path, monkeypatch):
             if point["institution"] == "Crédit Agricole"
         ] == ["900.00", "600.00", "250.00", "0.00"]
         paths = client.get("/api/openapi.json").json()["paths"]
+        update_prompts = client.get("/api/update-prompts").json()["prompts"]
+        update_prompt_kinds = {item["kind"] for item in update_prompts}
+        assert {
+            "missing_account_statement",
+            "stale_recurring_amount",
+            "stale_holding_value",
+            "stale_holding_operations",
+            "stale_real_estate_value",
+            "stale_debt_balance",
+            "missing_documents",
+            "stale_work_contract",
+            "missing_payslip",
+            "stale_pension_profile",
+            "review_recurring_catalog",
+            "review_new_assets",
+        }.issubset(update_prompt_kinds)
+        assert all(
+            item["recurrence_days"] is None or item["recurrence_days"] >= 30
+            for item in update_prompts
+        )
+        assert all(
+            item["ignore_mode"] == "document"
+            for item in update_prompts
+            if item["kind"] == "missing_documents"
+        )
+        assert "/api/update-prompts" in paths
 
         recurring = client.get("/api/recurring").json()
         assert len(recurring) == 14

@@ -9,6 +9,7 @@ export type IconName =
   | 'arrow'
   | 'back'
   | 'briefcase'
+  | 'bell'
   | 'budget'
   | 'calendar'
   | 'check'
@@ -62,6 +63,12 @@ export function Icon({ name, className }: { name: IconName; className?: string }
     ),
     arrow: <path d="m9 18 6-6-6-6" />,
     back: <path d="m15 18-6-6 6-6" />,
+    bell: (
+      <>
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+        <path d="M10 21h4" />
+      </>
+    ),
     budget: (
       <>
         <path d="M4 5h16v14H4z" />
@@ -526,7 +533,12 @@ export function StatusBadge({
   return <span className={`status-badge ${tone}`}>{children}</span>
 }
 
-export type LinkedEntityKind = 'real-estate' | 'debt' | 'recurring'
+export type LinkedEntityKind =
+  | 'real-estate'
+  | 'debt'
+  | 'recurring'
+  | 'holding'
+  | 'work-contract'
 
 export function linkedEntityTargetId(kind: LinkedEntityKind, id: number): string {
   return `linked-${kind}-${id}`
