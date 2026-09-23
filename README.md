@@ -176,3 +176,16 @@ cd ../frontend
 npm run lint
 npm run build
 ```
+
+---
+
+## Licence
+
+[MIT](LICENSE) © Lunik
+
+---
+
+> ⚗️ **Projet expérimental, 100 % vibecodé.** Écrit presque entièrement en
+> pair-programming avec un assistant IA, pour le plaisir et l'exploration —
+> sans garantie de qualité, de maintenance ni de bonnes pratiques. À prendre
+> tel quel.
