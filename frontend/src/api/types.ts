@@ -235,7 +235,6 @@ export interface CategoryBreakdown {
 
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system'
-  language: 'fr' | 'en' | 'de' | 'es'
   date_format: 'localized' | 'day-month-year' | 'YYYY-MM-DD'
   navigation_style: 'sidebar' | 'topbar' | 'compact'
   budget_cycle_start_day: number

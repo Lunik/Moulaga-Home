@@ -35,6 +35,7 @@ import {
   FormInput,
   FormSelect,
   FormTextarea,
+  BetaBadge,
   Icon,
   LinkedEntityLink,
   MetricCard,
@@ -299,6 +300,7 @@ export function WorkView({
           onClick={() => navigate({ name: 'work', tab: 'pension' })}
         >
           <Icon name="target" /> Retraite
+          <BetaBadge />
         </button>
       </nav>
 

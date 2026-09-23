@@ -72,3 +72,32 @@ def test_household_routes_use_active_profile_not_actor_id(app_factory):
         assert client.delete(
             f"/api/households/{household_id}/members/{bob['id']}"
         ).status_code == 409
+
+
+def test_household_name_update_requires_admin(app_factory):
+    main, _, _ = app_factory
+    with TestClient(main.create_app(), base_url="https://testserver") as client:
+        alice = client.post("/api/profiles", json={"name": "Alice"}).json()
+        assert client.post(f"/api/profiles/{alice['id']}/select", json={}).status_code == 200
+        household_id = client.get("/api/households").json()[0]["id"]
+
+        bob = client.post("/api/profiles/manage", json={"name": "Bob"}).json()
+        assert client.post(f"/api/profiles/{bob['id']}/select", json={}).status_code == 200
+        assert client.patch(
+            f"/api/households/{household_id}", json={"name": "Foyer Bob"}
+        ).status_code == 403
+
+        assert client.post(f"/api/profiles/{alice['id']}/select", json={}).status_code == 200
+        renamed = client.patch(
+            f"/api/households/{household_id}", json={"name": "Foyer Martin"}
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["name"] == "Foyer Martin"
+        assert client.get("/api/households").json()[0]["name"] == "Foyer Martin"
+
+        assert client.patch(
+            f"/api/households/{household_id}", json={"name": "  "}
+        ).status_code == 422
+        assert client.patch(
+            f"/api/households/{household_id + 100}", json={"name": "Autre"}
+        ).status_code == 404

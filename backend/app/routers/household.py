@@ -27,6 +27,7 @@ from ..schemas import (
     GoalUpdate,
     HouseholdCreate,
     HouseholdRead,
+    HouseholdUpdate,
     MemberCreate,
     MemberRead,
     MemberUpdate,
@@ -121,6 +122,31 @@ async def get_household(
     session: AsyncSession = Depends(get_session),
 ) -> HouseholdRead:
     household = await _require_profile_household(session, household_id, profile)
+    members_query = select(HouseholdMember).where(
+        HouseholdMember.household_id == profile.household_id
+    )
+    if profile.role not in {"admin", "owner"}:
+        members_query = members_query.where(HouseholdMember.active.is_(True))
+    members = (await session.scalars(members_query.order_by(HouseholdMember.id))).all()
+    return HouseholdRead(
+        id=household.id,
+        name=household.name,
+        members=[MemberRead.model_validate(member) for member in members],
+    )
+
+
+@router.patch("/households/{household_id}", response_model=HouseholdRead)
+async def update_household(
+    household_id: int,
+    payload: HouseholdUpdate,
+    profile: Profile = Depends(require_active_profile),
+    session: AsyncSession = Depends(get_session),
+) -> HouseholdRead:
+    _require_admin(profile)
+    household = await _require_profile_household(session, household_id, profile)
+    household.name = payload.name
+    await session.commit()
+    await session.refresh(household)
     members_query = select(HouseholdMember).where(
         HouseholdMember.household_id == profile.household_id
     )

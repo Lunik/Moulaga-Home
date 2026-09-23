@@ -129,7 +129,6 @@ class Preferences(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     theme: Mapped[str] = mapped_column(String(16), default="system")
-    language: Mapped[str] = mapped_column(String(8), default="fr")
     date_format: Mapped[str] = mapped_column(String(20), default="localized")
     navigation_style: Mapped[str] = mapped_column(String(16), default="sidebar")
     budget_cycle_start_day: Mapped[int] = mapped_column(Integer, default=1)

@@ -25,6 +25,7 @@ export type IconName =
   | 'home'
   | 'holdings'
   | 'lock'
+  | 'menu'
   | 'plus'
   | 'receipt'
   | 'recurring'
@@ -157,6 +158,7 @@ export function Icon({ name, className }: { name: IconName; className?: string }
         <path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" />
       </>
     ),
+    menu: <path d="M4 7h16M4 12h16M4 17h16" />,
     plus: <path d="M12 5v14M5 12h14" />,
     receipt: (
       <>
@@ -692,16 +694,14 @@ export const chartTooltipStyle: CSSProperties = {
   boxShadow: '0 10px 32px rgb(0 0 0 / 35%)',
 }
 
-let activeLocale = 'fr-FR'
+const activeLocale = 'fr-FR'
 let activeDateFormat: 'localized' | 'day-month-year' | 'YYYY-MM-DD' = 'localized'
 let numericValuesHidden = false
 
 export function configureUiPreferences(
-  language: 'fr' | 'en' | 'de' | 'es' = 'fr',
   dateFormat: 'localized' | 'day-month-year' | 'YYYY-MM-DD' = 'localized',
   hideNumericValues = false,
 ) {
-  activeLocale = { fr: 'fr-FR', en: 'en-GB', de: 'de-DE', es: 'es-ES' }[language]
   activeDateFormat = dateFormat
   numericValuesHidden = hideNumericValues
 }

@@ -1,6 +1,7 @@
 import type { Route } from './routing'
 
-export function isRouteBeta(route: Route): boolean {
-  // Keep this aligned with the explicit approvals recorded in ROADMAP.md's audit journal.
-  return route.name !== 'dashboard' && route.name !== 'accounts' && route.name !== 'account' && route.name !== 'budget' && route.name !== 'wealth' && route.name !== 'documents'
+// All pages have graduated out of beta; kept as a single hook so a future
+// experimental route can flag itself here without touching call sites.
+export function isRouteBeta(_route: Route): boolean {
+  return false
 }

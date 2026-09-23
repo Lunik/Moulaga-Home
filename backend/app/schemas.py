@@ -330,7 +330,6 @@ class PreferencesRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     theme: str
-    language: str
     date_format: str
     navigation_style: str
     budget_cycle_start_day: int
@@ -338,7 +337,6 @@ class PreferencesRead(BaseModel):
 
 class PreferencesUpdate(BaseModel):
     theme: str | None = Field(default=None, pattern="^(system|light|dark)$")
-    language: str | None = Field(default=None, min_length=2, max_length=8)
     date_format: str | None = Field(
         default=None, pattern="^(localized|day-month-year|YYYY-MM-DD)$"
     )
@@ -1073,6 +1071,15 @@ class HouseholdCreate(BaseModel):
     @field_validator("name", "owner_name")
     @classmethod
     def strip_text(cls, value: str) -> str:
+        return _strip_required(value)
+
+
+class HouseholdUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
         return _strip_required(value)
 
 
