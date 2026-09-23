@@ -99,6 +99,11 @@ textarea:focus-visible {
   cursor: pointer;
 }
 
+.mobile-navigation,
+.mobile-menu-backdrop {
+  display: none;
+}
+
 .brand-mark {
   display: grid;
   width: 2.65rem;
@@ -4758,6 +4763,17 @@ html[data-numeric-values="hidden"] .recharts-cartesian-axis-tick-value {
   font-size: 1.8rem;
 }
 
+.family-hero .compact-inline-form {
+  flex: 1;
+  margin-bottom: 0;
+  justify-content: flex-start;
+}
+
+.family-hero .compact-inline-form input {
+  flex: 1;
+  width: 100%;
+}
+
 .shared-account-grid,
 .goal-grid {
   display: grid;
@@ -6036,6 +6052,10 @@ html[data-theme="light"] .sidebar {
   background: rgb(250 250 251 / 94%);
 }
 
+html[data-theme="light"] .mobile-navigation-bar {
+  background: rgb(250 250 251 / 96%);
+}
+
 html[data-theme="light"] .module-tabs button.active,
 html[data-theme="light"] .field input,
 html[data-theme="light"] .field select,
@@ -6114,44 +6134,117 @@ html[data-theme="light"] .status-badge {
   }
 
   .sidebar {
-    height: auto;
-    padding: 0.75rem 1rem;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .brand,
-  .storage-status {
     display: none;
   }
 
-  .main-navigation {
+  .mobile-navigation {
+    position: fixed;
+    display: block;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+  }
+
+  .mobile-navigation-bar {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.4rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.35rem;
+    padding: 0.5rem 0.75rem;
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: rgb(9 9 10 / 94%);
+    backdrop-filter: blur(24px);
   }
 
-  .nav-item {
-    display: flex;
-    min-height: 3.2rem;
-    justify-content: center;
-    padding: 0.45rem 0.65rem;
+  .mobile-nav-item {
+    display: grid;
+    min-height: 3rem;
+    place-items: center;
+    border: 1px solid transparent;
     border-radius: 0.9rem;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: 160ms ease;
   }
 
-  .nav-icon {
-    width: auto;
-    height: auto;
-    background: transparent !important;
+  .mobile-nav-item.active {
+    border-color: var(--line);
+    background: var(--surface-soft);
+    color: var(--text);
   }
 
-  .nav-copy small,
-  .nav-item > svg {
-    display: none;
+  .mobile-nav-item svg {
+    width: 1.45rem;
+    height: 1.45rem;
+  }
+
+  .mobile-menu-backdrop {
+    position: fixed;
+    display: block;
+    border: 0;
+    inset: 0;
+    background: rgb(0 0 0 / 55%);
+    z-index: 39;
+  }
+
+  .mobile-menu-sheet {
+    display: flex;
+    max-height: 70vh;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.9rem 0.75rem 0.75rem;
+    border-top: 1px solid var(--line);
+    border-radius: 1.25rem 1.25rem 0 0;
+    background: var(--surface);
+    overflow-y: auto;
+    box-shadow: 0 -18px 40px rgb(0 0 0 / 35%);
+  }
+
+  .mobile-menu-title {
+    margin: 0 0 0.25rem 0.35rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .mobile-menu-item {
+    display: grid;
+    grid-template-columns: 2.4rem 1fr 1.15rem;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.6rem 0.65rem;
+    border: 1px solid transparent;
+    border-radius: 1rem;
+    background: transparent;
+    color: var(--muted);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .mobile-menu-item.active {
+    border-color: var(--line);
+    background: var(--surface-soft);
+    color: var(--text);
+  }
+
+  .mobile-menu-item .nav-icon {
+    width: 2.4rem;
+    height: 2.4rem;
+  }
+
+  .mobile-menu-item > svg {
+    width: 1rem;
+    color: var(--faint);
   }
 
   .app-content {
-    padding-top: 1.5rem;
+    padding-top: max(1.5rem, env(safe-area-inset-top));
+    padding-bottom: calc(4.75rem + env(safe-area-inset-bottom));
   }
 
   .dashboard-grid,
@@ -6260,37 +6353,8 @@ html[data-theme="light"] .status-badge {
     max-width: none;
   }
 
-  .sidebar {
-    padding-inline: 0.65rem;
-  }
-
-  .nav-item {
-    min-width: 0;
-    flex-direction: column;
-    justify-content: center;
-    gap: 0.25rem;
-    padding-inline: 0.25rem;
-  }
-
-  .nav-copy strong {
-    overflow: hidden;
-    font-size: 0.67rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .nav-label {
-    flex-direction: column;
-    gap: 0.15rem;
-  }
-
-  .nav-icon svg {
-    width: 1.1rem;
-    height: 1.1rem;
-  }
-
   .app-content {
-    padding: 1.15rem 0.8rem 3rem;
+    padding: max(1.15rem, env(safe-area-inset-top)) 0.8rem calc(4.75rem + env(safe-area-inset-bottom));
   }
 
   .page-header {

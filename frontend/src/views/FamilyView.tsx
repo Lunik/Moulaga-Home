@@ -1,15 +1,13 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { apiGet, apiPost } from '../api/client'
+import { apiGet, apiPatch } from '../api/client'
 import { profileQueryKeys, profilesApi } from '../api/profiles'
 import { PinKeypad } from '../PinKeypad'
 import type {
-  GoalContribution,
   Household,
   HouseholdMember,
   ProfileSession,
-  SharedGoal,
   UserProfile,
 } from '../api/types'
 import {
@@ -17,12 +15,9 @@ import {
   FormInput,
   Icon,
   Panel,
-  ProgressBar,
   StatusBadge,
   errorMessage,
-  formatDate,
   initials,
-  money,
 } from '../ui'
 
 export function FamilyView({
@@ -40,12 +35,7 @@ export function FamilyView({
   const activeHouseholdId = households.data?.[0]?.id ?? null
   const activeHousehold = households.data?.find((household) => household.id === activeHouseholdId)
   const members = activeHousehold?.members ?? []
-  const goals = useQuery({
-    queryKey: ['shared-goals', activeHouseholdId],
-    queryFn: () => apiGet<SharedGoal[]>(`/households/${activeHouseholdId}/goals`),
-    enabled: activeHouseholdId !== null,
-  })
-  const errors = [households.error, goals.error].filter(Boolean)
+  const errors = [households.error].filter(Boolean)
   const updateActiveProfile = (profile: UserProfile) => {
     queryClient.setQueryData<ProfileSession>(profileQueryKeys.session, { profile })
     queryClient.setQueriesData<UserProfile[]>({ queryKey: profileQueryKeys.listPrefix }, (current) => (
@@ -69,25 +59,25 @@ export function FamilyView({
     <div className="view-stack">
       <section className="section-intro">
         <div>
-          <p>Objectifs et ressources partagés du foyer.</p>
+          <p>Ressources partagées du foyer.</p>
           <small>Profil actif : {activeProfile.name} · {activeProfile.role === 'admin' ? 'Administrateur' : 'Membre'}</small>
         </div>
       </section>
 
       {errors.length > 0 && <div className="error-banner">{errorMessage(errors[0])}</div>}
 
-      {activeHouseholdId !== null && (
+      {activeHouseholdId !== null && activeHousehold && (
         <>
-          <section className="family-hero">
-            <span className="family-mark"><Icon name="family" /></span>
-            <div>
-              <p className="eyebrow">Espace partagé</p>
-              <h2>{activeHousehold?.name}</h2>
-              <p>
-                {members.length} profil{members.length === 1 ? '' : 's'} · objectifs communs
-              </p>
-            </div>
-          </section>
+          <FamilyHero
+            canEdit={activeProfile.role === 'admin'}
+            household={activeHousehold}
+            memberCount={members.length}
+            onUpdated={(updated) => {
+              queryClient.setQueryData<Household[]>(['households'], (current) => (
+                current?.map((item) => item.id === updated.id ? updated : item)
+              ))
+            }}
+          />
 
           <section className="dashboard-grid">
             <ProfilePinSettings
@@ -117,36 +107,95 @@ export function FamilyView({
               </div>
             </Panel>
           </section>
-
-          <Panel
-            title="Objectifs partagés"
-            subtitle="Suivez les contributions de chaque membre."
-            action={(
-              <GoalForm
-                householdId={activeHouseholdId}
-                onSaved={() => queryClient.invalidateQueries({ queryKey: ['shared-goals', activeHouseholdId] })}
-              />
-            )}
-          >
-            {(goals.data ?? []).length > 0 ? (
-              <div className="goal-grid">
-                {goals.data?.map((goal) => (
-                  <GoalCard
-                    goal={goal}
-                    householdId={activeHouseholdId}
-                    key={goal.id}
-                    members={members}
-                    onSaved={() => queryClient.invalidateQueries({ queryKey: ['shared-goals', activeHouseholdId] })}
-                  />
-                ))}
-              </div>
-            ) : (
-              <EmptyState icon="target" text="Aucun objectif partagé." />
-            )}
-          </Panel>
         </>
       )}
     </div>
+  )
+}
+
+function FamilyHero({
+  canEdit,
+  household,
+  memberCount,
+  onUpdated,
+}: {
+  canEdit: boolean
+  household: Household
+  memberCount: number
+  onUpdated: (household: Household) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(household.name)
+  const mutation = useMutation({
+    mutationFn: () => apiPatch<Household>(`/households/${household.id}`, { name }),
+    onSuccess: (updated) => {
+      onUpdated(updated)
+      setEditing(false)
+    },
+  })
+
+  if (editing) {
+    return (
+      <section className="family-hero">
+        <span className="family-mark"><Icon name="family" /></span>
+        <form
+          className="compact-inline-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (name.trim().length > 0) mutation.mutate()
+          }}
+        >
+          <FormInput
+            aria-label="Nom du foyer"
+            autoFocus
+            onChange={(event) => setName(event.target.value)}
+            required
+            value={name}
+          />
+          <button className="primary-button icon-button" disabled={mutation.isPending} type="submit" aria-label="Enregistrer">
+            <Icon name="check" />
+          </button>
+          <button
+            className="text-button icon-button"
+            onClick={() => {
+              setName(household.name)
+              setEditing(false)
+              mutation.reset()
+            }}
+            type="button"
+            aria-label="Annuler"
+          >
+            <Icon name="close" />
+          </button>
+          {mutation.error && <span className="form-error">{errorMessage(mutation.error)}</span>}
+        </form>
+      </section>
+    )
+  }
+
+  return (
+    <section className="family-hero">
+      <span className="family-mark"><Icon name="family" /></span>
+      <div>
+        <p className="eyebrow">Espace partagé</p>
+        <h2>{household.name}</h2>
+        <p>
+          {memberCount} profil{memberCount === 1 ? '' : 's'}
+        </p>
+      </div>
+      {canEdit && (
+        <button
+          className="secondary-button small-button"
+          onClick={() => {
+            setName(household.name)
+            setEditing(true)
+          }}
+          type="button"
+        >
+          <Icon name="edit" /> Modifier le nom
+        </button>
+      )}
+    </section>
   )
 }
 
@@ -308,111 +357,6 @@ function ProfilePinSettings({
   )
 }
 
-function GoalForm({
-  householdId,
-  onSaved,
-}: {
-  householdId: number
-  onSaved: () => Promise<void>
-}) {
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [target, setTarget] = useState('')
-  const mutation = useMutation({
-    mutationFn: () => apiPost<SharedGoal>(
-      `/households/${householdId}/goals`,
-      { name, target_amount: target, current_amount: '0', due_date: null, account_id: null },
-    ),
-    onSuccess: async () => {
-      setOpen(false)
-      setName('')
-      setTarget('')
-      await onSaved()
-    },
-  })
-  if (!open) return <button className="secondary-button small-button" type="button" onClick={() => setOpen(true)}><Icon name="plus" /> Objectif</button>
-  return (
-    <form className="compact-inline-form" onSubmit={(event) => {
-      event.preventDefault()
-      mutation.mutate()
-    }}>
-      <FormInput aria-label="Nom de l'objectif" value={name} onChange={(event) => setName(event.target.value)} required />
-      <FormInput aria-label="Montant cible" type="number" min="0.01" step="0.01" value={target} onChange={(event) => setTarget(event.target.value)} required />
-      <button className="primary-button icon-button" type="submit" aria-label="Créer"><Icon name="check" /></button>
-      <button className="text-button icon-button" type="button" aria-label="Annuler" onClick={() => setOpen(false)}><Icon name="close" /></button>
-      {mutation.error && <span className="form-error">{errorMessage(mutation.error)}</span>}
-    </form>
-  )
-}
-
-function GoalCard({
-  goal,
-  householdId,
-  members,
-  onSaved,
-}: {
-  goal: SharedGoal
-  householdId: number
-  members: HouseholdMember[]
-  onSaved: () => Promise<void>
-}) {
-  const [amount, setAmount] = useState('')
-  const contributions = useQuery({
-    queryKey: ['goal-contributions', goal.id],
-    queryFn: () => apiGet<GoalContribution[]>(`/households/${householdId}/goals/${goal.id}/contributions`),
-  })
-  const mutation = useMutation({
-    mutationFn: () => apiPost<GoalContribution>(
-      `/households/${householdId}/goals/${goal.id}/contributions`,
-      { amount, occurred_on: localDate(), note: null },
-    ),
-    onSuccess: async () => {
-      setAmount('')
-      await contributions.refetch()
-      await onSaved()
-    },
-  })
-  const percentage = Number(goal.target_amount) > 0
-    ? (Number(goal.current_amount) / Number(goal.target_amount)) * 100
-    : 0
-  return (
-    <article className="goal-card">
-      <div className="goal-head">
-        <span><i style={{ background: '#314ac8' }} /><strong>{goal.name}</strong></span>
-        {goal.due_date && <small>{formatDate(goal.due_date)}</small>}
-      </div>
-      <div className="goal-values">
-        <strong>{money(goal.current_amount)}</strong>
-        <span>sur {money(goal.target_amount)}</span>
-      </div>
-      <ProgressBar value={percentage} color="#314ac8" />
-      {(contributions.data ?? []).length > 0 && (
-        <div className="contribution-summary">
-          {contributions.data?.slice(0, 3).map((contribution) => (
-            <span key={contribution.id}>
-              {contribution.member_name ?? members.find((member) => member.id === contribution.member_id)?.name ?? 'Contribution'}
-              {' '}<strong>{money(contribution.amount)}</strong>
-            </span>
-          ))}
-        </div>
-      )}
-      <form className="goal-contribution-form" onSubmit={(event) => {
-        event.preventDefault()
-        mutation.mutate()
-      }}>
-        <FormInput type="number" min="0.01" step="0.01" placeholder="Contribution" value={amount} onChange={(event) => setAmount(event.target.value)} required />
-        <button className="primary-button small-button" type="submit">Contribuer</button>
-      </form>
-      {mutation.error && <p className="form-error">{errorMessage(mutation.error)}</p>}
-    </article>
-  )
-}
-
 function roleLabel(role: HouseholdMember['role']): string {
   return { owner: 'Propriétaire', admin: 'Administrateur', member: 'Membre', viewer: 'Lecture' }[role]
-}
-
-function localDate(): string {
-  const now = new Date()
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
 }

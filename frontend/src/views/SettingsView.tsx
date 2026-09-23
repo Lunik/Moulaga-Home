@@ -61,18 +61,6 @@ function AppearanceSettings({
             onChange={(value) => onSave({ theme: value as AppSettings['theme'] })}
           />
         </SettingRow>
-        <SettingRow label="Langue">
-          <SegmentedControl
-            value={settings.language}
-            options={[
-              ['fr', 'FR'],
-              ['en', 'EN'],
-              ['de', 'DE'],
-              ['es', 'ES'],
-            ]}
-            onChange={(value) => onSave({ language: value as AppSettings['language'] })}
-          />
-        </SettingRow>
         <SettingRow label="Format de date">
           <SegmentedControl
             value={settings.date_format}

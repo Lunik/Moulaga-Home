@@ -35,9 +35,13 @@ const navigation: Array<{
   { id: 'wealth', label: 'Patrimoine', caption: 'Actifs & dettes', icon: 'wealth', route: { name: 'wealth', tab: 'overview' } },
   { id: 'documents', label: 'Documents', caption: 'Pièces & justificatifs', icon: 'documents', route: { name: 'documents', tab: 'overview' } },
   { id: 'work', label: 'Travail', caption: 'Salaires & retraite', icon: 'briefcase', route: { name: 'work', tab: 'overview' } },
-  { id: 'family', label: 'Famille', caption: 'Objectifs partagés', icon: 'family', route: { name: 'family' } },
+  { id: 'family', label: 'Famille', caption: 'Foyer & membres', icon: 'family', route: { name: 'family' } },
   { id: 'settings', label: 'Paramètres', caption: 'Préférences locales', icon: 'settings', route: { name: 'settings' } },
 ]
+
+const primaryNavigationIds: Array<Route['name']> = ['dashboard', 'accounts', 'budget']
+const primaryNavigation = navigation.filter((item) => primaryNavigationIds.includes(item.id))
+const secondaryNavigation = navigation.filter((item) => !primaryNavigationIds.includes(item.id))
 
 export default function App() {
   return (
@@ -88,7 +92,7 @@ function AuthenticatedApp({
   })
   const [hideNumericValues, setHideNumericValues] = usePrivacyMode()
   useProtectedProfileAutoLock(activeProfile.has_pin, inactivityTimeout, lock)
-  configureUiPreferences(settings.data?.language, settings.data?.date_format, hideNumericValues)
+  configureUiPreferences(settings.data?.date_format, hideNumericValues)
   useAppearance(settings.data)
 
   const refreshCore = async () => {
@@ -241,6 +245,7 @@ function AuthenticatedApp({
           </Suspense>
         </ViewErrorBoundary>
       </main>
+      <MobileNavigation activeSection={activeSection} navigate={navigate} />
     </div>
   )
 }
@@ -336,6 +341,97 @@ function Sidebar({
   )
 }
 
+function MobileNavigation({
+  activeSection,
+  navigate,
+}: {
+  activeSection: Route['name']
+  navigate: (route: Route) => void
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const secondaryActive = secondaryNavigation.some((item) => item.id === activeSection)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [menuOpen])
+
+  const goTo = (route: Route) => {
+    setMenuOpen(false)
+    navigate(route)
+  }
+
+  return (
+    <>
+      {menuOpen && (
+        <button
+          className="mobile-menu-backdrop"
+          type="button"
+          tabIndex={-1}
+          aria-label="Fermer le menu"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
+      <nav className="mobile-navigation" aria-label="Navigation principale">
+        {menuOpen && (
+          <div className="mobile-menu-sheet" id="mobile-navigation-menu">
+            <p className="mobile-menu-title">Autres sections</p>
+            {secondaryNavigation.map((item) => (
+              <button
+                className={`mobile-menu-item ${activeSection === item.id ? 'active' : ''}`}
+                type="button"
+                key={item.id}
+                aria-current={activeSection === item.id ? 'page' : undefined}
+                onClick={() => goTo(item.route)}
+              >
+                <span className="nav-icon"><Icon name={item.icon} /></span>
+                <span className="nav-copy">
+                  <span className="nav-label">
+                    <strong>{item.label}</strong>
+                    {isRouteBeta(item.route) && <BetaBadge />}
+                  </span>
+                  <small>{item.caption}</small>
+                </span>
+                <Icon name="arrow" />
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="mobile-navigation-bar">
+          {primaryNavigation.map((item) => (
+            <button
+              className={`mobile-nav-item ${activeSection === item.id ? 'active' : ''}`}
+              type="button"
+              key={item.id}
+              aria-current={activeSection === item.id ? 'page' : undefined}
+              aria-label={item.label}
+              title={item.label}
+              onClick={() => goTo(item.route)}
+            >
+              <Icon name={item.icon} />
+            </button>
+          ))}
+          <button
+            className={`mobile-nav-item ${menuOpen || secondaryActive ? 'active' : ''}`}
+            type="button"
+            aria-label="Autres sections"
+            title="Autres sections"
+            aria-expanded={menuOpen}
+            aria-controls="mobile-navigation-menu"
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <Icon name="menu" />
+          </button>
+        </div>
+      </nav>
+    </>
+  )
+}
+
 function useAppearance(settings?: AppSettings) {
   useEffect(() => {
     const root = document.documentElement
@@ -345,7 +441,7 @@ function useAppearance(settings?: AppSettings) {
         ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
         : requested
       root.dataset.theme = effective
-      root.lang = settings?.language ?? 'fr'
+      root.lang = 'fr'
       document.querySelector('meta[name="theme-color"]')?.setAttribute(
         'content',
         effective === 'light' ? '#f4f4f6' : '#080809',
@@ -355,7 +451,7 @@ function useAppearance(settings?: AppSettings) {
     const media = window.matchMedia('(prefers-color-scheme: light)')
     media.addEventListener('change', applyTheme)
     return () => media.removeEventListener('change', applyTheme)
-  }, [settings?.language, settings?.theme])
+  }, [settings?.theme])
 }
 
 function titleForRoute(route: Route): string {
