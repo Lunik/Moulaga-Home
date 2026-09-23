@@ -1,7 +1,7 @@
 services:
   moulaga:
     build: .
-    image: moulaga:latest
+    image: moulaga-home:latest
     container_name: moulaga
     restart: unless-stopped
     ports:
