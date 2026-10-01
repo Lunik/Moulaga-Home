@@ -243,6 +243,12 @@ function RecurringFlowPanel({ categories }: { categories: Category[] }) {
       `/budget/cashflow${queryString({ months: cashflowMonths, by: 'category' })}`,
     ),
   })
+  const incomeFlows = useQuery({
+    queryKey: ['budget-cashflow', 'projection', cashflowMonths, 'income'],
+    queryFn: () => apiGet<CashflowFlow[]>(
+      `/budget/cashflow${queryString({ months: cashflowMonths, by: 'income' })}`,
+    ),
+  })
   const spending = useQuery({
     queryKey: ['budget-spending', anchorDate, period],
     queryFn: () => apiGet<SpendingNode[]>(
@@ -275,6 +281,7 @@ function RecurringFlowPanel({ categories }: { categories: Category[] }) {
           categories={categories}
           categoryFlows={categoryFlows.data ?? []}
           sourceFlows={sourceFlows.data ?? []}
+          incomeFlows={incomeFlows.data ?? []}
         />
       </Panel>
       <section className="period-toolbar">

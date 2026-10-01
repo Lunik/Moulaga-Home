@@ -89,6 +89,13 @@ export function DashboardView({
     ),
     networkMode: 'always',
   })
+  const incomeFlows = useQuery({
+    queryKey: ['budget-cashflow', 'projection', cashflowMonths, 'income'],
+    queryFn: () => apiGet<CashflowFlow[]>(
+      `/budget/cashflow${queryString({ months: cashflowMonths, by: 'income' })}`,
+    ),
+    networkMode: 'always',
+  })
   const netWorth = useQuery({
     queryKey: ['net-worth', 'dashboard', today],
     queryFn: () => apiGet<NetWorthSummary>(`/networth/overview${queryString({ as_of: today })}`),
@@ -281,6 +288,7 @@ export function DashboardView({
           categories={categories}
           categoryFlows={categoryFlows.data ?? []}
           sourceFlows={sourceFlows.data ?? []}
+          incomeFlows={incomeFlows.data ?? []}
         />
       </Panel>
 
