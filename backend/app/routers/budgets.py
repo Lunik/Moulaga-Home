@@ -259,7 +259,7 @@ async def envelopes(
 @router.get("/cashflow", response_model=list[CashflowFlow])
 async def cashflow(
     on: date | None = None,
-    by: str = Query(default="category", pattern="^(category|source)$"),
+    by: str = Query(default="category", pattern="^(category|source|income)$"),
     period: str = Query(default="cycle", pattern="^(cycle|year)$"),
     months: int | None = Query(default=None),
     profile: HouseholdMember = Depends(require_active_profile),
@@ -313,6 +313,37 @@ async def cashflow(
             for account_id, (income, expenses) in sorted(
                 totals.items(),
                 key=lambda item: accounts.get(item[0], "").casefold(),
+            )
+        ]
+
+    if by == "income":
+        income_categories = {
+            category.id: category.name
+            for category in (await session.execute(select(Category))).scalars().all()
+        }
+        income_by_pair: dict[tuple[int | None, int], Decimal] = {}
+        for occurrence in entries:
+            amount = _profile_amount(occurrence.amount, occurrence.profile_share)
+            if amount > 0:
+                pair = (occurrence.category_id, occurrence.account_id)
+                income_by_pair[pair] = income_by_pair.get(pair, Decimal("0")) + amount
+        return [
+            CashflowFlow(
+                key=(
+                    f"income:{category_id if category_id is not None else 'none'}"
+                    f":account:{account_id}"
+                ),
+                label=income_categories.get(category_id, "Sans categorie"),
+                inflow=money(income),
+                outflow=money(Decimal("0")),
+                net=money(income),
+            )
+            for (category_id, account_id), income in sorted(
+                income_by_pair.items(),
+                key=lambda item: (
+                    income_categories.get(item[0][0], "Sans categorie").casefold(),
+                    item[0][1],
+                ),
             )
         ]
 

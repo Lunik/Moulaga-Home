@@ -6774,6 +6774,7 @@ html[data-theme="light"] .status-badge {
     width: 0.85rem;
   }
 
+  .sankey-node-label.income,
   .sankey-node-label.source,
   .sankey-node-label.hub {
     display: none;

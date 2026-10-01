@@ -42,13 +42,15 @@ export function RecurringCashflowSankey({
   categories,
   categoryFlows,
   sourceFlows,
+  incomeFlows = [],
 }: {
   categories: Category[]
   categoryFlows: CashflowFlow[]
   sourceFlows: CashflowFlow[]
+  incomeFlows?: CashflowFlow[]
 }) {
   const compact = useNarrowViewport()
-  const data = buildSankey(sourceFlows, categoryFlows, categories, compact)
+  const data = buildSankey(sourceFlows, categoryFlows, categories, compact, incomeFlows)
   const chartHeight = Math.max(
     compact ? 400 : 432,
     data.maxColumnNodes * 34 + 54,
@@ -118,10 +120,12 @@ function buildSankey(
   categoryFlows: CashflowFlow[],
   categories: Category[],
   compact: boolean,
+  incomeFlows: CashflowFlow[],
 ) {
   const sources = sourceFlows
     .filter((flow) => Number(flow.inflow) > 0)
     .map((flow) => ({
+      key: flow.key,
       name: flow.label,
       amount: Number(flow.inflow),
       color: '#16c79a',
@@ -188,11 +192,34 @@ function buildSankey(
     }
   }
 
+  const sourceKeys = new Set(sources.map((source) => source.key))
+  const incomeNodeMap = new Map<string, CashflowNode>()
+  const incomePairs: Array<{ incomeKey: string; sourceKey: string; value: number }> = []
+  for (const flow of incomeFlows) {
+    const amount = Number(flow.inflow)
+    const match = /^(income:[^:]+):(account:.+)$/.exec(flow.key)
+    if (amount <= 0 || !match || !sourceKeys.has(match[2])) continue
+    const existing = incomeNodeMap.get(match[1])
+    incomeNodeMap.set(match[1], {
+      key: match[1],
+      name: flow.label,
+      color: '#4cc9a4',
+      role: 'income',
+      depth: 0,
+      amount: (existing?.amount ?? 0) + amount,
+    })
+    incomePairs.push({ incomeKey: match[1], sourceKey: `source:${match[2]}`, value: amount })
+  }
+  const incomeNodes = [...incomeNodeMap.values()].sort(
+    (left, right) => right.amount - left.amount || left.name.localeCompare(right.name, 'fr'),
+  )
+
   const orderedCategoryNodes = orderCategoryNodes(categoryNodes, categoryLinks)
   const nodes: CashflowNode[] = [
+    ...(!compact ? incomeNodes : []),
     ...(!compact
       ? sources.map((node) => ({
-          key: `source:${node.name}`,
+          key: `source:${node.key}`,
           name: node.name,
           color: node.color,
           role: 'source' as const,
@@ -222,11 +249,19 @@ function buildSankey(
   }
 
   const nodeIndexByKey = new Map(nodes.map((node, index) => [node.key, index]))
-  const hubIndex = compact ? 0 : sources.length
+  const hubIndex = compact ? 0 : incomeNodes.length + sources.length
   const links: SankeyLink[] = [
     ...(!compact
-      ? sources.map((node, index) => ({
-          source: index,
+      ? incomePairs.map((pair) => ({
+          source: nodeIndexByKey.get(pair.incomeKey) ?? hubIndex,
+          target: nodeIndexByKey.get(pair.sourceKey) ?? hubIndex,
+          value: pair.value,
+          color: '#4cc9a4',
+        }))
+      : []),
+    ...(!compact
+      ? sources.map((node) => ({
+          source: nodeIndexByKey.get(`source:${node.key}`) ?? hubIndex,
           target: hubIndex,
           value: node.amount,
           color: node.color,
@@ -359,7 +394,7 @@ interface CashflowNode {
   key: string
   name: string
   color: string
-  role: 'source' | 'hub' | 'destination' | 'spacer'
+  role: 'income' | 'source' | 'hub' | 'destination' | 'spacer'
   depth: number
   amount: number
 }
@@ -465,7 +500,7 @@ interface CashflowSankeyNodeProps {
   payload: {
     name: string
     color: string
-    role: 'source' | 'hub' | 'destination' | 'spacer'
+    role: 'income' | 'source' | 'hub' | 'destination' | 'spacer'
   }
 }
 
@@ -477,8 +512,8 @@ function CashflowSankeyNode({
   payload,
 }: CashflowSankeyNodeProps) {
   if (payload.role === 'spacer') return <g aria-hidden="true" />
-  const destinationNode = payload.role === 'destination'
-  const sourceNode = payload.role === 'source'
+  const incomeNode = payload.role === 'income'
+  const labelAbove = !incomeNode
   return (
     <g>
       <rect
@@ -491,11 +526,11 @@ function CashflowSankeyNode({
       />
       <text
         className={`sankey-node-label ${payload.role}`}
-        x={destinationNode ? x + width / 2 : sourceNode ? x + width + 9 : x - 9}
-        y={destinationNode ? Math.max(y - 8, 14) : y + Math.max(height, 12) / 2}
+        x={labelAbove ? x + width / 2 : x + width + 9}
+        y={labelAbove ? Math.max(y - 8, 14) : y + Math.max(height, 12) / 2}
         fill="var(--text)"
         fontSize={12}
-        textAnchor={destinationNode ? 'middle' : sourceNode ? 'start' : 'end'}
+        textAnchor={labelAbove ? 'middle' : 'start'}
         dominantBaseline="middle"
       >
         {payload.name}

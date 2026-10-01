@@ -304,6 +304,9 @@ def test_recurring_budget_drives_overview_monthly_stats_and_cashflow(client):
         }
     ]
     assert {flow["label"] for flow in category_flows} == {"Courses", "Salaire"}
+    income_flows = client.get("/api/budget/cashflow", params={"by": "income"}).json()
+    assert [(flow["label"], flow["inflow"]) for flow in income_flows] == [("Salaire", "2400.00")]
+    assert income_flows[0]["key"].endswith(f":account:{account_id}")
     assert all(flow["label"] != "Sans categorie" for flow in category_flows)
 
 
